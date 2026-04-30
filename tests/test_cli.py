@@ -74,7 +74,6 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
     runner.invoke(app, ["init", str(vault), "--json"])
 
     commands = [
-        ["reindex", "--vault", str(vault), "--json"],
         ["search", "agent memory", "--vault", str(vault), "--json"],
         ["recall", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["brief", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
@@ -88,3 +87,32 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
         payload = json.loads(result.output)
         assert payload["ok"] is True
         assert payload["implemented"] is False
+
+
+def test_reindex_command_builds_sqlite_index(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Use SQLite FTS for the first keyword index.",
+            "--json",
+        ],
+    )
+
+    result = runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["documents_indexed"] == 1
+    assert payload["documents_skipped"] == 0
+    assert payload["graph_ok"] is True
+    assert (vault / ".agent-memory" / "index.sqlite").exists()

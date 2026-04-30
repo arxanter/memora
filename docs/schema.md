@@ -124,7 +124,7 @@ Lifecycle links such as supersession and contradiction belong in durable Markdow
 
 ## SQLite Cache
 
-The index should be rebuildable from Markdown and may initially contain:
+The Stage 4 index is rebuildable from Markdown and contains:
 
 ```sql
 documents(id, path, type, status, created_at, updated_at, content_hash)
@@ -134,6 +134,20 @@ observations(id, document_id, category, text, confidence, content_hash)
 links(from_id, to_id, relation, confidence)
 chunk_fts using sqlite fts5
 ```
+
+The implementation lives in `src/agent_memory/indexer.py`. `memory reindex`
+creates or refreshes these tables with stdlib `sqlite3`, using SHA-256
+`content_hash` values for documents, chunks, and observations. Incremental
+reindexing parses current Markdown but skips chunk, observation, and relation
+rewrites for documents whose content hash is unchanged.
+
+`chunk_fts` is the low-level SQLite FTS5 foundation for later retrieval stages.
+Stage 4 populates it with body chunks, heading section chunks, and observation
+chunks, but does not yet expose ranked search/filter UX.
+
+Graph validation checks relation targets from `relations`, `supersedes`, and
+`contradicts` against known memory IDs. `memory doctor` reports orphan targets as
+graph issues.
 
 Embeddings, when added, are cache data keyed by chunk and content hash:
 

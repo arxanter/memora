@@ -195,7 +195,7 @@ def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
 
 
 def status_summary(config: MemoryConfig) -> dict[str, Any]:
-    """Return a lightweight vault status summary for Stage 2."""
+    """Return a lightweight vault status summary."""
 
     report = validate_vault(config.vault_path)
     pending_count = sum(1 for document in report.documents if document.frontmatter.status == LifecycleStatus.PENDING)
@@ -208,25 +208,50 @@ def status_summary(config: MemoryConfig) -> dict[str, Any]:
         "issue_count": len(report.issues),
         "index_exists": config.index_file.exists(),
         "index_path": str(config.index_file),
-        "stage": "cli-skeleton",
+        "stage": "indexer",
     }
 
 
 def doctor_report(config: MemoryConfig) -> dict[str, Any]:
-    """Validate the vault schema using Stage 1 validators."""
+    """Validate vault schema and durable graph references."""
 
     report = validate_vault(config.vault_path)
+    schema_issues = [
+        {
+            "kind": "schema",
+            "path": str(issue.path),
+            "message": issue.message,
+        }
+        for issue in report.issues
+    ]
+    graph_payload = {
+        "ok": not schema_issues,
+        "documents": len(report.documents),
+        "links": 0,
+        "orphan_count": 0,
+        "issues": [],
+    }
+    graph_issues: list[dict[str, Any]] = []
+    if not schema_issues:
+        from agent_memory.indexer import validate_graph
+
+        graph_report = validate_graph(config)
+        graph_payload = graph_report.to_dict()
+        graph_issues = [
+            {
+                "kind": "graph",
+                **issue.to_dict(),
+            }
+            for issue in graph_report.issues
+        ]
+
+    issues = [*schema_issues, *graph_issues]
     return {
-        "ok": report.ok,
+        "ok": not issues,
         "vault_path": str(config.vault_path),
         "documents": len(report.documents),
-        "issues": [
-            {
-                "path": str(issue.path),
-                "message": issue.message,
-            }
-            for issue in report.issues
-        ],
+        "graph": graph_payload,
+        "issues": issues,
     }
 
 

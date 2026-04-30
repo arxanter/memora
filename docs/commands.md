@@ -72,10 +72,30 @@ memory remember --vault ./memory-vault --type decision --text "Use Markdown as d
 
 ### `memory reindex`
 
-Stage 2 placeholder.
+Implemented in Stage 4.
 
-The command signature is stable and returns structured output, but SQLite index
-rebuilding is planned for a later stage.
+Rebuilds `.agent-memory/index.sqlite` from canonical Markdown under
+`Memories/**/*.md`. The index is disposable cache data and can be recreated at
+any time from the vault files.
+
+Behavior:
+
+- Parses YAML frontmatter with the shared schema validator.
+- Computes document and chunk `content_hash` values.
+- Skips unchanged documents and preserves their existing chunks.
+- Populates `documents`, `memories`, `chunks`, `observations`, `links`, and
+  `chunk_fts`.
+- Reports graph orphan warnings for relation targets that are not present in the
+  vault.
+
+Use `--clean` to delete the existing SQLite file before rebuilding.
+
+Example:
+
+```bash
+memory reindex --vault ./memory-vault --json
+memory reindex --vault ./memory-vault --clean
+```
 
 ### `memory search`
 
@@ -108,11 +128,12 @@ count, and whether the disposable SQLite index exists.
 
 ### `memory doctor`
 
-Partially implemented in Stage 2.
+Expanded in Stage 4.
 
-Runs Stage 1 schema validation across `Memories/**/*.md` and reports document
-and issue counts. Link integrity, lifecycle consistency, missing source checks,
-and index rebuildability are planned for later stages.
+Runs schema validation across `Memories/**/*.md` and validates durable graph
+references. Missing relation targets are reported as graph issues and cause the
+command to exit non-zero. Lifecycle consistency, missing source checks, and
+index rebuildability checks are planned for later stages.
 
 ### `memory import`
 
@@ -130,9 +151,10 @@ for a later stage.
 
 ## JSON Output
 
-All Stage 2 commands support `--json` so coding agents can consume stable,
-structured responses. Placeholder commands return `implemented: false` while
-preserving the intended command signatures.
+All CLI commands support `--json` so coding agents can consume stable,
+structured responses. Retrieval and lifecycle commands that are not yet
+implemented return `implemented: false` while preserving the intended command
+signatures.
 
 ## MCP Tools
 
