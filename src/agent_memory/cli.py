@@ -21,6 +21,7 @@ from agent_memory.lifecycle import (
     supersede_memory,
 )
 from agent_memory.recall import recall_memory
+from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.vault import (
@@ -316,6 +317,30 @@ def brief(
         return
 
     console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
+
+
+@app.command("should-recall")
+def should_recall_command(
+    message: str = typer.Argument(..., help="User message to classify."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Decide whether a user request should be enriched with memory."""
+
+    payload = should_recall(message).to_dict()
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["should_recall"]:
+        console.print(
+            f"[green]Recall recommended[/green] "
+            f"(confidence={payload['confidence']:.2f}, triggers={payload['trigger_count']})"
+        )
+        for trigger in payload["triggers"]:
+            console.print(f"- {trigger['name']}: {trigger['description']}")
+        return
+
+    console.print(f"[yellow]No memory needed[/yellow] (confidence={payload['confidence']:.2f})")
 
 
 @app.command()

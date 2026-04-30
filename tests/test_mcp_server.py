@@ -2,12 +2,15 @@ from agent_memory.config import load_config
 from agent_memory.indexer import reindex_vault
 from agent_memory.mcp_server import (
     brief_tool,
+    build_context_tool,
     explain_recall_tool,
     inspect_tool,
+    mark_superseded_tool,
     mark_status_tool,
     recall_tool,
     remember_tool,
     search_tool,
+    should_recall_tool,
 )
 from agent_memory.schema import validate_markdown_file
 from agent_memory.vault import init_vault
@@ -201,6 +204,100 @@ def test_mcp_brief_uses_memory_brief_service(tmp_path):
     assert payload["sections"]["warnings"][0]["citations"] == ["C1"]
     assert payload["citations"][0]["path"] == remembered["relative_path"]
     assert "Citations:" in payload["markdown"]
+
+
+def test_mcp_should_recall_classifies_messages():
+    recall_payload = should_recall_tool("Where did we leave off on the previous implementation?")
+    no_recall_payload = should_recall_tool("Write a Python function that reverses a list.")
+
+    assert recall_payload["ok"] is True
+    assert recall_payload["tool"] == "should_recall"
+    assert recall_payload["should_recall"] is True
+    assert {trigger["name"] for trigger in recall_payload["triggers"]} & {"earlier_work", "history_or_status"}
+    assert no_recall_payload["ok"] is True
+    assert no_recall_payload["should_recall"] is False
+    assert no_recall_payload["triggers"] == []
+
+
+def test_mcp_build_context_skips_memory_when_policy_says_no():
+    payload = build_context_tool("Write a Python function that reverses a list.", budget=90)
+
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["tool"] == "build_context"
+    assert payload["task"] == "Write a Python function that reverses a list."
+    assert payload["budget"] == 90
+    assert payload["memory_needed"] is False
+    assert payload["policy"]["should_recall"] is False
+    assert payload["policy"]["trigger_count"] == 0
+    assert payload["policy"]["triggers"] == []
+    assert payload["markdown"] == ""
+    assert payload["brief"] is None
+    assert payload["citations"] == []
+
+
+def test_mcp_build_context_returns_brief_when_policy_recommends_recall(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "Build context should call memory brief after the recall policy recommends recall.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = build_context_tool(
+        "What did we decide about build context?",
+        110,
+        {"status": "pending"},
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "build_context"
+    assert payload["memory_needed"] is True
+    assert payload["policy"]["should_recall"] is True
+    assert payload["brief"]["tool"] == "brief"
+    assert payload["brief"]["sections"]["warnings"][0]["source_id"] == remembered["id"]
+    assert payload["citations"][0]["id"] == remembered["id"]
+
+
+def test_mcp_mark_superseded_wraps_lifecycle_service(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    old_memory = remember_tool(
+        {
+            "type": "decision",
+            "text": "Old MCP supersede wrapper decision.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+        },
+        vault=vault,
+    )
+    new_memory = remember_tool(
+        {
+            "type": "decision",
+            "text": "New MCP supersede wrapper decision.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+        },
+        vault=vault,
+    )
+
+    payload = mark_superseded_tool(old_memory["id"], new_memory["id"], vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "mark_superseded"
+    assert payload["old_id"] == old_memory["id"]
+    assert payload["by_id"] == new_memory["id"]
+    assert payload["mutated"] is True
+    assert payload["relation"] == "supersedes"
+    old_document = validate_markdown_file(vault / old_memory["relative_path"])
+    new_document = validate_markdown_file(vault / new_memory["relative_path"])
+    assert old_document.frontmatter.status == "superseded"
+    assert old_memory["id"] in new_document.frontmatter.supersedes
 
 
 def test_mcp_missing_inspect_has_stable_error_payload(tmp_path):

@@ -7,8 +7,9 @@ from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
-from agent_memory.lifecycle import mark_status
+from agent_memory.lifecycle import mark_status, supersede_memory
 from agent_memory.recall import recall_memory
+from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import (
     AuthorKind,
@@ -181,6 +182,69 @@ def brief_tool(
         )
 
 
+def should_recall_tool(message: str) -> JsonPayload:
+    """Classify whether a user request should be enriched with memory."""
+
+    payload = should_recall(message).to_dict()
+    payload.update({"tool": "should_recall"})
+    return payload
+
+
+def build_context_tool(
+    task: str,
+    budget: int = 1200,
+    filters: Optional[Mapping[str, Any]] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Build agent context by applying recall policy before generating a brief."""
+
+    policy = should_recall(task).to_dict()
+    try:
+        selected_budget = _budget(budget)
+    except Exception as exc:
+        return _error_payload(exc, code="invalid_budget", tool="build_context", task=task, policy=policy)
+
+    if not policy["should_recall"]:
+        return {
+            "ok": True,
+            "implemented": True,
+            "tool": "build_context",
+            "task": task,
+            "budget": selected_budget,
+            "memory_needed": False,
+            "policy": policy,
+            "markdown": "",
+            "brief": None,
+            "citations": [],
+        }
+
+    brief_payload = brief_tool(str(policy["query"]), selected_budget, filters, vault=vault)
+    if not brief_payload.get("ok"):
+        brief_payload.update(
+            {
+                "tool": "build_context",
+                "task": task,
+                "memory_needed": True,
+                "policy": policy,
+            }
+        )
+        return brief_payload
+
+    return {
+        "ok": True,
+        "implemented": True,
+        "tool": "build_context",
+        "task": task,
+        "budget": selected_budget,
+        "memory_needed": True,
+        "policy": policy,
+        "markdown": brief_payload["markdown"],
+        "brief": brief_payload,
+        "citations": brief_payload["citations"],
+    }
+
+
 def inspect_tool(memory_id: str, *, vault: Optional[PathLike] = None) -> JsonPayload:
     """Inspect one Markdown memory by id using the Stage 1 validator."""
 
@@ -266,6 +330,37 @@ def mark_status_tool(memory_id: str, status: str, *, vault: Optional[PathLike] =
         return _error_payload(exc, code="mark_status_failed", tool="mark_status", id=memory_id)
 
 
+def mark_superseded_tool(
+    old_id: str,
+    by_id: str,
+    reason: Optional[str] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Mark one memory superseded by another using the Stage 9 lifecycle service."""
+
+    try:
+        config = load_config(vault)
+        payload = supersede_memory(config, old_id, new_id=by_id, reason=reason).to_dict()
+        payload.update(
+            {
+                "tool": "mark_superseded",
+                "old_id": old_id,
+                "by_id": by_id,
+                "mutated": payload["mutation_count"] > 0,
+            }
+        )
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="mark_superseded_failed",
+            tool="mark_superseded",
+            old_id=old_id,
+            by_id=by_id,
+        )
+
+
 def create_server() -> Any:
     """Create a FastMCP server when the optional dependency is installed."""
 
@@ -309,6 +404,22 @@ def create_server() -> Any:
         return brief_tool(query, budget, filters)
 
     @server.tool()
+    def should_recall(message: str) -> JsonPayload:
+        """Classify whether a user request should be enriched with memory."""
+
+        return should_recall_tool(message)
+
+    @server.tool()
+    def build_context(
+        task: str,
+        budget: int = 1200,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> JsonPayload:
+        """Apply recall policy and return a memory brief only when useful."""
+
+        return build_context_tool(task, budget, filters)
+
+    @server.tool()
     def inspect(id: str) -> JsonPayload:
         """Inspect a canonical memory by id."""
 
@@ -329,6 +440,12 @@ def create_server() -> Any:
         """Set a memory lifecycle status."""
 
         return mark_status_tool(id, status)
+
+    @server.tool()
+    def mark_superseded(old_id: str, by_id: str, reason: Optional[str] = None) -> JsonPayload:
+        """Mark one memory superseded by another."""
+
+        return mark_superseded_tool(old_id, by_id, reason)
 
     return server
 
@@ -432,14 +549,17 @@ def _error_payload(exc: Exception, *, code: str, **details: Any) -> JsonPayload:
 
 __all__ = [
     "brief_tool",
+    "build_context_tool",
     "create_server",
     "explain_recall_tool",
     "inspect_tool",
     "main",
+    "mark_superseded_tool",
     "mark_status_tool",
     "recall_tool",
     "remember_tool",
     "search_tool",
+    "should_recall_tool",
 ]
 
 

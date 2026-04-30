@@ -15,6 +15,7 @@ memory reindex
 memory search "query"
 memory recall "query" --budget 1200
 memory brief "query" --budget 1200
+memory should-recall "user message"
 memory status
 memory doctor
 memory supersede <old_id> --by <new_id>
@@ -240,6 +241,35 @@ memory brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
 memory brief "Obsidian sync decisions" --vault ./memory-vault --json
 ```
 
+### `memory should-recall`
+
+Implemented in Stage 10.
+
+Classifies a user request with deterministic heuristics and no LLM dependency.
+It helps agents decide whether to call `memory brief` before answering. Human
+output is concise by default, and `--json` returns the stable policy payload with
+`should_recall`, `confidence`, and matched `triggers`.
+
+Recall is recommended when a request asks about previous decisions, earlier work,
+preferences, this repo/project/codebase, or project history/status. Generic
+coding questions and direct commands such as `git status` should not trigger
+memory.
+
+Examples:
+
+```bash
+memory should-recall "What did we decide about embeddings?"
+memory should-recall "Write a Python function that reverses a list." --json
+```
+
+Agent usage pattern:
+
+```bash
+if memory should-recall "$USER_MESSAGE" --json | jq -e '.should_recall'; then
+  memory brief "$USER_MESSAGE" --budget 1200
+fi
+```
+
 ### `memory status`
 
 Implemented in Stage 2.
@@ -352,9 +382,12 @@ remember(memory)
 search(query, filters)
 recall(query, budget, filters)
 brief(query, budget, filters)
+should_recall(message)
+build_context(task, budget, filters)
 inspect(id)
 explain_recall(query, budget, filters)
 mark_status(id, status)
+mark_superseded(old_id, by_id, reason)
 ```
 
 MCP responses should include:
@@ -370,8 +403,18 @@ keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
 `recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
 filter keys, plus `include_related` and `semantic`. `brief(query, budget,
 filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
-`citations`, `budget`, and `used_tokens_estimate`. `mark_status(id, status)` is
-implemented in Stage 9 and mutates Markdown frontmatter through the lifecycle
+`citations`, `budget`, and `used_tokens_estimate`.
+
+`should_recall(message)` is implemented in Stage 10 and returns the same
+deterministic recall policy payload as `memory should-recall --json`.
+`build_context(task, budget, filters)` applies that policy first. When recall is
+recommended, it returns a Memory Brief under `brief` plus top-level `markdown`
+and `citations`; when recall is not recommended, it returns `memory_needed:
+false`, empty Markdown, no citations, and does not require a vault or index.
+
+`mark_status(id, status)` is implemented in Stage 9 and mutates Markdown
+frontmatter through the lifecycle service. `mark_superseded(old_id, by_id,
+reason)` is a Stage 10 MCP wrapper around the Stage 9 supersede lifecycle
 service. `explain_recall` remains a placeholder until later stages.
 
 ## Mutation Policy

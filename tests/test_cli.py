@@ -121,6 +121,24 @@ def test_brief_command_generates_markdown_and_json(tmp_path):
     assert payload["sections"]["current_decisions"][0]["citations"] == ["C1"]
 
 
+def test_should_recall_command_emits_human_and_json_output():
+    human_result = runner.invoke(app, ["should-recall", "What did we decide about embeddings?"])
+    json_result = runner.invoke(
+        app,
+        ["should-recall", "Write a Python function that reverses a list.", "--json"],
+    )
+
+    assert human_result.exit_code == 0, human_result.output
+    assert "Recall recommended" in human_result.output
+    assert "previous_decision" in human_result.output
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["should_recall"] is False
+    assert payload["triggers"] == []
+
+
 def test_recall_command_packs_indexed_chunks_under_budget(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])

@@ -66,6 +66,11 @@ from agent_memory.recall import (
     pack_candidates,
     recall_memory,
 )
+from agent_memory.recall_policy import (
+    RecallDecision,
+    RecallTrigger,
+    should_recall,
+)
 from agent_memory.schema import (
     AuthorKind,
     AuthorMetadata,
@@ -128,7 +133,9 @@ __all__ = [
     "PackedChunk",
     "RecallCandidate",
     "RecallConfig",
+    "RecallDecision",
     "RecallResponse",
+    "RecallTrigger",
     "Relation",
     "RelationType",
     "RememberResult",
@@ -170,6 +177,7 @@ __all__ = [
     "render_memory_markdown",
     "review_queue",
     "search_memory",
+    "should_recall",
     "split_document_chunks",
     "status_summary",
     "supersede_memory",
