@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence, Union
 
+import yaml
 from pydantic import ValidationError
 
 from agent_memory.config import MemoryConfig
@@ -20,6 +21,7 @@ from agent_memory.schema import (
     parse_markdown_document,
     validate_vault,
 )
+from agent_memory.sync import vault_lock
 
 PathLike = Union[Path, str]
 
@@ -122,6 +124,13 @@ class KeywordSearchResult:
 
 def reindex_vault(config: MemoryConfig, *, clean: bool = False) -> ReindexResult:
     """Rebuild or incrementally refresh the disposable SQLite index."""
+
+    with vault_lock(config):
+        return _reindex_vault_unlocked(config, clean=clean)
+
+
+def _reindex_vault_unlocked(config: MemoryConfig, *, clean: bool = False) -> ReindexResult:
+    """Rebuild or incrementally refresh the disposable SQLite index without taking a lock."""
 
     config.index_file.parent.mkdir(parents=True, exist_ok=True)
     if clean and config.index_file.exists():
@@ -413,7 +422,7 @@ def _read_valid_memory_documents(config: MemoryConfig) -> tuple[tuple[MemoryDocu
             raw_markdown = path.read_text(encoding="utf-8")
             document = parse_markdown_document(raw_markdown, path=path)
             parsed.append((document, raw_markdown, path.relative_to(config.vault_path).as_posix()))
-        except (OSError, ValueError, ValidationError) as exc:
+        except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
             issues.append(ValidationIssue(path=path, message=str(exc)))
 
     if issues:

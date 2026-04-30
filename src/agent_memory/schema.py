@@ -291,7 +291,7 @@ def validate_vault(vault_path: Union[Path, str]) -> VaultValidationReport:
     for path in iter_memory_markdown_files(root):
         try:
             documents.append(validate_markdown_file(path))
-        except (OSError, ValueError, ValidationError) as exc:
+        except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
             issues.append(ValidationIssue(path=path, message=str(exc)))
 
     return VaultValidationReport(documents=tuple(documents), issues=tuple(issues))

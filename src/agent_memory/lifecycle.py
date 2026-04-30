@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import re
-import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +20,7 @@ from agent_memory.schema import (
     iter_memory_markdown_files,
     parse_markdown_document,
 )
+from agent_memory.sync import atomic_write_many, atomic_write_text, vault_lock
 
 _FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\n(?P<yaml>.*?)(?:\n---[ \t]*)(?:\n(?P<body>.*))?\Z",
@@ -169,6 +168,24 @@ def mark_status(
     """Set a memory lifecycle status and append an audit history entry."""
 
     selected_status = _status_value(status)
+    with vault_lock(config):
+        return _mark_status_unlocked(
+            config,
+            memory_id,
+            selected_status,
+            reason=reason,
+            _action=_action,
+        )
+
+
+def _mark_status_unlocked(
+    config: MemoryConfig,
+    memory_id: str,
+    selected_status: str,
+    *,
+    reason: Optional[str],
+    _action: str,
+) -> LifecycleResult:
     record = _find_memory(config, memory_id)
     previous_status = str(record.data.get("status"))
     if previous_status == selected_status:
@@ -231,6 +248,17 @@ def supersede_memory(
 ) -> LifecycleResult:
     """Mark an old memory superseded and link it from the replacement memory."""
 
+    with vault_lock(config):
+        return _supersede_memory_unlocked(config, old_id, new_id=new_id, reason=reason)
+
+
+def _supersede_memory_unlocked(
+    config: MemoryConfig,
+    old_id: str,
+    *,
+    new_id: str,
+    reason: Optional[str],
+) -> LifecycleResult:
     if old_id == new_id:
         raise ValueError("old_id and new_id must be different")
 
@@ -299,6 +327,17 @@ def contradict_memories(
 ) -> LifecycleResult:
     """Record a contradiction edge from the first memory to the second."""
 
+    with vault_lock(config):
+        return _contradict_memories_unlocked(config, id1, id2, reason=reason)
+
+
+def _contradict_memories_unlocked(
+    config: MemoryConfig,
+    id1: str,
+    id2: str,
+    *,
+    reason: Optional[str],
+) -> LifecycleResult:
     if id1 == id2:
         raise ValueError("contradicting memory ids must be different")
 
@@ -350,6 +389,11 @@ def contradict_memories(
 def decay_memories(config: MemoryConfig, *, now: Optional[datetime] = None) -> LifecycleResult:
     """Mark active memories with expired valid_to dates as stale."""
 
+    with vault_lock(config):
+        return _decay_memories_unlocked(config, now=now)
+
+
+def _decay_memories_unlocked(config: MemoryConfig, *, now: Optional[datetime] = None) -> LifecycleResult:
     selected_now = now or _now()
     today = selected_now.date()
     updates: list[tuple[_MemoryRecord, str, str]] = []
@@ -414,6 +458,16 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
 def touch_last_used(config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None) -> None:
     """Best-effort frontmatter touch after recall without changing memory status."""
 
+    with vault_lock(config):
+        _touch_last_used_unlocked(config, memory_ids, when=when)
+
+
+def _touch_last_used_unlocked(
+    config: MemoryConfig,
+    memory_ids: Iterable[str],
+    *,
+    when: Optional[datetime] = None,
+) -> None:
     selected_when = when or _now()
     targets = set(memory_ids)
     if not targets:
@@ -469,22 +523,11 @@ def _render_updated(data: dict[str, Any], body: str, *, path: Path) -> str:
 
 
 def _atomic_replace(path: Path, content: str) -> None:
-    _atomic_replace_many(((path, content),))
+    atomic_write_text(path, content)
 
 
 def _atomic_replace_many(files: Sequence[tuple[Path, str]]) -> None:
-    temp_paths: list[Path] = []
-    try:
-        for path, content in files:
-            tmp_path = path.with_name(f".{path.name}.tmp-{secrets.token_hex(4)}")
-            tmp_path.write_text(content, encoding="utf-8")
-            temp_paths.append(tmp_path)
-        for tmp_path, (path, _) in zip(temp_paths, files):
-            os.replace(tmp_path, path)
-    finally:
-        for tmp_path in temp_paths:
-            if tmp_path.exists():
-                tmp_path.unlink()
+    atomic_write_many(files)
 
 
 def _append_history(

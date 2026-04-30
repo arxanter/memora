@@ -24,6 +24,7 @@ from agent_memory.recall import recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
+from agent_memory.sync import detect_sync_conflicts
 from agent_memory.vault import (
     doctor_report,
     init_vault,
@@ -397,6 +398,40 @@ def doctor(
         for warning in payload.get("warnings", []):
             console.print(f"- {warning['path']}: {warning['message']}")
         raise typer.Exit(1)
+
+
+@app.command()
+def conflicts(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Detect Markdown sync conflicts that require manual resolution."""
+
+    try:
+        config = load_config(vault)
+        payload = detect_sync_conflicts(config).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="conflicts_failed")
+
+    if json_output:
+        _print_json(payload)
+        if not payload["ok"]:
+            raise typer.Exit(1)
+        return
+
+    if payload["ok"]:
+        console.print("[green]No Markdown sync conflicts found.[/green]")
+        return
+
+    console.print(f"[red]Found {payload['conflict_count']} Markdown sync conflict(s).[/red]")
+    for issue in payload["issues"]:
+        location = issue["path"]
+        if "line" in issue:
+            location = f"{location}:{issue['line']}"
+        console.print(f"- {issue['kind']} at {location}: {issue['message']}")
+        if issue.get("paths"):
+            console.print(f"  paths: {', '.join(issue['paths'])}")
+    raise typer.Exit(1)
 
 
 @app.command()

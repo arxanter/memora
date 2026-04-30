@@ -26,6 +26,7 @@ from agent_memory.schema import (
     parse_markdown_document,
     validate_vault,
 )
+from agent_memory.sync import atomic_write_text, detect_sync_conflicts, vault_lock
 
 MEMORY_TYPE_DIRECTORIES: dict[MemoryType, str] = {
     MemoryType.FACT: "facts",
@@ -173,10 +174,11 @@ def remember_memory(
     markdown = render_memory_markdown(frontmatter, cleaned_text)
     parse_markdown_document(markdown)
 
-    target_dir = config.memory_root / MEMORY_TYPE_DIRECTORIES[memory_type]
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / f"{memory_id}-{_slugify(cleaned_text)}.md"
-    target_path.write_text(markdown, encoding="utf-8")
+    with vault_lock(config):
+        target_dir = config.memory_root / MEMORY_TYPE_DIRECTORIES[memory_type]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{memory_id}-{_slugify(cleaned_text)}.md"
+        atomic_write_text(target_path, markdown)
 
     return RememberResult(
         memory_id=memory_id,
@@ -217,6 +219,7 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
     """Validate vault schema and durable graph references."""
 
     report = validate_vault(config.vault_path)
+    conflict_report = detect_sync_conflicts(config)
     schema_issues = [
         {
             "kind": "schema",
@@ -247,12 +250,21 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
         ]
 
     contradiction_warnings = [] if schema_issues else _contradiction_warnings(report.documents, config)
-    issues = [*schema_issues, *graph_issues]
+    sync_issues = []
+    for issue in conflict_report.conflicts:
+        if issue.kind == "invalid_frontmatter":
+            continue
+        payload = issue.to_dict(config.vault_path)
+        payload["kind"] = f"sync:{issue.kind}"
+        sync_issues.append(payload)
+    issues = [*schema_issues, *graph_issues, *sync_issues]
     return {
         "ok": not issues,
         "vault_path": str(config.vault_path),
         "documents": len(report.documents),
         "graph": graph_payload,
+        "conflicts": conflict_report.to_dict(),
+        "conflict_count": conflict_report.to_dict()["conflict_count"],
         "warnings": contradiction_warnings,
         "warning_count": len(contradiction_warnings),
         "contradiction_count": len(contradiction_warnings),

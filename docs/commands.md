@@ -18,6 +18,7 @@ memory brief "query" --budget 1200
 memory should-recall "user message"
 memory status
 memory doctor
+memory conflicts
 memory supersede <old_id> --by <new_id>
 memory contradict <id1> <id2>
 memory mark <id> --status stale
@@ -79,7 +80,7 @@ memory remember --vault ./memory-vault --type decision --text "Use Markdown as d
 
 ### `memory reindex`
 
-Implemented in Stage 4.
+Implemented in Stage 4 and expanded in Stage 11.
 
 Rebuilds `.agent-memory/index.sqlite` from canonical Markdown under
 `Memories/**/*.md`. The index is disposable cache data and can be recreated at
@@ -94,8 +95,12 @@ Behavior:
   `chunk_fts`.
 - Reports graph orphan warnings for relation targets that are not present in the
   vault.
+- Uses the local vault lock so reindex does not race with Agent Memory Markdown
+  writes.
 
-Use `--clean` to delete the existing SQLite file before rebuilding.
+Use `--clean` to delete the existing SQLite file before rebuilding. This is the
+recommended recovery path after syncing a vault on another machine, resolving
+Markdown conflicts, or encountering a stale/corrupt local index.
 
 Example:
 
@@ -280,13 +285,33 @@ count, and whether the disposable SQLite index exists.
 
 ### `memory doctor`
 
-Expanded in Stages 4 and 9.
+Expanded in Stages 4, 9, and 11.
 
 Runs schema validation across `Memories/**/*.md` and validates durable graph
 references. Missing relation targets are reported as graph issues and cause the
 command to exit non-zero. Recorded `contradicts` links are reported as warnings
 so users can review conflicts without treating an intentional contradiction edge
-as invalid Markdown.
+as invalid Markdown. Stage 11 also includes Markdown sync conflict detection;
+conflict markers and duplicate memory IDs are reported as sync issues.
+
+### `memory conflicts`
+
+Implemented in Stage 11.
+
+Detects practical Markdown sync conflicts without attempting to resolve them.
+The command checks syncable Markdown for conflict markers and canonical
+`Memories/**/*.md` files for duplicate memory IDs and invalid frontmatter.
+
+The command exits non-zero when conflicts are found. `--json` returns
+`conflict_count`, `warning_count`, and structured issue entries with relative
+paths for agent consumption.
+
+Example:
+
+```bash
+memory conflicts --vault ./memory-vault
+memory conflicts --vault ./memory-vault --json
+```
 
 ### `memory mark`
 
