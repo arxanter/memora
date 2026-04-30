@@ -9,6 +9,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from agent_memory.config import MemoryConfig, RecallConfig
 from agent_memory.indexer import estimate_tokens
+from agent_memory.lifecycle import touch_last_used
 from agent_memory.retrieval import SearchFilters, search_memory
 from agent_memory.schema import RelationType
 
@@ -154,6 +155,10 @@ def recall_memory(
     if selected_filters.status is None:
         candidates = _remove_superseded_targets(config, candidates)
     chunks = pack_candidates(candidates, budget=selected_budget, recall_config=config.recall)
+    try:
+        touch_last_used(config, (chunk.document_id for chunk in chunks))
+    except Exception:
+        pass
     return RecallResponse(
         config=config,
         query=search_response.query,

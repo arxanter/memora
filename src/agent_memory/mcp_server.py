@@ -7,6 +7,7 @@ from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
+from agent_memory.lifecycle import mark_status
 from agent_memory.recall import recall_memory
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import (
@@ -242,21 +243,27 @@ def explain_recall_tool(
 
 
 def mark_status_tool(memory_id: str, status: str, *, vault: Optional[PathLike] = None) -> JsonPayload:
-    """Stage 3 non-mutating placeholder for future lifecycle transitions."""
+    """Mutate a memory lifecycle status using the shared lifecycle service."""
 
     try:
         selected_status = LifecycleStatus(status).value
     except Exception as exc:
         return _error_payload(exc, code="invalid_status", tool="mark_status", id=memory_id)
 
-    return _placeholder_tool(
-        "mark_status",
-        vault=vault,
-        id=memory_id,
-        status=selected_status,
-        mutated=False,
-        citations=[],
-    )
+    try:
+        config = load_config(vault)
+        payload = mark_status(config, memory_id, selected_status).to_dict()
+        payload.update(
+            {
+                "tool": "mark_status",
+                "id": memory_id,
+                "status": selected_status,
+                "mutated": payload["mutation_count"] > 0,
+            }
+        )
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="mark_status_failed", tool="mark_status", id=memory_id)
 
 
 def create_server() -> Any:
@@ -319,7 +326,7 @@ def create_server() -> Any:
 
     @server.tool()
     def mark_status(id: str, status: str) -> JsonPayload:
-        """Request a lifecycle status change. Stage 3 does not mutate."""
+        """Set a memory lifecycle status."""
 
         return mark_status_tool(id, status)
 

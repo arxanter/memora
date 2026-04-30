@@ -78,43 +78,51 @@ def test_mcp_inspect_returns_memory_with_citation(tmp_path):
     assert payload["citations"] == remembered["citations"]
 
 
-def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
+def test_mcp_placeholder_explain_recall_has_golden_payload(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
     vault_path = str(vault.resolve())
 
-    payloads = [
-        explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault),
-        mark_status_tool("mem_20260430_test01", "active", vault=vault),
-    ]
+    payload = explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault)
 
-    assert payloads == [
+    assert payload == {
+        "ok": True,
+        "implemented": False,
+        "command": "explain_recall",
+        "message": "explain_recall is a Stage 2 CLI placeholder; implementation is planned for later stages.",
+        "vault_path": vault_path,
+        "query": "agent memory",
+        "budget": 600,
+        "filters": {"scope": "project"},
+        "explanation": [],
+        "citations": [],
+        "tool": "explain_recall",
+    }
+
+
+def test_mcp_mark_status_mutates_memory(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
         {
-            "ok": True,
-            "implemented": False,
-            "command": "explain_recall",
-            "message": "explain_recall is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-            "vault_path": vault_path,
-            "query": "agent memory",
-            "budget": 600,
-            "filters": {"scope": "project"},
-            "explanation": [],
-            "citations": [],
-            "tool": "explain_recall",
+            "type": "fact",
+            "text": "MCP mark status updates lifecycle frontmatter.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
         },
-        {
-            "ok": True,
-            "implemented": False,
-            "command": "mark_status",
-            "message": "mark_status is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-            "vault_path": vault_path,
-            "id": "mem_20260430_test01",
-            "status": "active",
-            "mutated": False,
-            "citations": [],
-            "tool": "mark_status",
-        },
-    ]
+        vault=vault,
+    )
+
+    payload = mark_status_tool(remembered["id"], "stale", vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "mark_status"
+    assert payload["implemented"] is True
+    assert payload["mutated"] is True
+    assert payload["status"] == "stale"
+    assert payload["citations"] == remembered["citations"]
+    document = validate_markdown_file(vault / remembered["relative_path"])
+    assert document.frontmatter.status == "stale"
 
 
 def test_mcp_search_uses_retrieval_service(tmp_path):

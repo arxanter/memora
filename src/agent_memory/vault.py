@@ -20,6 +20,7 @@ from agent_memory.schema import (
     MemoryScope,
     MemoryType,
     Observation,
+    RelationType,
     SCHEMA_VERSION,
     SourceRef,
     parse_markdown_document,
@@ -245,12 +246,16 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
             for issue in graph_report.issues
         ]
 
+    contradiction_warnings = [] if schema_issues else _contradiction_warnings(report.documents, config)
     issues = [*schema_issues, *graph_issues]
     return {
         "ok": not issues,
         "vault_path": str(config.vault_path),
         "documents": len(report.documents),
         "graph": graph_payload,
+        "warnings": contradiction_warnings,
+        "warning_count": len(contradiction_warnings),
+        "contradiction_count": len(contradiction_warnings),
         "issues": issues,
     }
 
@@ -265,6 +270,43 @@ def placeholder_result(command: str, **details: Any) -> dict[str, Any]:
         "message": f"{command} is a Stage 2 CLI placeholder; implementation is planned for later stages.",
         **details,
     }
+
+
+def _contradiction_warnings(documents: Iterable[Any], config: MemoryConfig) -> list[dict[str, Any]]:
+    known_paths = {
+        document.frontmatter.id: (
+            document.path.relative_to(config.vault_path).as_posix()
+            if document.path and document.path.is_absolute()
+            else str(document.path or "")
+        )
+        for document in documents
+    }
+    warnings: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for document in documents:
+        frontmatter = document.frontmatter
+        targets = list(frontmatter.contradicts)
+        targets.extend(
+            relation.target
+            for relation in frontmatter.relations
+            if relation.type == RelationType.CONTRADICTS
+        )
+        for target in targets:
+            signature = (frontmatter.id, target)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            warnings.append(
+                {
+                    "kind": "contradiction",
+                    "path": known_paths.get(frontmatter.id, ""),
+                    "from_id": frontmatter.id,
+                    "to_id": target,
+                    "relation": RelationType.CONTRADICTS.value,
+                    "message": f"contradiction recorded: {frontmatter.id} contradicts {target}",
+                }
+            )
+    return warnings
 
 
 def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:

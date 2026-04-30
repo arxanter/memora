@@ -17,6 +17,12 @@ memory recall "query" --budget 1200
 memory brief "query" --budget 1200
 memory status
 memory doctor
+memory supersede <old_id> --by <new_id>
+memory contradict <id1> <id2>
+memory mark <id> --status stale
+memory decay
+memory review
+memory reject <id>
 memory import <path>
 memory export --format markdown
 ```
@@ -244,12 +250,77 @@ count, and whether the disposable SQLite index exists.
 
 ### `memory doctor`
 
-Expanded in Stage 4.
+Expanded in Stages 4 and 9.
 
 Runs schema validation across `Memories/**/*.md` and validates durable graph
 references. Missing relation targets are reported as graph issues and cause the
-command to exit non-zero. Lifecycle consistency, missing source checks, and
-index rebuildability checks are planned for later stages.
+command to exit non-zero. Recorded `contradicts` links are reported as warnings
+so users can review conflicts without treating an intentional contradiction edge
+as invalid Markdown.
+
+### `memory mark`
+
+Implemented in Stage 9.
+
+Updates one memory's durable lifecycle `status` in Markdown frontmatter and
+appends an audit entry under `history`. Terminal lifecycle states (`stale`,
+`superseded`, and `rejected`) set `valid_to` when it is missing. Reactivating a
+memory with `active` or `pending` clears `valid_to`.
+
+Example:
+
+```bash
+memory mark mem_20260430_example --status stale --vault ./memory-vault --json
+```
+
+### `memory reject`
+
+Implemented in Stage 9.
+
+Marks a memory `rejected`, sets `valid_to` when missing, and records a `reject`
+history entry. Rejected memory is excluded from default search, recall, and brief
+generation unless `--status rejected` is passed explicitly.
+
+### `memory supersede`
+
+Implemented in Stage 9.
+
+Marks `<old_id>` as `superseded`, sets its `valid_to` when missing, appends
+`<old_id>` to the replacement memory's `supersedes` list, and writes audit
+history entries to both Markdown files. The two file updates are prepared before
+replacement so the status and relation are updated together for Stage 9 needs.
+
+Example:
+
+```bash
+memory supersede mem_old --by mem_new --vault ./memory-vault --json
+```
+
+### `memory contradict`
+
+Implemented in Stage 9.
+
+Records a durable contradiction edge from the first memory to the second by
+appending to `contradicts`. The target memory also receives an audit history
+entry. Contradictions are shown in `memory doctor` warnings and in Memory Brief
+open-question bullets when connected to recalled memory.
+
+### `memory decay`
+
+Implemented in Stage 9.
+
+Scans active memories and marks any memory with an elapsed `valid_to` date as
+`stale`. This is intentionally conservative: it does not infer age-based decay or
+automatic recall policy.
+
+### `memory review`
+
+Implemented in Stage 9.
+
+Lists pending agent-generated memory that needs human review. Agent-created MCP
+memories still default to `pending` unless config opts into direct writes, and
+pending memory remains excluded from default recall/search/brief behavior unless
+requested with `--status pending`.
 
 ### `memory import`
 
@@ -299,8 +370,9 @@ keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
 `recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
 filter keys, plus `include_related` and `semantic`. `brief(query, budget,
 filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
-`citations`, `budget`, and `used_tokens_estimate`. `explain_recall` and
-`mark_status` remain placeholders until later stages.
+`citations`, `budget`, and `used_tokens_estimate`. `mark_status(id, status)` is
+implemented in Stage 9 and mutates Markdown frontmatter through the lifecycle
+service. `explain_recall` remains a placeholder until later stages.
 
 ## Mutation Policy
 
@@ -313,3 +385,7 @@ Default retrieval behavior:
 - Exclude `pending` unless explicitly requested.
 - Exclude `rejected`.
 - Exclude `superseded` unless explicitly requested or shown as a warning.
+
+Recall updates `last_used_at` in Markdown frontmatter on a best-effort basis
+after chunks are packed. This field is informational metadata and is not required
+for indexing correctness.

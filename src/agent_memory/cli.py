@@ -12,6 +12,14 @@ from rich.console import Console
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
 from agent_memory.indexer import reindex_vault
+from agent_memory.lifecycle import (
+    contradict_memories,
+    decay_memories,
+    mark_status,
+    reject_memory,
+    review_queue,
+    supersede_memory,
+)
 from agent_memory.recall import recall_memory
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
@@ -307,7 +315,7 @@ def brief(
         _print_json(payload)
         return
 
-    console.print(payload["markdown"], markup=False, end="")
+    console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
 
 
 @app.command()
@@ -353,11 +361,163 @@ def doctor(
 
     if payload["ok"]:
         console.print(f"[green]Doctor passed[/green]: {payload['documents']} memory files validated.")
+        if payload.get("warning_count"):
+            console.print(f"[yellow]Warnings:[/yellow] {payload['warning_count']}")
+            for warning in payload.get("warnings", []):
+                console.print(f"- {warning['path']}: {warning['message']}")
     else:
         console.print(f"[red]Doctor found {len(payload['issues'])} issue(s).[/red]")
         for issue in payload["issues"]:
             console.print(f"- {issue['path']}: {issue['message']}")
+        for warning in payload.get("warnings", []):
+            console.print(f"- {warning['path']}: {warning['message']}")
         raise typer.Exit(1)
+
+
+@app.command()
+def mark(
+    memory_id: str = typer.Argument(..., help="Memory id to update."),
+    status: LifecycleStatus = typer.Option(..., "--status", help="Lifecycle status to set."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Optional audit reason."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Set a memory lifecycle status."""
+
+    try:
+        config = load_config(vault)
+        payload = mark_status(config, memory_id, status, reason=reason).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="mark_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["mutation_count"] == 0:
+        console.print(f"[yellow]{payload['id']} already has status {payload['status']}.[/yellow]")
+        return
+    mutation = payload["mutations"][0]
+    console.print(
+        f"[green]Updated memory:[/green] {mutation['id']} "
+        f"{mutation['previous_status']} -> {mutation['status']}"
+    )
+
+
+@app.command()
+def reject(
+    memory_id: str = typer.Argument(..., help="Memory id to reject."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Optional audit reason."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Reject a memory so default retrieval excludes it."""
+
+    try:
+        config = load_config(vault)
+        payload = reject_memory(config, memory_id, reason=reason).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="reject_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["mutation_count"] == 0:
+        console.print(f"[yellow]{payload['id']} already has status rejected.[/yellow]")
+        return
+    console.print(f"[green]Rejected memory:[/green] {memory_id}")
+
+
+@app.command()
+def supersede(
+    old_id: str = typer.Argument(..., help="Superseded memory id."),
+    by_id: str = typer.Option(..., "--by", help="Replacement memory id."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Optional audit reason."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Mark one memory superseded by another and create the graph relation."""
+
+    try:
+        config = load_config(vault)
+        payload = supersede_memory(config, old_id, new_id=by_id, reason=reason).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="supersede_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Superseded memory:[/green] {old_id} by {by_id}")
+
+
+@app.command()
+def contradict(
+    id1: str = typer.Argument(..., help="First memory id."),
+    id2: str = typer.Argument(..., help="Second memory id."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Optional audit reason."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Record a contradiction between two memories."""
+
+    try:
+        config = load_config(vault)
+        payload = contradict_memories(config, id1, id2, reason=reason).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="contradict_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Recorded contradiction:[/green] {id1} contradicts {id2}")
+
+
+@app.command()
+def decay(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Mark active memories with elapsed valid_to dates as stale."""
+
+    try:
+        config = load_config(vault)
+        payload = decay_memories(config).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="decay_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Decay complete:[/green] {payload['changed']} memory file(s) marked stale")
+
+
+@app.command()
+def review(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """List pending agent-generated memories awaiting review."""
+
+    try:
+        config = load_config(vault)
+        payload = review_queue(config).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="review_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["items"]:
+        console.print("[green]No pending agent memories.[/green]")
+        return
+    console.print(f"[yellow]Pending agent memories:[/yellow] {payload['pending_count']}")
+    for item in payload["items"]:
+        console.print(f"- {item['id']} [dim]{item['relative_path']}[/dim]")
 
 
 @app.command("import")

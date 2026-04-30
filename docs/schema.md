@@ -64,6 +64,14 @@ observations:
   - category: decision
     text: SQLite is a disposable index, not durable state.
 tags: [memory, retrieval, obsidian]
+last_used_at: 2026-04-30T12:30:00+02:00
+history:
+  - at: 2026-04-30T12:15:00+02:00
+    action: superseded
+    actor: agent-memory
+    from_status: active
+    to_status: superseded
+    by: mem_20260430_replacement
 ```
 
 The Stage 1 implementation lives in `src/agent_memory/schema.py`. `MemoryFrontmatter`
@@ -86,6 +94,11 @@ Conditional fields:
 - `source` and `confidence` are required for agent-generated memory.
 - User-authored memory may omit `confidence` and should be treated as high-authority by default.
 - `migration` is optional and records durable schema rewrites with `from_schema_version`, `migrated_at`, optional `tool`, and optional `notes`.
+- `history` is optional audit metadata. Lifecycle commands append deterministic
+  entries with `at`, `action`, `actor`, `from_status`, `to_status`, and optional
+  relation-specific fields such as `target`, `by`, or `reason`.
+- `last_used_at` is optional metadata updated after recall on a best-effort
+  basis. It does not affect schema validity or durable graph validation.
 
 ## Supported Types
 
@@ -121,6 +134,17 @@ Initial relation vocabulary:
 - `belongs_to_project`
 
 Lifecycle links such as supersession and contradiction belong in durable Markdown, not only in SQLite.
+
+Stage 9 lifecycle behavior stores supersession links in the top-level
+`supersedes` list on the replacement memory and contradiction links in the
+top-level `contradicts` list on the source memory. The indexer projects both
+lists into `links`, alongside explicit `relations[]` entries, so graph traversal,
+brief generation, and doctor checks all use the same relation vocabulary.
+
+Default retrieval includes `active` and `stale` memories. It excludes `pending`,
+`rejected`, and `superseded` memories unless a caller passes an explicit
+`status` filter. Stale memory can still appear in warning sections, while
+superseded and rejected memory are hidden by default.
 
 ## SQLite Cache
 

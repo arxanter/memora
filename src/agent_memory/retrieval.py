@@ -252,6 +252,8 @@ def search_memory(
     finally:
         connection.close()
 
+    if selected_filters.status is None and superseded_ids:
+        candidates = [candidate for candidate in candidates if candidate.document_id not in superseded_ids]
     results = [
         _rank_candidate(candidate, reference_time, connected_primary_ids, superseded_ids)
         for candidate in candidates
