@@ -63,8 +63,9 @@ Typical data flow:
    Markdown into `Memories/`.
 3. `memory reindex` parses canonical Markdown into `.agent-memory/index.sqlite`,
    including documents, chunks, observations, graph links, and SQLite FTS5 data.
-4. `memory search` retrieves ranked memory using keyword search, metadata
-   filters, lifecycle state, graph signals, and optional semantic vectors.
+4. `memory search` retrieves ranked memory using deterministic query planning,
+   fallback variants, keyword search, metadata filters, lifecycle state, graph
+   signals, and optional semantic vectors.
 5. `memory recall` packs ranked chunks under a strict token budget and returns
    citations for each chunk.
 6. `memory brief` renders the packed recall output into stable agent-facing
@@ -212,17 +213,27 @@ Cursor, and custom MCP clients.
 ## Semantic Search
 
 Semantic search is optional and disabled by default. Keyword FTS search works
-without embeddings.
+without embeddings. The default retrieval mode is `auto`: it uses hybrid
+keyword-plus-vector search when a semantic provider is configured, and text-only
+search otherwise.
 
-To enable semantic retrieval, configure `.agent-memory/config.yaml` with a
-provider. The recommended privacy-preserving shape is a local command provider:
+For production use under the current project constraint, embeddings must come
+from the same AI model/session that the user is interacting with. The standalone
+CLI and MCP server cannot currently access Cursor's active session embeddings,
+so the recommended path is to leave semantic search disabled and use `auto`
+mode's text/query-planning fallback.
+
+Agent Memory does not ship first-class OpenAI, Ollama, FastEmbed, or other
+public/open/local model providers. It keeps a pre-existing generic command
+protocol for compatibility, but this is not the recommended production path
+unless the command is backed by an approved same-session embedding bridge:
 
 ```yaml
 semantic:
   provider: local-command
-  model: nomic-embed-text
+  model: same-session-model
   command:
-    - ./scripts/embed-local
+    - ./scripts/embed-session
   timeout_seconds: 30
   vector_limit: 100
   keyword_limit: 100
@@ -234,12 +245,18 @@ remain rebuildable cache data.
 
 ```bash
 memory reindex --vault ./memory-vault
-memory search --vault ./memory-vault "agent memory retrieval" --semantic
+memory search --vault ./memory-vault "agent memory retrieval" --mode auto
 memory search --vault ./memory-vault "agent memory retrieval" --no-semantic
 ```
 
-See `docs/semantic-search.md` for provider details and the deterministic test
-provider.
+Available modes are `auto`, `text`, `vector`, and `hybrid`. The legacy
+`--semantic/--no-semantic` switch still works, mapping to `hybrid` and `text`.
+`memory search --json`, `memory recall --json`, `memory brief --json`, and MCP
+`build_context` include compact trace metadata with planned query variants,
+attempted searches, mode, semantic status/provider/model, selected count, and an
+empty reason when no context was selected. See `docs/semantic-search.md` for
+the current-session limitation, the generic provider hook, environment overrides,
+and the deterministic test-only provider.
 
 ## Sync Model
 

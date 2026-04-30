@@ -18,7 +18,7 @@ from agent_memory.schema import (
     MemoryType,
     SourceRef,
 )
-from agent_memory.sources import save_source_material
+from agent_memory.sources import save_source_material, save_source_with_memories
 from agent_memory.ux import inspect_memory
 from agent_memory.vault import placeholder_result, remember_memory
 
@@ -98,6 +98,33 @@ def save_source_tool(source: Mapping[str, Any], *, vault: Optional[PathLike] = N
         return _error_payload(exc, code="save_source_failed", tool="save_source")
 
 
+def save_source_with_memories_tool(
+    source: Mapping[str, Any],
+    memories: list[Mapping[str, Any]],
+    author_name: Optional[str] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Save source/extract material and create linked pending atomic memories."""
+
+    try:
+        config = load_config(_vault_from(source, vault))
+        payload = save_source_with_memories(
+            config,
+            source=source,
+            memories=memories,
+            author_name=_optional_string(author_name) or "MCP agent",
+        ).to_dict()
+        payload.update({"tool": "save_source_with_memories"})
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="save_source_with_memories_failed",
+            tool="save_source_with_memories",
+        )
+
+
 def ingest_url_tool(
     url: str,
     title: Optional[str] = None,
@@ -137,6 +164,7 @@ def search_tool(
     raw_filters = _filters(filters)
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
+    mode = str(raw_filters.pop("mode", "auto"))
     limit = int(raw_filters.pop("limit", 10))
     try:
         config = load_config(vault)
@@ -147,6 +175,7 @@ def search_tool(
             include_related=include_related,
             limit=limit,
             semantic=None if semantic is None else _bool(semantic),
+            mode=mode,
         ).to_dict()
         payload.update({"tool": "search"})
         return payload
@@ -177,6 +206,7 @@ def recall_tool(
     raw_filters = _filters(filters)
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
+    mode = str(raw_filters.pop("mode", "auto"))
     try:
         config = load_config(vault)
         payload = recall_memory(
@@ -186,6 +216,7 @@ def recall_tool(
             budget=selected_budget,
             include_related=include_related,
             semantic=None if semantic is None else _bool(semantic),
+            mode=mode,
         ).to_dict()
         payload.update({"tool": "recall"})
         return payload
@@ -217,6 +248,7 @@ def brief_tool(
     raw_filters = _filters(filters)
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
+    mode = str(raw_filters.pop("mode", "auto"))
     try:
         config = load_config(vault)
         payload = brief_memory(
@@ -226,6 +258,7 @@ def brief_tool(
             budget=selected_budget,
             include_related=include_related,
             semantic=None if semantic is None else _bool(semantic),
+            mode=mode,
         ).to_dict()
         payload.update({"tool": "brief"})
         return payload
@@ -272,6 +305,7 @@ def build_context_tool(
             "budget": selected_budget,
             "memory_needed": False,
             "policy": policy,
+            "trace": _build_context_trace(policy, empty_reason="policy_skipped"),
             "markdown": "",
             "brief": None,
             "citations": [],
@@ -285,9 +319,18 @@ def build_context_tool(
                 "task": task,
                 "memory_needed": True,
                 "policy": policy,
+                "trace": _build_context_trace(policy, empty_reason="brief_failed"),
             }
         )
         return brief_payload
+
+    retrieval_trace = brief_payload.get("retrieval")
+    chunk_count = int(brief_payload.get("recall", {}).get("chunk_count", 0))
+    empty_reason = None
+    if chunk_count == 0 and not (
+        isinstance(retrieval_trace, Mapping) and retrieval_trace.get("empty_reason")
+    ):
+        empty_reason = "no_selected_chunks"
 
     return {
         "ok": True,
@@ -297,6 +340,12 @@ def build_context_tool(
         "budget": selected_budget,
         "memory_needed": True,
         "policy": policy,
+        "trace": _build_context_trace(
+            policy,
+            retrieval=retrieval_trace,
+            selected_count=chunk_count,
+            empty_reason=empty_reason,
+        ),
         "markdown": brief_payload["markdown"],
         "brief": brief_payload,
         "citations": brief_payload["citations"],
@@ -344,6 +393,7 @@ def explain_recall_tool(
     raw_filters = _filters(filters)
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
+    mode = str(raw_filters.pop("mode", "auto"))
     try:
         config = load_config(vault)
         payload = explain_recall(
@@ -353,6 +403,7 @@ def explain_recall_tool(
             budget=selected_budget,
             include_related=include_related,
             semantic=None if semantic is None else _bool(semantic),
+            mode=mode,
         ).to_dict()
         payload.update({"tool": "explain_recall"})
         return payload
@@ -493,6 +544,16 @@ def create_server() -> Any:
         """Save raw material and an optional extract under Sources/."""
 
         return save_source_tool(source)
+
+    @server.tool()
+    def save_source_with_memories(
+        source: dict[str, Any],
+        memories: list[dict[str, Any]],
+        author_name: Optional[str] = None,
+    ) -> JsonPayload:
+        """Save source/extract material and linked pending atomic memories."""
+
+        return save_source_with_memories_tool(source, memories, author_name=author_name)
 
     @server.tool()
     def ingest_url(
@@ -654,6 +715,41 @@ def _bool(value: Any) -> bool:
     return bool(value)
 
 
+def _build_context_trace(
+    policy: Mapping[str, Any],
+    *,
+    retrieval: Optional[Any] = None,
+    selected_count: int = 0,
+    empty_reason: Optional[str] = None,
+) -> dict[str, Any]:
+    retrieval_trace = dict(retrieval) if isinstance(retrieval, Mapping) else {}
+    policy_query = str(policy.get("query") or "")
+    planned = retrieval_trace.get("planned_query_variants")
+    if not isinstance(planned, list):
+        planned = [policy_query] if policy_query else []
+    semantic = retrieval_trace.get("semantic")
+    if not isinstance(semantic, Mapping):
+        semantic = {
+            "status": "not_used",
+            "enabled": False,
+            "provider": None,
+            "model": None,
+        }
+    attempts = retrieval_trace.get("attempted_searches")
+    if not isinstance(attempts, list):
+        attempts = []
+    return {
+        "policy_query": policy_query,
+        "planned_query_variants": planned,
+        "mode": retrieval_trace.get("mode"),
+        "requested_mode": retrieval_trace.get("requested_mode"),
+        "semantic": dict(semantic),
+        "attempted_searches": attempts,
+        "selected_count": selected_count,
+        "empty_reason": empty_reason or retrieval_trace.get("empty_reason"),
+    }
+
+
 def _optional_string(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -711,6 +807,7 @@ __all__ = [
     "review_tool",
     "ingest_url_tool",
     "save_source_tool",
+    "save_source_with_memories_tool",
     "search_tool",
     "should_recall_tool",
 ]

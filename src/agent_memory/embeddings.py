@@ -7,13 +7,17 @@ import json
 import math
 import re
 import subprocess
-from typing import Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 from agent_memory.config import SemanticConfig
 
 
 class EmbeddingProvider(Protocol):
     """Small provider interface used by retrieval without heavy dependencies."""
+
+    @property
+    def name(self) -> str:
+        """Stable provider identifier for reporting and diagnostics."""
 
     @property
     def model(self) -> str:
@@ -28,11 +32,15 @@ class EmbeddingProviderError(RuntimeError):
 
 
 class DeterministicEmbeddingProvider:
-    """Dependency-free provider for tests and deterministic local fixtures."""
+    """Dependency-free provider for tests and deterministic fixtures only."""
 
     def __init__(self, *, model: str = "deterministic-test-v1", dimensions: int = 32) -> None:
         self._model = model
         self._dimensions = dimensions
+
+    @property
+    def name(self) -> str:
+        return "deterministic"
 
     @property
     def model(self) -> str:
@@ -45,18 +53,33 @@ class DeterministicEmbeddingProvider:
 class LocalCommandEmbeddingProvider:
     """Call a local embedding command using a simple JSON stdin/stdout contract."""
 
-    def __init__(self, *, command: Sequence[str], model: str, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        command: Sequence[str],
+        model: str,
+        timeout_seconds: float = 30.0,
+        batch_size: int = 32,
+    ) -> None:
         if not command:
             raise EmbeddingProviderError("local-command semantic provider requires a command")
         self._command = tuple(command)
         self._model = model
         self._timeout_seconds = timeout_seconds
+        self._batch_size = batch_size
+
+    @property
+    def name(self) -> str:
+        return "local-command"
 
     @property
     def model(self) -> str:
         return self._model
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return _embed_in_batches(texts, self._batch_size, self._embed_batch)
+
+    def _embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         payload = json.dumps({"model": self.model, "texts": list(texts)})
         try:
             completed = subprocess.run(
@@ -87,7 +110,10 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
     if config.provider is None:
         raise EmbeddingProviderError("semantic search is disabled; configure semantic.provider first")
     if config.provider == "deterministic":
-        return DeterministicEmbeddingProvider(model=config.model)
+        return DeterministicEmbeddingProvider(
+            model=config.model,
+            dimensions=config.dimensions or 32,
+        )
     if config.provider == "local-command":
         if config.command is None:
             raise EmbeddingProviderError("semantic provider local-command requires semantic.command")
@@ -95,6 +121,7 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
             command=config.command,
             model=config.model,
             timeout_seconds=config.timeout_seconds,
+            batch_size=config.batch_size,
         )
     raise EmbeddingProviderError(f"unsupported semantic provider: {config.provider}")
 
@@ -120,6 +147,21 @@ def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
     return numerator / (left_norm * right_norm)
+
+
+def _embed_in_batches(
+    texts: Sequence[str],
+    batch_size: int,
+    embed_batch: Callable[[Sequence[str]], list[list[float]]],
+) -> list[list[float]]:
+    selected_texts = list(texts)
+    if not selected_texts:
+        return []
+
+    vectors: list[list[float]] = []
+    for start in range(0, len(selected_texts), batch_size):
+        vectors.extend(embed_batch(selected_texts[start : start + batch_size]))
+    return vectors
 
 
 def _hashed_bow_vector(text: str, *, dimensions: int) -> list[float]:

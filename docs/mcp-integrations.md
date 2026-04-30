@@ -30,6 +30,7 @@ Available tools:
 
 - `remember(memory)`
 - `save_source(source)`
+- `save_source_with_memories(source, memories, author_name)`
 - `ingest_url(url, title, content, extract, project, tags)`
 - `search(query, filters)`
 - `recall(query, budget, filters)`
@@ -54,6 +55,14 @@ They do not perform LLM analysis and do not promote content into canonical memor
 by themselves. The agent should fetch/read/analyze material, call one of these
 tools to preserve the source and extract, then call `remember(memory)` for
 durable atomic facts, decisions, preferences, project context, or tasks.
+
+`save_source_with_memories(source, memories, author_name)` is the explicit
+combined workflow for agents that already have a structured extract and durable
+atomic items. It saves `source.md` and optional `extract.md` under `Sources/`,
+then creates only the supplied atomic `fact`, `decision`, `preference`, `task`,
+or `project_context` memories as `pending` agent-authored memories. It rejects
+`source_extract` promotion because source summaries belong in `Sources/` rather
+than canonical `Memories/`.
 
 `should_recall(message)` is a deterministic policy check with no LLM dependency.
 It returns `should_recall`, `confidence`, and matched `triggers`. Agents should
@@ -107,7 +116,9 @@ material into memory, agents should follow this workflow:
 1. Read or fetch the source material using the agent's normal browser/file tools.
 2. Call `save_source` or `ingest_url` with the raw content and a structured
    extract.
-3. Promote only durable atomic items with `remember(memory)`.
+3. Promote only durable atomic items with `remember(memory)`, or call
+   `save_source_with_memories` when the source and atomic items are already
+   structured.
 4. Leave agent-created memories `pending` for review.
 5. Tell the user which source paths and pending memories were created.
 
@@ -156,6 +167,30 @@ Then call `remember(memory)` for each durable item:
     "title": "Article title"
   },
   "tags": ["memory", "architecture"]
+}
+```
+
+Or save the source and linked pending atomic memories in one MCP call:
+
+```json
+{
+  "source": {
+    "url": "https://example.com/article",
+    "title": "Article title",
+    "content": "Raw Markdown or readable text fetched by the agent.",
+    "extract": "## Summary\n...\n\n## Durable Facts\n- ..."
+  },
+  "memories": [
+    {
+      "type": "decision",
+      "text": "Use Obsidian Markdown as durable memory; SQLite remains rebuildable cache.",
+      "scope": "project",
+      "project": "agent-memory",
+      "confidence": 0.86,
+      "tags": ["memory", "architecture"]
+    }
+  ],
+  "author_name": "MCP agent"
 }
 ```
 

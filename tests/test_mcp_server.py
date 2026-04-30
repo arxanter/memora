@@ -14,6 +14,7 @@ from agent_memory.mcp_server import (
     reject_tool,
     review_tool,
     save_source_tool,
+    save_source_with_memories_tool,
     search_tool,
     should_recall_tool,
 )
@@ -121,6 +122,71 @@ def test_mcp_ingest_url_saves_url_stub_without_fetching(tmp_path):
     source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
     assert "No raw content was provided to Agent Memory" in source_text
     assert "https://example.com/no-content-yet" in source_text
+
+
+def test_mcp_save_source_with_memories_creates_pending_atomic_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = save_source_with_memories_tool(
+        {
+            "title": "Agent workflow notes",
+            "url": "https://example.com/workflow",
+            "content": "Raw source content.",
+            "extract": "## Durable Facts\n- Agents should promote only atomic memories.",
+            "project": "agent-memory",
+            "tags": ["workflow"],
+        },
+        [
+            {
+                "type": "decision",
+                "text": "Agent source ingestion stores raw material in Sources and creates pending atomic memories only from explicit durable items.",
+                "scope": "project",
+                "confidence": 0.82,
+                "tags": ["source", "review"],
+            },
+            {
+                "type": "fact",
+                "text": "Source promotion memories cite the saved extract when one is available.",
+                "confidence": 0.74,
+            },
+        ],
+        author_name="Test agent",
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "save_source_with_memories"
+    assert payload["memory_count"] == 2
+    assert payload["pending_count"] == 2
+    assert payload["review_required"] is True
+    assert payload["source"]["relative_extract_path"].endswith("/extract.md")
+    assert payload["memories"][0]["status"] == "pending"
+    assert payload["memories"][0]["source"]["path"] == payload["source"]["relative_extract_path"]
+    assert payload["memories"][0]["source"]["source_id"] == payload["source"]["source_id"]
+    assert payload["memories"][0]["author"] == {"kind": "agent", "name": "Test agent"}
+    assert "Review the pending atomic memories" in payload["next_steps"][1]
+
+    memory_path = vault / payload["memories"][0]["relative_path"]
+    document = validate_markdown_file(memory_path)
+    assert document.frontmatter.status == "pending"
+    assert document.frontmatter.author.kind == "agent"
+    assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+
+
+def test_mcp_save_source_with_memories_rejects_source_extract_promotion(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = save_source_with_memories_tool(
+        {"title": "Invalid promotion", "extract": "Summary"},
+        [{"type": "source_extract", "text": "Raw summary should stay in Sources."}],
+        vault=vault,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "save_source_with_memories_failed"
+    assert "durable atomic memory types" in payload["error"]["message"]
 
 
 def test_mcp_inspect_returns_memory_with_citation(tmp_path):
@@ -270,6 +336,33 @@ def test_mcp_search_uses_retrieval_service(tmp_path):
     assert payload["results"][0]["citation"] == remembered["citations"][0]
 
 
+def test_mcp_search_accepts_legacy_boolean_semantic_filter(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP search keeps boolean semantic filters backward compatible.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = search_tool(
+        "boolean semantic filters",
+        {"status": "pending", "semantic": False, "mode": "hybrid"},
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["mode"] == "text"
+    assert payload["requested_mode"] == "semantic:false"
+    assert payload["semantic"]["enabled"] is False
+    assert payload["results"][0]["id"] == remembered["id"]
+
+
 def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -295,6 +388,8 @@ def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
     assert payload["chunks"][0]["citation"] == payload["citations"][0]
     assert payload["citations"][0]["id"] == remembered["id"]
     assert payload["citations"][0]["path"] == remembered["relative_path"]
+    assert payload["retrieval"]["planned_query_variants"][0] == "keyword retrieval"
+    assert payload["retrieval"]["mode"] == "text"
 
 
 def test_mcp_brief_uses_memory_brief_service(tmp_path):
@@ -322,6 +417,8 @@ def test_mcp_brief_uses_memory_brief_service(tmp_path):
     assert payload["sections"]["warnings"][0]["citations"] == ["C1"]
     assert payload["citations"][0]["path"] == remembered["relative_path"]
     assert "Citations:" in payload["markdown"]
+    assert payload["retrieval"]["mode"] == "text"
+    assert payload["recall"]["retrieval"]["selected_count"] == 1
 
 
 def test_mcp_should_recall_classifies_messages():
@@ -382,6 +479,12 @@ def test_mcp_build_context_returns_brief_when_policy_recommends_recall(tmp_path)
     assert payload["brief"]["tool"] == "brief"
     assert payload["brief"]["sections"]["warnings"][0]["source_id"] == remembered["id"]
     assert payload["citations"][0]["id"] == remembered["id"]
+    assert payload["trace"]["policy_query"] == payload["policy"]["query"]
+    assert payload["trace"]["planned_query_variants"][0] == payload["policy"]["query"]
+    assert payload["trace"]["mode"] == "text"
+    assert payload["trace"]["semantic"]["status"] == "not_used"
+    assert payload["trace"]["attempted_searches"]
+    assert payload["trace"]["selected_count"] == 1
 
 
 def test_mcp_mark_superseded_wraps_lifecycle_service(tmp_path):

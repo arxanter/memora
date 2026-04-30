@@ -6,7 +6,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Literal, Mapping, Optional, Sequence
 
 from agent_memory.config import MemoryConfig
 from agent_memory.embeddings import (
@@ -21,6 +21,80 @@ from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, Relati
 
 DEFAULT_STATUSES = (LifecycleStatus.ACTIVE.value, LifecycleStatus.STALE.value)
 REQUIRED_INDEX_OBJECTS = ("documents", "chunks", "memories", "links", "chunk_fts")
+SearchMode = Literal["auto", "text", "vector", "hybrid"]
+SEARCH_MODES = ("auto", "text", "vector", "hybrid")
+SEMANTIC_SEARCH_MODES = {"vector", "hybrid"}
+STRONG_RESULT_SCORE = 7.0
+MAX_QUERY_VARIANTS = 5
+
+QUERY_STOPWORDS = {
+    "a",
+    "about",
+    "after",
+    "all",
+    "also",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "before",
+    "by",
+    "can",
+    "could",
+    "decide",
+    "decided",
+    "did",
+    "do",
+    "does",
+    "find",
+    "for",
+    "from",
+    "give",
+    "how",
+    "i",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "me",
+    "need",
+    "needs",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "recall",
+    "remember",
+    "remembered",
+    "show",
+    "that",
+    "the",
+    "these",
+    "this",
+    "those",
+    "to",
+    "use",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "would",
+    "you",
+    "your",
+}
 
 MEMORY_TYPE_BOOSTS = {
     MemoryType.PREFERENCE.value: 0.35,
@@ -123,14 +197,62 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class QueryPlan:
+    """Deterministic query variants used by fallback retrieval."""
+
+    original: str
+    variants: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "original": self.original,
+            "variants": list(self.variants),
+        }
+
+
+@dataclass(frozen=True)
+class SearchAttempt:
+    """One query variant attempted by the retrieval service."""
+
+    query: str
+    mode: str
+    reason: str
+    result_count: int
+    strong_result_count: int
+    text_searched: bool
+    vector_searched: bool
+    fallback_trigger: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "query": self.query,
+            "mode": self.mode,
+            "reason": self.reason,
+            "result_count": self.result_count,
+            "strong_result_count": self.strong_result_count,
+            "text_searched": self.text_searched,
+            "vector_searched": self.vector_searched,
+        }
+        if self.fallback_trigger is not None:
+            payload["fallback_trigger"] = self.fallback_trigger
+        return payload
+
+
+@dataclass(frozen=True)
 class SearchResponse:
     config: MemoryConfig
     query: str
     filters: SearchFilters
     include_related: bool
     results: tuple[SearchResult, ...]
+    mode: str = "text"
+    requested_mode: str = "auto"
     semantic_enabled: bool = False
     semantic_provider: Optional[str] = None
+    semantic_model: Optional[str] = None
+    query_plan: Optional[QueryPlan] = None
+    attempted_searches: tuple[SearchAttempt, ...] = ()
+    empty_reason: Optional[str] = None
 
     @property
     def citations(self) -> list[dict[str, str]]:
@@ -150,15 +272,40 @@ class SearchResponse:
             "query": self.query,
             "filters": self.filters.to_dict(),
             "include_related": self.include_related,
+            "mode": self.mode,
+            "requested_mode": self.requested_mode,
             "semantic": {
                 "enabled": self.semantic_enabled,
                 "provider": self.semantic_provider,
+                "model": self.semantic_model,
             },
+            "query_plan": (self.query_plan or QueryPlan(self.query, (self.query,))).to_dict(),
+            "attempted_searches": [attempt.to_dict() for attempt in self.attempted_searches],
+            "trace": self.trace_to_dict(),
+            "empty_reason": self.empty_reason,
             "result_count": len(self.results),
             "vault_path": str(self.config.vault_path),
             "index_path": str(self.config.index_file),
             "results": [result.to_dict() for result in self.results],
             "citations": self.citations,
+        }
+
+    def trace_to_dict(self) -> dict[str, Any]:
+        plan = self.query_plan or QueryPlan(self.query, (self.query,))
+        return {
+            "query": self.query,
+            "planned_query_variants": list(plan.variants),
+            "mode": self.mode,
+            "requested_mode": self.requested_mode,
+            "semantic": {
+                "status": _semantic_status(self.mode, self.semantic_enabled, self.semantic_provider),
+                "enabled": self.semantic_enabled,
+                "provider": self.semantic_provider,
+                "model": self.semantic_model,
+            },
+            "attempted_searches": [attempt.to_dict() for attempt in self.attempted_searches],
+            "selected_count": len(self.results),
+            "empty_reason": self.empty_reason,
         }
 
 
@@ -199,6 +346,7 @@ def search_memory(
     include_related: bool = False,
     limit: int = 10,
     semantic: Optional[bool] = None,
+    mode: str = "auto",
     embedding_provider: Optional[EmbeddingProvider] = None,
     include_superseded_targets: bool = False,
 ) -> SearchResponse:
@@ -212,38 +360,138 @@ def search_memory(
     if selected_limit < 1:
         raise ValueError("limit must be at least 1")
 
-    fts_query = _to_fts_query(cleaned_query)
-    semantic_enabled = config.semantic.enabled if semantic is None else semantic
+    query_plan = plan_query_variants(cleaned_query)
+    requested_mode, effective_mode = _resolve_search_mode(config, mode=mode, semantic=semantic)
+    semantic_enabled = effective_mode in SEMANTIC_SEARCH_MODES
     provider = (embedding_provider or provider_from_config(config.semantic)) if semantic_enabled else None
+    attempts: list[SearchAttempt] = []
+    results_by_id: dict[str, SearchResult] = {}
+    fallback_trigger: Optional[str] = None
+
+    for index, planned_query in enumerate(query_plan.variants):
+        current_results = _merged_results(results_by_id, selected_limit)
+        if index > 0:
+            if not _needs_fallback(current_results, selected_limit):
+                break
+            fallback_trigger = fallback_trigger or _fallback_reason(current_results, selected_limit)
+
+        attempt_results = _search_memory_once(
+            config,
+            planned_query,
+            selected_filters,
+            include_related=include_related,
+            limit=selected_limit,
+            mode=effective_mode,
+            provider=provider,
+            include_superseded_targets=include_superseded_targets,
+        )
+        _merge_results_by_id(results_by_id, attempt_results)
+        attempts.append(
+            SearchAttempt(
+                query=planned_query,
+                mode=effective_mode,
+                reason="original" if index == 0 else "fallback",
+                result_count=len(attempt_results),
+                strong_result_count=_strong_result_count(attempt_results),
+                text_searched=effective_mode in {"text", "hybrid"},
+                vector_searched=effective_mode in SEMANTIC_SEARCH_MODES,
+                fallback_trigger=None if index == 0 else fallback_trigger,
+            )
+        )
+
+    results = _merged_results(results_by_id, selected_limit)
+    return SearchResponse(
+        config=config,
+        query=cleaned_query,
+        filters=selected_filters,
+        include_related=include_related,
+        results=tuple(results),
+        mode=effective_mode,
+        requested_mode=requested_mode,
+        semantic_enabled=semantic_enabled,
+        semantic_provider=_provider_name(provider, config) if provider is not None else None,
+        semantic_model=provider.model if provider is not None else None,
+        query_plan=query_plan,
+        attempted_searches=tuple(attempts),
+        empty_reason="no_results" if not results else None,
+    )
+
+
+def plan_query_variants(query: str, *, max_variants: int = MAX_QUERY_VARIANTS) -> QueryPlan:
+    """Build lightweight deterministic variants for natural-language retrieval."""
+
+    original = _collapse_whitespace(query)
+    if not original:
+        raise ValueError("search query must not be empty")
+
+    variants: list[str] = []
+    _add_query_variant(variants, original, max_variants=max_variants)
+
+    normalized_tokens = _query_tokens(original)
+    normalized = " ".join(normalized_tokens)
+    _add_query_variant(variants, normalized, max_variants=max_variants)
+
+    singular_tokens = [_normalize_query_token(token) for token in normalized_tokens]
+    singular = " ".join(singular_tokens)
+    _add_query_variant(variants, singular, max_variants=max_variants)
+
+    informative_tokens = [token for token in singular_tokens if token not in QUERY_STOPWORDS]
+    if len(informative_tokens) >= 2:
+        _add_query_variant(variants, " ".join(informative_tokens), max_variants=max_variants)
+
+    acronym_expanded = _expand_common_acronyms(informative_tokens)
+    if len(acronym_expanded) >= 2:
+        _add_query_variant(variants, " ".join(acronym_expanded), max_variants=max_variants)
+
+    return QueryPlan(original=original, variants=tuple(variants))
+
+
+def _search_memory_once(
+    config: MemoryConfig,
+    query: str,
+    filters: SearchFilters,
+    *,
+    include_related: bool,
+    limit: int,
+    mode: str,
+    provider: Optional[EmbeddingProvider],
+    include_superseded_targets: bool,
+) -> tuple[SearchResult, ...]:
+    fts_query = _to_fts_query(query) if mode in {"text", "hybrid"} else None
+    semantic_enabled = mode in SEMANTIC_SEARCH_MODES
     connection = _connect_index(config)
     try:
-        keyword_limit = config.semantic.keyword_limit if semantic_enabled else max(selected_limit * 8, 40)
-        primary = _primary_candidates(
-            connection,
-            fts_query,
-            selected_filters,
-            fetch_limit=max(selected_limit * 8, keyword_limit),
-        )
+        text_primary: list[_Candidate] = []
+        if fts_query is not None:
+            keyword_limit = config.semantic.keyword_limit if semantic_enabled else max(limit * 8, 40)
+            text_primary = _primary_candidates(
+                connection,
+                fts_query,
+                filters,
+                fetch_limit=max(limit * 8, keyword_limit),
+            )
+
+        semantic_primary: list[_Candidate] = []
+        if semantic_enabled and provider is not None:
+            semantic_primary = _semantic_candidates(
+                connection,
+                query,
+                filters,
+                provider=provider,
+                fetch_limit=max(limit * 8, config.semantic.vector_limit),
+                min_similarity=config.semantic.min_similarity,
+            )
+
+        primary = _merge_candidates(text_primary, semantic_primary)
         candidates = list(primary)
         if include_related and primary:
             candidates.extend(
                 _related_candidates(
                     connection,
                     primary,
-                    selected_filters,
-                    max_related=max(selected_limit * 2, 10),
+                    filters,
+                    max_related=max(limit * 2, 10),
                 )
-            )
-        if semantic_enabled and provider is not None:
-            candidates = _merge_candidates(
-                candidates,
-                _semantic_candidates(
-                    connection,
-                    cleaned_query,
-                    selected_filters,
-                    provider=provider,
-                    fetch_limit=max(selected_limit * 8, config.semantic.vector_limit),
-                ),
             )
 
         reference_time = _reference_time(candidates)
@@ -253,22 +501,120 @@ def search_memory(
     finally:
         connection.close()
 
-    if selected_filters.status is None and superseded_ids and not include_superseded_targets:
+    if filters.status is None and superseded_ids and not include_superseded_targets:
         candidates = [candidate for candidate in candidates if candidate.document_id not in superseded_ids]
     results = [
         _rank_candidate(candidate, reference_time, connected_primary_ids, superseded_ids)
         for candidate in candidates
     ]
     results.sort(key=lambda result: (-result.score, result.related, result.id))
-    return SearchResponse(
-        config=config,
-        query=cleaned_query,
-        filters=selected_filters,
-        include_related=include_related,
-        results=tuple(results[:selected_limit]),
-        semantic_enabled=semantic_enabled,
-        semantic_provider=provider.model if provider is not None else None,
-    )
+    return tuple(results[:limit])
+
+
+def _resolve_search_mode(
+    config: MemoryConfig,
+    *,
+    mode: str,
+    semantic: Optional[bool],
+) -> tuple[str, str]:
+    if semantic is True:
+        return "semantic:true", "hybrid"
+    if semantic is False:
+        return "semantic:false", "text"
+
+    requested_mode = mode.strip().lower()
+    if requested_mode not in SEARCH_MODES:
+        raise ValueError("mode must be one of: auto, text, vector, hybrid")
+    if requested_mode == "auto":
+        return "auto", "hybrid" if config.semantic.enabled else "text"
+    return requested_mode, requested_mode
+
+
+def _merge_results_by_id(
+    results_by_id: dict[str, SearchResult],
+    incoming: Sequence[SearchResult],
+) -> None:
+    for result in incoming:
+        existing = results_by_id.get(result.id)
+        if existing is None or _result_sort_key(result) < _result_sort_key(existing):
+            results_by_id[result.id] = result
+
+
+def _merged_results(results_by_id: Mapping[str, SearchResult], limit: int) -> tuple[SearchResult, ...]:
+    results = sorted(results_by_id.values(), key=_result_sort_key)
+    return tuple(results[:limit])
+
+
+def _result_sort_key(result: SearchResult) -> tuple[float, bool, str]:
+    return (-result.score, result.related, result.id)
+
+
+def _needs_fallback(results: Sequence[SearchResult], limit: int) -> bool:
+    if not results:
+        return True
+    target = min(limit, 3)
+    return _strong_result_count(results) < target
+
+
+def _fallback_reason(results: Sequence[SearchResult], limit: int) -> str:
+    if not results:
+        return "no_results"
+    return f"too_few_strong_results:{_strong_result_count(results)}/{min(limit, 3)}"
+
+
+def _strong_result_count(results: Sequence[SearchResult]) -> int:
+    return sum(1 for result in results if result.score >= STRONG_RESULT_SCORE)
+
+
+def _collapse_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _query_tokens(query: str) -> list[str]:
+    slug_spaced = re.sub(r"[-_/.:]+", " ", query)
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9]+", slug_spaced)]
+
+
+def _normalize_query_token(token: str) -> str:
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def _expand_common_acronyms(tokens: Sequence[str]) -> list[str]:
+    expanded: list[str] = []
+    for token in tokens:
+        if token == "db":
+            expanded.append("database")
+        elif token == "fts":
+            expanded.extend(("full", "text", "search"))
+        else:
+            expanded.append(token)
+    return expanded
+
+
+def _add_query_variant(variants: list[str], value: str, *, max_variants: int) -> None:
+    if len(variants) >= max_variants:
+        return
+    cleaned = _collapse_whitespace(value)
+    if not cleaned:
+        return
+    signature = cleaned.lower()
+    if signature in {variant.lower() for variant in variants}:
+        return
+    variants.append(cleaned)
+
+
+def _semantic_status(mode: str, enabled: bool, provider: Optional[str]) -> str:
+    if not enabled:
+        return "not_used"
+    if provider:
+        return "configured"
+    if mode in SEMANTIC_SEARCH_MODES:
+        return "missing_provider"
+    return "not_used"
 
 
 def _connect_index(config: MemoryConfig) -> sqlite3.Connection:
@@ -300,6 +646,13 @@ def _connect_index(config: MemoryConfig) -> sqlite3.Connection:
             f"({', '.join(missing)}); run `memory reindex --vault {config.vault_path}`."
         )
     return connection
+
+
+def _provider_name(provider: EmbeddingProvider, config: MemoryConfig) -> Optional[str]:
+    name = getattr(provider, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    return config.semantic.provider
 
 
 def _primary_candidates(
@@ -361,6 +714,7 @@ def _semantic_candidates(
     *,
     provider: EmbeddingProvider,
     fetch_limit: int,
+    min_similarity: float,
 ) -> list[_Candidate]:
     _ensure_embeddings_schema(connection)
     query_vector = provider.embed([query])
@@ -375,7 +729,9 @@ def _semantic_candidates(
         if vector is None:
             continue
         similarity = cosine_similarity(query_vector[0], vector)
-        if similarity <= 0.0:
+        if similarity <= 0.0 and min_similarity <= 0.0:
+            continue
+        if similarity < min_similarity:
             continue
         scored.append((similarity, row))
 
@@ -940,9 +1296,13 @@ def _parse_date(value: str) -> Optional[date]:
 
 
 __all__ = [
+    "QueryPlan",
     "RetrievalIndexError",
+    "SearchAttempt",
     "SearchFilters",
+    "SearchMode",
     "SearchResponse",
     "SearchResult",
+    "plan_query_variants",
     "search_memory",
 ]

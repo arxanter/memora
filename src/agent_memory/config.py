@@ -14,6 +14,15 @@ from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, SCHEMA
 CONFIG_DIR_NAME = ".agent-memory"
 CONFIG_FILE_NAME = "config.yaml"
 ENV_VAULT_PATH = "AGENT_MEMORY_VAULT"
+ENV_SEMANTIC_PROVIDER = "AGENT_MEMORY_SEMANTIC_PROVIDER"
+ENV_SEMANTIC_MODEL = "AGENT_MEMORY_SEMANTIC_MODEL"
+ENV_SEMANTIC_BATCH_SIZE = "AGENT_MEMORY_SEMANTIC_BATCH_SIZE"
+ENV_SEMANTIC_DIMENSIONS = "AGENT_MEMORY_SEMANTIC_DIMENSIONS"
+ENV_SEMANTIC_MIN_SIMILARITY = "AGENT_MEMORY_SEMANTIC_MIN_SIMILARITY"
+ENV_FRESHNESS_ENABLED = "AGENT_MEMORY_FRESHNESS_ENABLED"
+ENV_FRESHNESS_INTERVAL_SECONDS = "AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS"
+ENV_FRESHNESS_DEBOUNCE_SECONDS = "AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS"
+ENV_FRESHNESS_CLEAN = "AGENT_MEMORY_FRESHNESS_CLEAN"
 
 
 class ConfigError(ValueError):
@@ -27,6 +36,9 @@ class SemanticConfig(BaseModel):
     model: str = "local-embedding-model"
     command: Optional[list[str]] = None
     timeout_seconds: float = Field(default=30.0, gt=0)
+    batch_size: int = Field(default=32, ge=1)
+    dimensions: Optional[int] = Field(default=None, ge=1)
+    min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
     vector_limit: int = Field(default=100, ge=1)
     keyword_limit: int = Field(default=100, ge=1)
 
@@ -92,6 +104,15 @@ class RecallConfig(BaseModel):
         return cleaned
 
 
+class IndexFreshnessConfig(BaseModel):
+    """Polling freshness settings for the local service."""
+
+    enabled: bool = True
+    interval_seconds: int = Field(default=30, ge=1)
+    debounce_seconds: float = Field(default=2.0, ge=0)
+    clean: bool = False
+
+
 class MemoryConfig(BaseModel):
     """Stage 2 configuration for a local Agent Memory vault."""
 
@@ -113,6 +134,7 @@ class MemoryConfig(BaseModel):
     default_author_name: str = "memory CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
+    index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
 
     @field_validator("schema_version")
     @classmethod
@@ -196,7 +218,7 @@ def load_config(
         raise ConfigError("config must be a YAML mapping")
 
     try:
-        return MemoryConfig.model_validate({**loaded, "vault_path": resolved_vault})
+        return MemoryConfig.model_validate(_apply_environment_overrides({**loaded, "vault_path": resolved_vault}))
     except ValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -234,6 +256,52 @@ def _resolve_vault_path(
     raise ConfigError(
         f"could not find {CONFIG_DIR_NAME}/{CONFIG_FILE_NAME}; pass --vault or set {ENV_VAULT_PATH}"
     )
+
+
+def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
+    semantic_overrides: dict[str, Any] = {}
+    for env_name, field_name in (
+        (ENV_SEMANTIC_PROVIDER, "provider"),
+        (ENV_SEMANTIC_MODEL, "model"),
+        (ENV_SEMANTIC_BATCH_SIZE, "batch_size"),
+        (ENV_SEMANTIC_DIMENSIONS, "dimensions"),
+        (ENV_SEMANTIC_MIN_SIMILARITY, "min_similarity"),
+    ):
+        value = os.environ.get(env_name)
+        if value not in (None, ""):
+            semantic_overrides[field_name] = value
+
+    freshness_overrides: dict[str, Any] = {}
+    for env_name, field_name in (
+        (ENV_FRESHNESS_ENABLED, "enabled"),
+        (ENV_FRESHNESS_INTERVAL_SECONDS, "interval_seconds"),
+        (ENV_FRESHNESS_DEBOUNCE_SECONDS, "debounce_seconds"),
+        (ENV_FRESHNESS_CLEAN, "clean"),
+    ):
+        value = os.environ.get(env_name)
+        if value not in (None, ""):
+            freshness_overrides[field_name] = value
+
+    if not semantic_overrides and not freshness_overrides:
+        return config_data
+
+    semantic_config = config_data.get("semantic") or {}
+    if not isinstance(semantic_config, dict):
+        semantic_config = {}
+    freshness_config = config_data.get("index_freshness") or {}
+    if not isinstance(freshness_config, dict):
+        freshness_config = {}
+    return {
+        **config_data,
+        "semantic": {
+            **semantic_config,
+            **semantic_overrides,
+        },
+        "index_freshness": {
+            **freshness_config,
+            **freshness_overrides,
+        },
+    }
 
 
 def config_to_dict(config: MemoryConfig) -> dict[str, Any]:

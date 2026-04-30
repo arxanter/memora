@@ -349,11 +349,15 @@ Deliverables:
 
 Estimated time: 2-4 days.
 
-Embedding options:
+Embedding constraints:
 
-- Local embeddings: `nomic-embed-text`, `bge-small`, etc.
-- API embeddings.
-- Pluggable provider interface.
+- Production embeddings must come from the same AI model/session that the user
+  is interacting with.
+- Do not add first-class local, public/open, or separate API embedding providers
+  as the default project path.
+- Keep a pluggable provider interface so a future MCP/client bridge can inject
+  same-session embeddings.
+- Preserve deterministic embeddings only for tests and fixtures.
 
 Data model:
 
@@ -377,7 +381,8 @@ Rules:
 
 - FTS-only recall must work well before semantic search is enabled.
 - Semantic search is enabled by provider config, not hardcoded.
-- Local embeddings are the default recommendation for privacy.
+- Same-session embeddings are the only production recommendation; no separate
+  local/open/API embedding provider should be presented as the default path.
 - Embeddings are cache data and can be rebuilt from Markdown.
 
 Deliverables:
@@ -386,7 +391,7 @@ Deliverables:
 - Lazy embedding generation.
 - Hybrid retrieval.
 - Embedding cache invalidation by `content_hash`.
-- Local/offline setup docs.
+- Same-session embedding integration notes and safe fallback docs.
 
 ## Stage 7: Rerank And Token Budget Packing
 

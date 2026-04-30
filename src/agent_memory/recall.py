@@ -137,6 +137,7 @@ class RecallResponse:
     budget: int
     chunks: tuple[PackedChunk, ...]
     candidate_count: int
+    retrieval_trace: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def used_tokens_estimate(self) -> int:
@@ -165,6 +166,7 @@ class RecallResponse:
                 "max_chunks_per_memory_type": dict(self.config.recall.max_chunks_per_memory_type),
                 "oversized_chunk_behavior": "truncate_prefix",
             },
+            "retrieval": dict(self.retrieval_trace),
             "chunks": [chunk.to_dict() for chunk in self.chunks],
             "citations": self.citations,
         }
@@ -183,6 +185,7 @@ class ExplainRecallResponse:
     candidate_count: int
     semantic_enabled: bool
     semantic_provider: Optional[str]
+    retrieval_trace: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def selected(self) -> tuple[PackingTrace, ...]:
@@ -218,6 +221,7 @@ class ExplainRecallResponse:
                 "enabled": self.semantic_enabled,
                 "provider": self.semantic_provider,
             },
+            "retrieval": dict(self.retrieval_trace),
             "selected": [
                 {
                     **item.to_dict(),
@@ -249,6 +253,7 @@ def recall_memory(
     budget: int = 1200,
     include_related: bool = False,
     semantic: Optional[bool] = None,
+    mode: str = "auto",
 ) -> RecallResponse:
     """Search indexed memory and pack the best chunks under a strict budget."""
 
@@ -261,6 +266,7 @@ def recall_memory(
         include_related=include_related,
         limit=config.recall.candidate_limit,
         semantic=semantic,
+        mode=mode,
     )
     candidates = _candidates_from_search(config, search_response.results)
     if selected_filters.status is None:
@@ -277,6 +283,7 @@ def recall_memory(
         budget=selected_budget,
         chunks=chunks,
         candidate_count=len(candidates),
+        retrieval_trace=search_response.trace_to_dict(),
     )
 
 
@@ -288,6 +295,7 @@ def explain_recall(
     budget: int = 1200,
     include_related: bool = False,
     semantic: Optional[bool] = None,
+    mode: str = "auto",
     max_skipped: int = 5,
 ) -> ExplainRecallResponse:
     """Explain deterministic retrieval and packing decisions without touching memory files."""
@@ -301,6 +309,7 @@ def explain_recall(
         include_related=include_related,
         limit=config.recall.candidate_limit,
         semantic=semantic,
+        mode=mode,
         include_superseded_targets=True,
     )
     candidates = _candidates_from_search(config, search_response.results)
@@ -337,6 +346,7 @@ def explain_recall(
         selected_filters,
         include_related=include_related,
         semantic=semantic,
+        mode=mode,
         excluded_chunk_ids={item.candidate.chunk_id for item in (*selected_trace, *skipped_trace)},
         limit=max(0, max_skipped - len(skipped_trace)),
     )
@@ -350,6 +360,7 @@ def explain_recall(
         candidate_count=len(candidates),
         semantic_enabled=search_response.semantic_enabled,
         semantic_provider=search_response.semantic_provider,
+        retrieval_trace=search_response.trace_to_dict(),
     )
 
 
@@ -579,6 +590,7 @@ def _status_filtered_traces(
     *,
     include_related: bool,
     semantic: Optional[bool],
+    mode: str,
     excluded_chunk_ids: set[str],
     limit: int,
 ) -> tuple[PackingTrace, ...]:
@@ -598,6 +610,7 @@ def _status_filtered_traces(
             include_related=include_related,
             limit=max(3, min(config.recall.candidate_limit, limit)),
             semantic=semantic,
+            mode=mode,
             include_superseded_targets=True,
         )
         for candidate in _candidates_from_search(config, response.results):

@@ -131,9 +131,10 @@ memory mcp-config --format cursor
 
 ## Service Manager
 
-The service manager is for local maintenance and future background hooks. It is
-not the stdio MCP server. Its current loop periodically runs `memory doctor`
-against the configured vault and writes logs.
+The service manager is for local maintenance and index freshness. It is not the
+stdio MCP server. Its loop polls durable vault files, runs `memory refresh-index`
+when Markdown/config/schema inputs changed, periodically runs `memory doctor`,
+and writes logs.
 
 Install and start:
 
@@ -155,6 +156,20 @@ Run a one-shot health check:
 
 ```bash
 agent-memory-service doctor
+```
+
+Run the freshness watcher in the foreground:
+
+```bash
+agent-memory-service watch
+agent-memory-service watch --watch-interval 10 --watch-debounce 1
+```
+
+Disable watcher polling in the background service if you only want periodic
+doctor checks:
+
+```bash
+agent-memory-service install --no-watch
 ```
 
 Stop or uninstall:

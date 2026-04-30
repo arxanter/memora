@@ -167,17 +167,50 @@ memory reindex --vault ./memory-vault --json
 memory reindex --vault ./memory-vault --clean
 ```
 
+### `memory refresh-index`
+
+Implemented in Stage 13.
+
+Runs a conservative freshness check over durable vault inputs and calls
+`memory reindex` only when needed. It tracks Markdown outside `.agent-memory/`,
+`.agent-memory/config.yaml`, and `.agent-memory/schemas/`; generated files such
+as `index.sqlite`, `cache/`, `embeddings/`, and `locks/` are ignored.
+
+Freshness state is stored under `.agent-memory/cache/freshness-state.json`, so it
+is disposable local cache. The command also refreshes the index when the SQLite
+index is missing or older than tracked durable files.
+
+Useful options:
+
+- `--debounce <seconds>` waits for a quiet period before reindexing.
+- `--clean` / `--no-clean` overrides whether the triggered reindex deletes the
+  SQLite index first.
+- `--json` returns structured change and reindex details.
+
+Example:
+
+```bash
+memory refresh-index --vault ./memory-vault --json
+memory refresh-index --vault ./memory-vault --debounce 1
+```
+
 ### `memory search`
 
 Implemented in Stage 5, with optional semantic retrieval added in Stage 6.
 
 Searches the Stage 4 SQLite FTS index and, when `semantic.provider` is
-configured, lazily generates chunk embeddings for hybrid keyword plus vector
-retrieval. It returns ranked memory-level results with snippets, score
-breakdowns, metadata, and Obsidian-relative citations. SQLite and embeddings
-remain disposable cache data; search does not silently rebuild a missing or
-incomplete index. Run `memory reindex --vault <vault>` first if search reports
-`index_missing`.
+configured, can lazily generate chunk embeddings for vector or hybrid retrieval.
+It returns ranked memory-level results with snippets, score breakdowns, metadata,
+planned query variants, attempted searches, and Obsidian-relative citations.
+SQLite and embeddings remain disposable cache data; search does not silently
+rebuild a missing or incomplete index. Run `memory reindex --vault <vault>` first
+if search reports `index_missing`.
+
+Natural-language queries are planned into a small deterministic variant list. The
+original query is always tried first; normalized case/punctuation/slug variants
+and safe stopword-dropped variants are only used as fallback when the original
+query returns no results or too few strong results. Results are deduplicated at
+the memory level and still capped by `--limit`.
 
 Default retrieval includes `active` and `stale` memory, excludes `pending`,
 `rejected`, and `superseded`, and applies stale/superseded penalties. Pass
@@ -193,8 +226,14 @@ Supported filters:
 - `--updated-after <date-or-datetime>` and `--updated-before <date-or-datetime>`
 - `--valid-from <date>` and `--valid-to <date>`
 - `--include-related` to include linked graph neighbors from the `links` table
+- `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one query
 - `--limit <n>`
+
+`--mode auto` is the default. It chooses `hybrid` when a semantic provider is
+configured and `text` otherwise. The older `--semantic/--no-semantic` switch is
+kept for compatibility: `--semantic` maps to `hybrid`, and `--no-semantic` maps
+to `text`.
 
 Scoring is deterministic for a fixed index and provider. It combines FTS rank,
 optional semantic similarity, graph neighbor boost, memory type boost, status
@@ -207,12 +246,19 @@ Example:
 ```bash
 memory search "vector db" --vault ./memory-vault --project foo --type decision --status active --json
 memory search "agent memory" --vault ./memory-vault --include-related
-memory search "database decisions" --vault ./memory-vault --semantic
+memory search "database decisions" --vault ./memory-vault --mode auto
+memory search "database decisions" --vault ./memory-vault --no-semantic
 ```
 
-Semantic search is disabled by default. Configure a provider in
-`.agent-memory/config.yaml` to enable it for normal searches; see
-`docs/semantic-search.md` for local/offline setup.
+Semantic search is disabled by default. Under the current same-session
+constraint, the standalone CLI and MCP server cannot access Cursor's active AI
+session embeddings, so normal production `auto` searches should remain text
+search plus deterministic query planning. If an approved same-session embedding
+bridge is explicitly configured, `auto` can use hybrid search. JSON output includes
+`mode`, `requested_mode`, `query_plan`, `attempted_searches`, `trace`,
+`semantic.enabled`, `semantic.provider`, and `semantic.model`; see
+`docs/semantic-search.md` for the current limitation, provider hook, generic
+command protocol, and deterministic test-only provider.
 
 ### `memory recall`
 
@@ -247,7 +293,12 @@ Supported filters:
 - `--status <pending|active|stale|superseded|rejected>`
 - `--scope <user|project|global>`
 - `--include-related` to include linked graph-related memories before packing
+- `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one recall
+
+JSON output includes a compact `retrieval` trace with planned query variants,
+effective mode, semantic provider status, attempted searches, selected count, and
+an empty reason when nothing was selected.
 
 ### `memory explain-recall`
 
@@ -260,7 +311,8 @@ without updating `last_used_at`. Human output is meant for terminal debugging;
 score metadata, citations, and prose explanations.
 
 Selected chunks explain useful signals such as keyword/semantic score, lifecycle
-status, memory type, project match, graph relation, and budget truncation.
+status, memory type, project match, graph relation, semantic provider/model, and
+budget truncation.
 Skipped chunks report practical reasons when available, including `superseded`,
 `duplicate`, `over_budget`, `cap_filtered`, and `status_filtered`.
 
@@ -268,7 +320,7 @@ Example:
 
 ```bash
 memory explain-recall "Obsidian sync decisions" --vault ./memory-vault
-memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --json
+memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --mode text --json
 ```
 
 ### `memory brief`
@@ -317,7 +369,12 @@ Supported filters match `memory recall`:
 - `--status <pending|active|stale|superseded|rejected>`
 - `--scope <user|project|global>`
 - `--include-related` to include graph-related memories before brief generation
+- `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one brief
+
+The rendered Markdown stays compact and does not include diagnostics. JSON output
+includes the same compact `retrieval` trace exposed by recall, both top-level and
+inside the recall summary.
 
 Example:
 
@@ -576,6 +633,7 @@ Initial MCP tools:
 ```text
 remember(memory)
 save_source(source)
+save_source_with_memories(source, memories, author_name)
 ingest_url(url, title, content, extract, project, tags)
 search(query, filters)
 recall(query, budget, filters)
@@ -599,12 +657,13 @@ MCP responses should include:
 - Enough scoring or selection metadata to support `explain_recall`.
 
 `search(query, filters)` is implemented in Stage 5 and accepts the same filter
-keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
-`limit`.
+keys as the CLI using snake_case names, plus `include_related`, `mode`,
+`semantic`, and `limit`.
 `recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
-filter keys, plus `include_related` and `semantic`. `brief(query, budget,
-filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
-`citations`, `budget`, and `used_tokens_estimate`.
+filter keys, plus `include_related`, `mode`, and `semantic`. `brief(query,
+budget, filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
+`citations`, `budget`, `used_tokens_estimate`, and retrieval trace metadata in
+JSON.
 
 `should_recall(message)` is implemented in Stage 10 and returns the same
 deterministic recall policy payload as `memory should-recall --json`.
@@ -612,12 +671,22 @@ deterministic recall policy payload as `memory should-recall --json`.
 recommended, it returns a Memory Brief under `brief` plus top-level `markdown`
 and `citations`; when recall is not recommended, it returns `memory_needed:
 false`, empty Markdown, no citations, and does not require a vault or index.
+All `build_context` responses include a compact `trace` object for MCP clients:
+`policy_query`, `planned_query_variants`, `mode`, `requested_mode`, semantic
+status/provider/model, `attempted_searches`, `selected_count`, and `empty_reason`
+when no context was selected.
 
 `save_source(source)` and `ingest_url(url, ...)` save raw/source material under
 `Sources/YYYY-MM-DD_slug/`. They intentionally do not perform AI analysis or
 promote content into canonical memory. Agents should fetch/read/analyze material,
 save source plus extract, then call `remember(memory)` for durable atomic facts,
 decisions, preferences, project context, or tasks.
+
+`save_source_with_memories(source, memories, author_name)` is the combined
+agent workflow for already-structured material. It saves `source.md` and optional
+`extract.md`, then creates only explicit atomic durable memories as `pending`.
+It rejects `source_extract` memory promotion so raw summaries remain in
+`Sources/` rather than canonical `Memories/`.
 
 `explain_recall(query, budget, filters)` is implemented in Stage 13 and returns
 the same structured explanation payload as `memory explain-recall --json`.

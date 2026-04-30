@@ -99,7 +99,9 @@ class BriefResponse:
                 "candidate_count": self.recall.candidate_count,
                 "chunk_count": len(self.recall.chunks),
                 "used_tokens_estimate": self.recall.used_tokens_estimate,
+                "retrieval": dict(self.recall.retrieval_trace),
             },
+            "retrieval": dict(self.recall.retrieval_trace),
             "truncated": self.truncated,
         }
 
@@ -112,6 +114,7 @@ def brief_memory(
     budget: int = 1200,
     include_related: bool = False,
     semantic: Optional[bool] = None,
+    mode: str = "auto",
     recall_response: Optional[RecallResponse] = None,
 ) -> BriefResponse:
     """Build a deterministic memory brief from Stage 7 recall output."""
@@ -124,6 +127,7 @@ def brief_memory(
         budget=selected_budget,
         include_related=include_related,
         semantic=semantic,
+        mode=mode,
     )
     selected_filters = SearchFilters.from_mapping(recall.filters.to_dict())
     items = _items_from_recall(config, recall)

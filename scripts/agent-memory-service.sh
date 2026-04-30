@@ -20,11 +20,18 @@ Commands:
   status        Show service status.
   logs          Follow or print service logs.
   doctor        Run memory doctor against the configured vault.
+  watch         Poll durable vault files and refresh the index when needed.
   run           Internal service loop used by launchd/systemd.
 
 Options:
   --vault PATH      Override AGENT_MEMORY_VAULT for this invocation.
   --interval SEC    Service doctor interval for install/run.
+  --watch-interval SEC
+                  Freshness polling interval for install/run/watch.
+  --watch-debounce SEC
+                  Quiet period before freshness-triggered reindex.
+  --no-watch       Disable freshness polling in run/watch.
+  --watch-clean    Run freshness-triggered reindex with --clean.
   --no-follow       For logs: print current logs instead of following.
   -h, --help        Show this help.
 
@@ -33,6 +40,12 @@ Environment:
   AGENT_MEMORY_BIN_DIR                   Wrapper directory. Default: ~/.local/bin
   AGENT_MEMORY_INSTALL_DIR               Install state directory. Default: ~/.local/share/agent-memory
   AGENT_MEMORY_SERVICE_INTERVAL_SECONDS  Doctor interval. Default: 3600
+  AGENT_MEMORY_FRESHNESS_ENABLED         Enable freshness polling. Default: 1
+  AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS
+                                          Freshness poll interval. Default: 30
+  AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS
+                                          Freshness debounce. Default: 2
+  AGENT_MEMORY_FRESHNESS_CLEAN           Use clean reindex for freshness. Default: 0
 USAGE
 }
 
@@ -130,6 +143,14 @@ write_macos_plist() {
     <string>$BIN_DIR</string>
     <key>AGENT_MEMORY_SERVICE_INTERVAL_SECONDS</key>
     <string>$INTERVAL_SECONDS</string>
+    <key>AGENT_MEMORY_FRESHNESS_ENABLED</key>
+    <string>$WATCH_ENABLED</string>
+    <key>AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS</key>
+    <string>$WATCH_INTERVAL_SECONDS</string>
+    <key>AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS</key>
+    <string>$WATCH_DEBOUNCE_SECONDS</string>
+    <key>AGENT_MEMORY_FRESHNESS_CLEAN</key>
+    <string>$WATCH_CLEAN</string>
     <key>PATH</key>
     <string>$BIN_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
@@ -165,6 +186,10 @@ Environment=AGENT_MEMORY_VAULT=$AGENT_MEMORY_VAULT
 Environment=AGENT_MEMORY_INSTALL_DIR=$INSTALL_DIR
 Environment=AGENT_MEMORY_BIN_DIR=$BIN_DIR
 Environment=AGENT_MEMORY_SERVICE_INTERVAL_SECONDS=$INTERVAL_SECONDS
+Environment=AGENT_MEMORY_FRESHNESS_ENABLED=$WATCH_ENABLED
+Environment=AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS=$WATCH_INTERVAL_SECONDS
+Environment=AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS=$WATCH_DEBOUNCE_SECONDS
+Environment=AGENT_MEMORY_FRESHNESS_CLEAN=$WATCH_CLEAN
 Environment=PATH=$BIN_DIR:/usr/local/bin:/usr/bin:/bin
 
 [Install]
@@ -262,19 +287,79 @@ doctor() {
   "$(memory_cmd)" doctor --vault "$AGENT_MEMORY_VAULT" --json
 }
 
+refresh_index_if_needed() {
+  require_vault
+  if [ "$WATCH_ENABLED" != "1" ]; then
+    return 0
+  fi
+
+  local args
+  args=(refresh-index --vault "$AGENT_MEMORY_VAULT" --debounce "$WATCH_DEBOUNCE_SECONDS" --json)
+  if [ "$WATCH_CLEAN" = "1" ]; then
+    args+=(--clean)
+  else
+    args+=(--no-clean)
+  fi
+
+  if "$(memory_cmd)" "${args[@]}"; then
+    log "freshness check passed"
+  else
+    warn "freshness check reported issues"
+  fi
+}
+
+run_doctor_once() {
+  if "$(memory_cmd)" doctor --vault "$AGENT_MEMORY_VAULT" --json; then
+    log "doctor passed"
+  else
+    warn "doctor reported issues"
+  fi
+}
+
 run_loop() {
   require_vault
   mkdir -p "$LOG_DIR"
   log "Agent Memory service started"
   log "vault: $AGENT_MEMORY_VAULT"
-  log "interval: $INTERVAL_SECONDS seconds"
+  log "doctor interval: $INTERVAL_SECONDS seconds"
+  log "freshness enabled: $WATCH_ENABLED"
+  log "freshness interval: $WATCH_INTERVAL_SECONDS seconds"
+  log "freshness debounce: $WATCH_DEBOUNCE_SECONDS seconds"
+  log "freshness clean: $WATCH_CLEAN"
+  local next_doctor
+  next_doctor=0
   while true; do
-    if "$(memory_cmd)" doctor --vault "$AGENT_MEMORY_VAULT" --json; then
-      log "doctor passed"
-    else
-      warn "doctor reported issues"
+    if [ "$WATCH_ENABLED" = "1" ]; then
+      refresh_index_if_needed
     fi
-    sleep "$INTERVAL_SECONDS"
+
+    local now
+    now="$(date +%s)"
+    if [ "$now" -ge "$next_doctor" ]; then
+      run_doctor_once
+      next_doctor=$((now + INTERVAL_SECONDS))
+    fi
+
+    if [ "$WATCH_ENABLED" = "1" ]; then
+      sleep "$WATCH_INTERVAL_SECONDS"
+    else
+      sleep "$INTERVAL_SECONDS"
+    fi
+  done
+}
+
+watch_loop() {
+  require_vault
+  mkdir -p "$LOG_DIR"
+  WATCH_ENABLED=1
+  log "Agent Memory freshness watcher started"
+  log "vault: $AGENT_MEMORY_VAULT"
+  log "freshness interval: $WATCH_INTERVAL_SECONDS seconds"
+  log "freshness debounce: $WATCH_DEBOUNCE_SECONDS seconds"
+  log "freshness clean: $WATCH_CLEAN"
+  while true; do
+    refresh_index_if_needed
+    sleep "$WATCH_INTERVAL_SECONDS"
   done
 }
 
@@ -288,6 +373,10 @@ shift || true
 INSTALL_DIR="${AGENT_MEMORY_INSTALL_DIR:-$HOME/.local/share/agent-memory}"
 BIN_DIR="${AGENT_MEMORY_BIN_DIR:-$HOME/.local/bin}"
 INTERVAL_SECONDS="${AGENT_MEMORY_SERVICE_INTERVAL_SECONDS:-3600}"
+WATCH_ENABLED="${AGENT_MEMORY_FRESHNESS_ENABLED:-1}"
+WATCH_INTERVAL_SECONDS="${AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS:-30}"
+WATCH_DEBOUNCE_SECONDS="${AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS:-2}"
+WATCH_CLEAN="${AGENT_MEMORY_FRESHNESS_CLEAN:-0}"
 FOLLOW_LOGS=1
 
 while [ "$#" -gt 0 ]; do
@@ -302,6 +391,24 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || fail "--interval requires seconds"
       INTERVAL_SECONDS="$2"
       shift 2
+      ;;
+    --watch-interval)
+      [ "$#" -ge 2 ] || fail "--watch-interval requires seconds"
+      WATCH_INTERVAL_SECONDS="$2"
+      shift 2
+      ;;
+    --watch-debounce)
+      [ "$#" -ge 2 ] || fail "--watch-debounce requires seconds"
+      WATCH_DEBOUNCE_SECONDS="$2"
+      shift 2
+      ;;
+    --no-watch)
+      WATCH_ENABLED=0
+      shift
+      ;;
+    --watch-clean)
+      WATCH_CLEAN=1
+      shift
       ;;
     --no-follow)
       FOLLOW_LOGS=0
@@ -338,6 +445,7 @@ case "$COMMAND" in
   status) status_service ;;
   logs) show_logs ;;
   doctor) doctor ;;
+  watch) watch_loop ;;
   run) run_loop ;;
   -h|--help)
     usage

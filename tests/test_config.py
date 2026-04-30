@@ -1,6 +1,15 @@
 import pytest
 
-from agent_memory.config import ConfigError, ENV_VAULT_PATH, load_config
+from agent_memory.config import (
+    ConfigError,
+    ENV_SEMANTIC_BATCH_SIZE,
+    ENV_SEMANTIC_DIMENSIONS,
+    ENV_SEMANTIC_MIN_SIMILARITY,
+    ENV_SEMANTIC_MODEL,
+    ENV_SEMANTIC_PROVIDER,
+    ENV_VAULT_PATH,
+    load_config,
+)
 from agent_memory.vault import init_vault
 
 
@@ -33,6 +42,25 @@ def test_load_config_uses_environment_vault(tmp_path, monkeypatch):
     config = load_config()
 
     assert config.vault_path == vault.resolve()
+
+
+def test_load_config_applies_semantic_environment_overrides(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    monkeypatch.setenv(ENV_SEMANTIC_PROVIDER, " deterministic ")
+    monkeypatch.setenv(ENV_SEMANTIC_MODEL, " deterministic-test-v1 ")
+    monkeypatch.setenv(ENV_SEMANTIC_BATCH_SIZE, "7")
+    monkeypatch.setenv(ENV_SEMANTIC_DIMENSIONS, "64")
+    monkeypatch.setenv(ENV_SEMANTIC_MIN_SIMILARITY, "0.25")
+
+    config = load_config(vault)
+
+    assert config.semantic.provider == "deterministic"
+    assert config.semantic.enabled is True
+    assert config.semantic.model == "deterministic-test-v1"
+    assert config.semantic.batch_size == 7
+    assert config.semantic.dimensions == 64
+    assert config.semantic.min_similarity == 0.25
 
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):

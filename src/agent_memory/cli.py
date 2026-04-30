@@ -14,6 +14,7 @@ from rich.console import Console
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
 from agent_memory.evaluation import run_evaluation
+from agent_memory.freshness import refresh_index_if_needed
 from agent_memory.indexer import reindex_vault
 from agent_memory.lifecycle import (
     contradict_memories,
@@ -52,6 +53,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("doctor", "Validate Markdown schema, graph links, and conflicts."),
             ("conflicts", "Detect sync conflict markers, duplicate IDs, and invalid frontmatter."),
             ("reindex", "Rebuild the disposable SQLite index from Markdown."),
+            ("refresh-index", "Reindex only when durable vault files changed."),
             ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
         ),
     ),
@@ -246,6 +248,43 @@ def reindex(
         console.print(f"[yellow]Graph warnings:[/yellow] {payload['orphan_count']} orphan relation(s)")
 
 
+@app.command("refresh-index")
+def refresh_index(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    debounce_seconds: Optional[float] = typer.Option(
+        None,
+        "--debounce",
+        min=0,
+        help="Seconds of quiet time before reindexing. Defaults to config.",
+    ),
+    clean: Optional[bool] = typer.Option(
+        None,
+        "--clean/--no-clean",
+        help="Override whether freshness-triggered reindex deletes SQLite first.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Refresh the local index when durable Markdown/config/schema files changed."""
+
+    try:
+        config = load_config(vault)
+        payload = refresh_index_if_needed(config, debounce_seconds=debounce_seconds, clean=clean).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="refresh_index_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["enabled"]:
+        console.print("[yellow]Index freshness watcher is disabled.[/yellow]")
+    elif payload["reindexed"]:
+        change_count = payload["changes"]["change_count"]
+        console.print(f"[green]Refreshed index[/green] after {change_count} durable file change(s).")
+    else:
+        console.print(f"[green]Index is fresh[/green]: checked {payload['checked_files']} durable file(s).")
+
+
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query."),
@@ -266,6 +305,7 @@ def search(
         "--semantic/--no-semantic",
         help="Override semantic search config for this query.",
     ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
     limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
@@ -292,6 +332,7 @@ def search(
             include_related=include_related,
             limit=limit,
             semantic=semantic,
+            mode=mode,
         ).to_dict()
     except Exception as exc:
         _handle_error(
@@ -303,6 +344,14 @@ def search(
     if json_output:
         _print_json(payload)
         return
+
+    semantic_info = payload.get("semantic", {})
+    if semantic_info.get("enabled"):
+        console.print(
+            "[dim]Semantic: "
+            f"provider={semantic_info.get('provider') or '-'} "
+            f"model={semantic_info.get('model') or '-'}[/dim]"
+        )
 
     if not payload["results"]:
         console.print("[yellow]No memories found.[/yellow]")
@@ -337,6 +386,7 @@ def recall(
         "--semantic/--no-semantic",
         help="Override semantic search config for this query.",
     ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Recall ranked memory chunks packed under a strict token budget."""
@@ -356,6 +406,7 @@ def recall(
             budget=budget,
             include_related=include_related,
             semantic=semantic,
+            mode=mode,
         ).to_dict()
     except Exception as exc:
         _handle_error(
@@ -405,6 +456,7 @@ def explain_recall_command(
         "--semantic/--no-semantic",
         help="Override semantic search config for this explanation.",
     ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Explain why recall selected or skipped candidate chunks."""
@@ -424,6 +476,7 @@ def explain_recall_command(
             budget=budget,
             include_related=include_related,
             semantic=semantic,
+            mode=mode,
         ).to_dict()
     except Exception as exc:
         _handle_error(
@@ -465,6 +518,7 @@ def brief(
         "--semantic/--no-semantic",
         help="Override semantic search config for this brief.",
     ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate a citation-preserving memory brief under a strict budget."""
@@ -484,6 +538,7 @@ def brief(
             budget=budget,
             include_related=include_related,
             semantic=semantic,
+            mode=mode,
         ).to_dict()
     except Exception as exc:
         _handle_error(
