@@ -33,6 +33,18 @@ Do not expect Agent Memory to fetch or analyze URLs by itself. The AI agent is
 responsible for reading the material, producing the extract, and deciding which
 facts/decisions/preferences are durable enough to remember.
 
+## Reviewing Pending Memory Through MCP
+
+Use MCP review tools when the user asks to process pending memory:
+
+1. Call `review()` to list pending agent-generated memories.
+2. Call `inspect(id)` when an item needs more detail.
+3. Call `approve(id, reason)` for durable, correct memory.
+4. Call `reject(id, reason)` for incorrect, transient, duplicated, or low-value memory.
+
+Use `mark_status(id, status)` only when you need a lifecycle state other than
+`active` or `rejected`, such as `stale`.
+
 Canonical memories should be small and atomic:
 
 - `fact`: stable factual knowledge

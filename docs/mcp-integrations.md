@@ -38,6 +38,9 @@ Available tools:
 - `build_context(task, budget, filters)`
 - `inspect(id)`
 - `explain_recall(query, budget, filters)`
+- `review()`
+- `approve(id, reason)`
+- `reject(id, reason)`
 - `mark_status(id, status)`
 - `mark_superseded(old_id, by_id, reason)`
 
@@ -65,6 +68,11 @@ without requiring a vault or index.
 `mark_status` and `mark_superseded` mutate lifecycle frontmatter through the
 Stage 9 lifecycle service. `explain_recall` returns deterministic selected and
 skipped recall explanations backed by retrieval and packing metadata.
+
+`review()` returns pending agent-generated memories. `approve(id, reason)` marks
+a pending memory `active`; `reject(id, reason)` marks it `rejected`. These are
+the MCP equivalents of `memory review`, `memory mark <id> --status active`, and
+`memory reject <id>`.
 
 ## Automatic Recall Policy
 
@@ -224,9 +232,11 @@ Recommended Claude Code workflow:
 3. If `memory_needed` is `true`, prepend the returned `markdown` to the working
    context and preserve citations in summaries.
 4. Use `remember(memory)` for new durable memory; it defaults to pending review.
-5. Use `mark_status(id, status)` or `mark_superseded(old_id, by_id, reason)` for
+5. Use `review()`, `approve(id, reason)`, or `reject(id, reason)` to process the
+   pending review queue through MCP.
+6. Use `mark_status(id, status)` or `mark_superseded(old_id, by_id, reason)` for
    explicit lifecycle updates.
-6. For "save this URL/material" requests, fetch the material, call `ingest_url`
+7. For "save this URL/material" requests, fetch the material, call `ingest_url`
    or `save_source`, then promote durable items with `remember`.
 
 ## Cursor
@@ -256,6 +266,8 @@ Recommended Cursor workflow:
 2. Skip memory when `memory_needed` is `false`.
 3. Use `remember` only when the user explicitly asks to save a durable memory or
    when a completed task creates a stable decision worth review.
-4. For URLs and raw material, save source/extract first with `ingest_url` or
+4. Use `review`, `approve`, and `reject` to process pending memory without
+   leaving the MCP workflow.
+5. For URLs and raw material, save source/extract first with `ingest_url` or
    `save_source`, then create pending atomic memories with `remember`.
 

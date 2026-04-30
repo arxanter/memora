@@ -10,6 +10,7 @@ Agent-facing operations should support structured JSON responses, stable error c
 
 ```bash
 memory init <vault>
+memory help
 memory mcp-config
 memory remember --type decision --text "..."
 memory reindex
@@ -65,6 +66,22 @@ Example:
 ```bash
 memory init ./memory-vault --json
 ```
+
+### `memory help`
+
+Prints a grouped overview of available Agent Memory commands with short
+descriptions. Use it when you want the project-specific help surface instead of
+Typer's generated `memory --help` output.
+
+Examples:
+
+```bash
+memory help
+memory help --json
+```
+
+The JSON output is stable enough for agent clients to inspect available command
+groups and descriptions.
 
 ### `memory mcp-config`
 
@@ -567,6 +584,9 @@ should_recall(message)
 build_context(task, budget, filters)
 inspect(id)
 explain_recall(query, budget, filters)
+review()
+approve(id, reason)
+reject(id, reason)
 mark_status(id, status)
 mark_superseded(old_id, by_id, reason)
 ```
@@ -601,6 +621,9 @@ decisions, preferences, project context, or tasks.
 
 `explain_recall(query, budget, filters)` is implemented in Stage 13 and returns
 the same structured explanation payload as `memory explain-recall --json`.
+`review()` lists pending agent-generated memories for review. `approve(id,
+reason)` marks a pending memory active, and `reject(id, reason)` marks it
+rejected. These tools allow agents to process review queues entirely through MCP.
 `mark_status(id, status)` is implemented in Stage 9 and mutates Markdown
 frontmatter through the lifecycle service. `mark_superseded(old_id, by_id,
 reason)` is a Stage 10 MCP wrapper around the Stage 9 supersede lifecycle

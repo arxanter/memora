@@ -67,6 +67,29 @@ def test_status_and_doctor_emit_json(tmp_path):
     assert json.loads(doctor_result.output)["ok"] is True
 
 
+def test_help_command_lists_grouped_commands():
+    human_result = runner.invoke(app, ["help"])
+    json_result = runner.invoke(app, ["help", "--json"])
+
+    assert human_result.exit_code == 0, human_result.output
+    assert "Agent Memory commands" in human_result.output
+    assert "Setup and health" in human_result.output
+    assert "mcp-config" in human_result.output
+    assert "explain-recall" in human_result.output
+    assert "memory <command> --help" in human_result.output
+
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "help"
+    command_usages = {
+        command["usage"]
+        for group in payload["groups"]
+        for command in group["commands"]
+    }
+    assert {"init <vault>", "mcp-config", "remember", "brief", "eval <fixture-or-file>"} <= command_usages
+
+
 def test_mcp_config_command_prints_client_config(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])

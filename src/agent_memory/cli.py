@@ -43,6 +43,52 @@ app = typer.Typer(
 )
 console = Console()
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
+HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "Setup and health",
+        (
+            ("init <vault>", "Create the vault layout and config."),
+            ("status", "Show vault health and local index state."),
+            ("doctor", "Validate Markdown schema, graph links, and conflicts."),
+            ("conflicts", "Detect sync conflict markers, duplicate IDs, and invalid frontmatter."),
+            ("reindex", "Rebuild the disposable SQLite index from Markdown."),
+            ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
+        ),
+    ),
+    (
+        "Write and lifecycle",
+        (
+            ("remember", "Create a validated Markdown memory."),
+            ("review", "List pending agent-generated memories with a diff-style preview."),
+            ("mark", "Set a memory lifecycle status."),
+            ("reject", "Reject a memory so default retrieval excludes it."),
+            ("supersede", "Mark an old memory replaced by a newer one."),
+            ("contradict", "Record a contradiction relation between memories."),
+            ("decay", "Mark expired active memories stale."),
+        ),
+    ),
+    (
+        "Retrieval and agent context",
+        (
+            ("search", "Return ranked memory results with snippets and citations."),
+            ("recall", "Pack ranked chunks under a strict token budget."),
+            ("explain-recall", "Explain selected and skipped recall candidates."),
+            ("brief", "Render a citation-preserving Memory Brief."),
+            ("should-recall", "Decide whether a user request should use memory."),
+        ),
+    ),
+    (
+        "Inspect, evaluation, and compatibility",
+        (
+            ("inspect <id>", "Show one memory by ID."),
+            ("open <id>", "Print a memory Markdown path and Obsidian URI."),
+            ("graph <id>", "Show incoming and outgoing graph links."),
+            ("eval <fixture-or-file>", "Run deterministic fixture-backed evaluation cases."),
+            ("import <path>", "Placeholder for Markdown/Basic Memory import."),
+            ("export", "Placeholder for Markdown export."),
+        ),
+    ),
+)
 
 
 @app.command("init")
@@ -67,6 +113,50 @@ def init_command(
         console.print(f"Created config: {payload['config_path']}")
     else:
         console.print(f"Preserved existing config: {payload['config_path']}")
+
+
+@app.command("help")
+def help_command(
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Show Agent Memory commands grouped by workflow."""
+
+    payload = {
+        "ok": True,
+        "implemented": True,
+        "command": "help",
+        "groups": [
+            {
+                "name": group_name,
+                "commands": [
+                    {
+                        "usage": usage,
+                        "description": description,
+                    }
+                    for usage, description in commands
+                ],
+            }
+            for group_name, commands in HELP_GROUPS
+        ],
+        "tips": [
+            "Run `memory <command> --help` for command-specific options.",
+            "Most commands support `--json` for agent-friendly output.",
+            "Use `memory mcp-config` to print Claude/Cursor MCP configuration.",
+        ],
+    }
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print("[bold]Agent Memory commands[/bold]")
+    console.print("Run [cyan]memory <command> --help[/cyan] for command-specific options.")
+    console.print("Most commands support [cyan]--json[/cyan].\n")
+    for group in payload["groups"]:
+        console.print(f"[bold]{group['name']}[/bold]")
+        for command in group["commands"]:
+            console.print(f"  [cyan]{command['usage']:<24}[/cyan] {command['description']}")
+        console.print("")
+    console.print("MCP setup: [cyan]memory mcp-config --format claude[/cyan]")
 
 
 @app.command("mcp-config")

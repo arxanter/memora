@@ -7,7 +7,7 @@ from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
-from agent_memory.lifecycle import mark_status, supersede_memory
+from agent_memory.lifecycle import mark_status, reject_memory, review_queue, supersede_memory
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -391,6 +391,56 @@ def mark_status_tool(memory_id: str, status: str, *, vault: Optional[PathLike] =
         return _error_payload(exc, code="mark_status_failed", tool="mark_status", id=memory_id)
 
 
+def review_tool(*, vault: Optional[PathLike] = None) -> JsonPayload:
+    """Return pending agent-generated memories awaiting review."""
+
+    try:
+        config = load_config(vault)
+        payload = review_queue(config).to_dict()
+        payload.update({"tool": "review"})
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="review_failed", tool="review")
+
+
+def approve_tool(memory_id: str, reason: Optional[str] = None, *, vault: Optional[PathLike] = None) -> JsonPayload:
+    """Approve a pending memory by marking it active."""
+
+    try:
+        config = load_config(vault)
+        payload = mark_status(config, memory_id, LifecycleStatus.ACTIVE, reason=reason).to_dict()
+        payload.update(
+            {
+                "tool": "approve",
+                "id": memory_id,
+                "status": LifecycleStatus.ACTIVE.value,
+                "mutated": payload["mutation_count"] > 0,
+            }
+        )
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="approve_failed", tool="approve", id=memory_id)
+
+
+def reject_tool(memory_id: str, reason: Optional[str] = None, *, vault: Optional[PathLike] = None) -> JsonPayload:
+    """Reject a pending memory so default retrieval excludes it."""
+
+    try:
+        config = load_config(vault)
+        payload = reject_memory(config, memory_id, reason=reason).to_dict()
+        payload.update(
+            {
+                "tool": "reject",
+                "id": memory_id,
+                "status": LifecycleStatus.REJECTED.value,
+                "mutated": payload["mutation_count"] > 0,
+            }
+        )
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="reject_failed", tool="reject", id=memory_id)
+
+
 def mark_superseded_tool(
     old_id: str,
     by_id: str,
@@ -522,6 +572,24 @@ def create_server() -> Any:
         return mark_status_tool(id, status)
 
     @server.tool()
+    def review() -> JsonPayload:
+        """List pending agent-generated memories awaiting review."""
+
+        return review_tool()
+
+    @server.tool()
+    def approve(id: str, reason: Optional[str] = None) -> JsonPayload:
+        """Approve a pending memory by marking it active."""
+
+        return approve_tool(id, reason)
+
+    @server.tool()
+    def reject(id: str, reason: Optional[str] = None) -> JsonPayload:
+        """Reject a pending memory."""
+
+        return reject_tool(id, reason)
+
+    @server.tool()
     def mark_superseded(old_id: str, by_id: str, reason: Optional[str] = None) -> JsonPayload:
         """Mark one memory superseded by another."""
 
@@ -628,6 +696,7 @@ def _error_payload(exc: Exception, *, code: str, **details: Any) -> JsonPayload:
 
 
 __all__ = [
+    "approve_tool",
     "brief_tool",
     "build_context_tool",
     "create_server",
@@ -638,6 +707,8 @@ __all__ = [
     "mark_status_tool",
     "recall_tool",
     "remember_tool",
+    "reject_tool",
+    "review_tool",
     "ingest_url_tool",
     "save_source_tool",
     "search_tool",

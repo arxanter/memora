@@ -1,6 +1,7 @@
 from agent_memory.config import load_config
 from agent_memory.indexer import reindex_vault
 from agent_memory.mcp_server import (
+    approve_tool,
     brief_tool,
     build_context_tool,
     explain_recall_tool,
@@ -10,6 +11,8 @@ from agent_memory.mcp_server import (
     mark_status_tool,
     recall_tool,
     remember_tool,
+    reject_tool,
+    review_tool,
     save_source_tool,
     search_tool,
     should_recall_tool,
@@ -192,6 +195,55 @@ def test_mcp_mark_status_mutates_memory(tmp_path):
     assert payload["citations"] == remembered["citations"]
     document = validate_markdown_file(vault / remembered["relative_path"])
     assert document.frontmatter.status == "stale"
+
+
+def test_mcp_review_approve_and_reject_pending_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    first = remember_tool(
+        {
+            "type": "fact",
+            "text": "MCP review can approve pending memory.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    second = remember_tool(
+        {
+            "type": "fact",
+            "text": "MCP review can reject pending memory.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.6,
+        },
+        vault=vault,
+    )
+
+    review_payload = review_tool(vault=vault)
+    approve_payload = approve_tool(first["id"], reason="Looks durable.", vault=vault)
+    reject_payload = reject_tool(second["id"], reason="Not durable.", vault=vault)
+    after_review = review_tool(vault=vault)
+
+    assert review_payload["ok"] is True
+    assert review_payload["tool"] == "review"
+    assert review_payload["pending_count"] == 2
+    assert {item["id"] for item in review_payload["items"]} == {first["id"], second["id"]}
+
+    assert approve_payload["ok"] is True
+    assert approve_payload["tool"] == "approve"
+    assert approve_payload["status"] == "active"
+    assert approve_payload["mutated"] is True
+    assert approve_payload["citations"] == first["citations"]
+
+    assert reject_payload["ok"] is True
+    assert reject_payload["tool"] == "reject"
+    assert reject_payload["status"] == "rejected"
+    assert reject_payload["mutated"] is True
+    assert reject_payload["citations"] == second["citations"]
+
+    assert after_review["pending_count"] == 0
+    assert validate_markdown_file(vault / first["relative_path"]).frontmatter.status == "active"
+    assert validate_markdown_file(vault / second["relative_path"]).frontmatter.status == "rejected"
 
 
 def test_mcp_search_uses_retrieval_service(tmp_path):
