@@ -209,6 +209,17 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
         CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
 
+        CREATE TABLE IF NOT EXISTS embeddings (
+            chunk_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            vector TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chunk_id, model),
+            FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_embeddings_model_hash ON embeddings(model, content_hash);
+
         CREATE TABLE IF NOT EXISTS memories (
             id TEXT PRIMARY KEY,
             document_id TEXT NOT NULL UNIQUE,
@@ -485,6 +496,13 @@ def _replace_chunks(
     document_id: str,
     chunks: Iterable[IndexedChunk],
 ) -> None:
+    connection.execute(
+        """
+        DELETE FROM embeddings
+        WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)
+        """,
+        (document_id,),
+    )
     connection.execute("DELETE FROM chunk_fts WHERE document_id = ?", (document_id,))
     connection.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
     for chunk in chunks:
@@ -564,6 +582,13 @@ def _iter_relation_edges(frontmatter: Any) -> Iterable[tuple[str, str, Optional[
 
 
 def _delete_document_index(connection: sqlite3.Connection, document_id: str) -> None:
+    connection.execute(
+        """
+        DELETE FROM embeddings
+        WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)
+        """,
+        (document_id,),
+    )
     connection.execute("DELETE FROM chunk_fts WHERE document_id = ?", (document_id,))
     connection.execute("DELETE FROM documents WHERE id = ?", (document_id,))
 

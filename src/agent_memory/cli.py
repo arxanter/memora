@@ -130,10 +130,15 @@ def search(
     valid_from: Optional[str] = typer.Option(None, "--valid-from", help="Valid-from lower bound date."),
     valid_to: Optional[str] = typer.Option(None, "--valid-to", help="Valid-to upper bound date."),
     include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    semantic: Optional[bool] = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Override semantic search config for this query.",
+    ),
     limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """Search indexed memory using keyword, metadata, and graph signals."""
+    """Search indexed memory using keyword, optional semantic, metadata, and graph signals."""
 
     try:
         config = load_config(vault)
@@ -155,6 +160,7 @@ def search(
             filters=SearchFilters.from_mapping(filters.to_dict()),
             include_related=include_related,
             limit=limit,
+            semantic=semantic,
         ).to_dict()
     except Exception as exc:
         _handle_error(

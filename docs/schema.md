@@ -124,7 +124,7 @@ Lifecycle links such as supersession and contradiction belong in durable Markdow
 
 ## SQLite Cache
 
-The Stage 4 index is rebuildable from Markdown and contains:
+The SQLite index is rebuildable from Markdown and contains:
 
 ```sql
 documents(id, path, type, status, created_at, updated_at, content_hash)
@@ -133,6 +133,7 @@ memories(id, document_id, type, scope, project, status, confidence, valid_from, 
 observations(id, document_id, category, text, confidence, content_hash)
 links(from_id, to_id, relation, confidence)
 chunk_fts using sqlite fts5
+embeddings(chunk_id, model, vector, content_hash)
 ```
 
 The implementation lives in `src/agent_memory/indexer.py`. `memory reindex`
@@ -141,19 +142,17 @@ creates or refreshes these tables with stdlib `sqlite3`, using SHA-256
 reindexing parses current Markdown but skips chunk, observation, and relation
 rewrites for documents whose content hash is unchanged.
 
-`chunk_fts` is the low-level SQLite FTS5 foundation for later retrieval stages.
+`chunk_fts` is the low-level SQLite FTS5 foundation for keyword retrieval.
 Stage 4 populates it with body chunks, heading section chunks, and observation
-chunks, but does not yet expose ranked search/filter UX.
+chunks. Stage 6 adds optional semantic search through the `embeddings` table.
 
 Graph validation checks relation targets from `relations`, `supersedes`, and
 `contradicts` against known memory IDs. `memory doctor` reports orphan targets as
 graph issues.
 
-Embeddings, when added, are cache data keyed by chunk and content hash:
-
-```sql
-embeddings(chunk_id, model, vector, content_hash)
-```
+Embeddings are cache data keyed by chunk, model, and `content_hash`. If a chunk
+changes, lazy semantic search refreshes the stale vector. The vectors can be
+deleted and rebuilt from Markdown plus the configured embedding provider.
 
 ## Compatibility Notes
 

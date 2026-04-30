@@ -1,4 +1,7 @@
-from agent_memory.config import load_config
+import sqlite3
+
+from agent_memory.config import SemanticConfig, load_config
+from agent_memory.embeddings import DeterministicEmbeddingProvider
 from agent_memory.indexer import reindex_vault
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.vault import init_vault
@@ -126,6 +129,125 @@ def test_search_scoring_is_deterministic_without_wall_clock(tmp_path):
         "superseded_penalty": 0.0,
     }
     assert result["score"] == 11.6
+
+
+def test_search_preserves_fts_only_behavior_when_semantic_disabled(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/decisions/database.md",
+        memory_id="mem_20260430_database",
+        memory_type="decision",
+        body="Database indexing uses SQLite FTS.",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/semantic-only.md",
+        memory_id="mem_20260430_semantic_only",
+        memory_type="fact",
+        body="Databases benefit from vector embeddings.",
+    )
+    config = _semantic_config(load_config(vault))
+    reindex_vault(config)
+
+    response = search_memory(config, "database", semantic=False, limit=5)
+    payload = response.to_dict()
+
+    assert payload["semantic"]["enabled"] is False
+    assert [result["id"] for result in payload["results"]] == ["mem_20260430_database"]
+    assert "semantic_score" not in payload["results"][0]["score_breakdown"]
+
+
+def test_deterministic_embedding_provider_is_stable():
+    provider = DeterministicEmbeddingProvider()
+
+    first = provider.embed(["database memories"])[0]
+    second = provider.embed(["database memories"])[0]
+    different = provider.embed(["banana"])[0]
+
+    assert first == second
+    assert first != different
+    assert provider.model == "deterministic-test-v1"
+
+
+def test_semantic_embedding_cache_refreshes_stale_content_hash(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/database-cache.md",
+        memory_id="mem_20260430_database_cache",
+        memory_type="fact",
+        body="Database cache embeddings are rebuildable.",
+    )
+    config = _semantic_config(load_config(vault))
+    reindex_vault(config)
+    search_memory(config, "database", semantic=True)
+
+    with sqlite3.connect(config.index_file) as connection:
+        connection.execute("UPDATE embeddings SET content_hash = 'stale', vector = '[0.0]'")
+        connection.commit()
+
+    search_memory(config, "database", semantic=True)
+
+    with sqlite3.connect(config.index_file) as connection:
+        rows = connection.execute(
+            """
+            SELECT e.content_hash AS embedding_hash, c.content_hash AS chunk_hash, e.vector AS vector
+            FROM embeddings e
+            JOIN chunks c ON c.id = e.chunk_id
+            """
+        ).fetchall()
+
+    assert rows
+    assert all(row[0] == row[1] for row in rows)
+    assert all(row[2] != "[0.0]" for row in rows)
+
+
+def test_hybrid_search_merges_keyword_and_vector_candidates(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/decisions/database.md",
+        memory_id="mem_20260430_database",
+        memory_type="decision",
+        body="Database indexing uses SQLite FTS.",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/vector-databases.md",
+        memory_id="mem_20260430_vector_databases",
+        memory_type="fact",
+        body="Databases benefit from vector embeddings.",
+    )
+    config = _semantic_config(load_config(vault))
+    reindex_vault(config)
+
+    results = {
+        result.id: result.to_dict()
+        for result in search_memory(config, "database", semantic=True, limit=5).results
+    }
+
+    assert set(results) == {"mem_20260430_database", "mem_20260430_vector_databases"}
+    keyword_result = results["mem_20260430_database"]["score_breakdown"]
+    vector_result = results["mem_20260430_vector_databases"]["score_breakdown"]
+    assert keyword_result["fts_score"] > 0
+    assert keyword_result["semantic_score"] > 0
+    assert vector_result["fts_score"] == 0
+    assert vector_result["semantic_score"] > 0
+
+
+def _semantic_config(config):
+    return config.model_copy(
+        update={
+            "semantic": SemanticConfig(
+                provider="deterministic",
+                model="deterministic-test-v1",
+            )
+        }
+    )
 
 
 def _write_memory(

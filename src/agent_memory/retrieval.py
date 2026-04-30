@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Mapping, Optional, Sequence
 
 from agent_memory.config import MemoryConfig
+from agent_memory.embeddings import (
+    EmbeddingProvider,
+    EmbeddingProviderError,
+    cosine_similarity,
+    deserialize_vector,
+    provider_from_config,
+    serialize_vector,
+)
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, RelationType
 
 DEFAULT_STATUSES = (LifecycleStatus.ACTIVE.value, LifecycleStatus.STALE.value)
@@ -121,6 +129,8 @@ class SearchResponse:
     filters: SearchFilters
     include_related: bool
     results: tuple[SearchResult, ...]
+    semantic_enabled: bool = False
+    semantic_provider: Optional[str] = None
 
     @property
     def citations(self) -> list[dict[str, str]]:
@@ -140,6 +150,10 @@ class SearchResponse:
             "query": self.query,
             "filters": self.filters.to_dict(),
             "include_related": self.include_related,
+            "semantic": {
+                "enabled": self.semantic_enabled,
+                "provider": self.semantic_provider,
+            },
             "result_count": len(self.results),
             "vault_path": str(self.config.vault_path),
             "index_path": str(self.config.index_file),
@@ -168,6 +182,8 @@ class _Candidate:
     fts_score: float
     fts_rank: float
     row_order: int
+    semantic_score: float = 0.0
+    semantic_similarity: Optional[float] = None
     related: bool = False
     relation: Optional[str] = None
     related_to: Optional[str] = None
@@ -182,6 +198,8 @@ def search_memory(
     filters: Optional[SearchFilters] = None,
     include_related: bool = False,
     limit: int = 10,
+    semantic: Optional[bool] = None,
+    embedding_provider: Optional[EmbeddingProvider] = None,
 ) -> SearchResponse:
     """Search indexed memory chunks and return ranked memory-level results."""
 
@@ -194,13 +212,16 @@ def search_memory(
         raise ValueError("limit must be at least 1")
 
     fts_query = _to_fts_query(cleaned_query)
+    semantic_enabled = config.semantic.enabled if semantic is None else semantic
+    provider = (embedding_provider or provider_from_config(config.semantic)) if semantic_enabled else None
     connection = _connect_index(config)
     try:
+        keyword_limit = config.semantic.keyword_limit if semantic_enabled else max(selected_limit * 8, 40)
         primary = _primary_candidates(
             connection,
             fts_query,
             selected_filters,
-            fetch_limit=max(selected_limit * 8, 40),
+            fetch_limit=max(selected_limit * 8, keyword_limit),
         )
         candidates = list(primary)
         if include_related and primary:
@@ -211,6 +232,17 @@ def search_memory(
                     selected_filters,
                     max_related=max(selected_limit * 2, 10),
                 )
+            )
+        if semantic_enabled and provider is not None:
+            candidates = _merge_candidates(
+                candidates,
+                _semantic_candidates(
+                    connection,
+                    cleaned_query,
+                    selected_filters,
+                    provider=provider,
+                    fetch_limit=max(selected_limit * 8, config.semantic.vector_limit),
+                ),
             )
 
         reference_time = _reference_time(candidates)
@@ -231,6 +263,8 @@ def search_memory(
         filters=selected_filters,
         include_related=include_related,
         results=tuple(results[:selected_limit]),
+        semantic_enabled=semantic_enabled,
+        semantic_provider=provider.model if provider is not None else None,
     )
 
 
@@ -315,6 +349,185 @@ def _primary_candidates(
             related=False,
         )
     return list(candidates_by_document.values())
+
+
+def _semantic_candidates(
+    connection: sqlite3.Connection,
+    query: str,
+    filters: SearchFilters,
+    *,
+    provider: EmbeddingProvider,
+    fetch_limit: int,
+) -> list[_Candidate]:
+    _ensure_embeddings_schema(connection)
+    query_vector = provider.embed([query])
+    if len(query_vector) != 1:
+        raise EmbeddingProviderError("embedding provider must return one vector for the query")
+
+    rows = _semantic_rows(connection, filters, model=provider.model)
+    chunk_vectors = _ensure_chunk_embeddings(connection, provider=provider, rows=rows)
+    scored: list[tuple[float, sqlite3.Row]] = []
+    for row in rows:
+        vector = chunk_vectors.get(str(row["chunk_id"]))
+        if vector is None:
+            continue
+        similarity = cosine_similarity(query_vector[0], vector)
+        if similarity <= 0.0:
+            continue
+        scored.append((similarity, row))
+
+    scored.sort(key=lambda item: (-item[0], str(item[1]["document_id"]), str(item[1]["chunk_id"])))
+    candidates_by_document: dict[str, _Candidate] = {}
+    for row_order, (similarity, row) in enumerate(scored):
+        document_id = str(row["document_id"])
+        if document_id in candidates_by_document:
+            continue
+        candidates_by_document[document_id] = _candidate_from_row(
+            row,
+            fts_score=0.0,
+            row_order=row_order,
+            related=False,
+            snippet=_plain_snippet(str(row["text"])),
+            semantic_score=10.0 * similarity,
+            semantic_similarity=similarity,
+        )
+        if len(candidates_by_document) >= fetch_limit:
+            break
+    return list(candidates_by_document.values())
+
+
+def _semantic_rows(
+    connection: sqlite3.Connection,
+    filters: SearchFilters,
+    *,
+    model: str,
+) -> list[sqlite3.Row]:
+    where_sql, parameters = _filter_sql(filters, table_alias="m")
+    return connection.execute(
+        f"""
+        SELECT
+            c.id AS chunk_id,
+            c.document_id AS document_id,
+            c.chunk_type AS chunk_type,
+            c.text AS text,
+            c.content_hash AS content_hash,
+            d.path AS path,
+            d.type AS document_type,
+            d.status AS document_status,
+            d.created_at AS created_at,
+            d.updated_at AS updated_at,
+            m.scope AS scope,
+            m.project AS project,
+            m.confidence AS confidence,
+            m.valid_from AS valid_from,
+            m.valid_to AS valid_to,
+            e.vector AS embedding_vector,
+            e.content_hash AS embedding_content_hash
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        JOIN memories m ON m.document_id = c.document_id
+        LEFT JOIN embeddings e ON e.chunk_id = c.id AND e.model = ?
+        WHERE 1 = 1
+        {where_sql}
+        ORDER BY d.id ASC, c.id ASC
+        """,
+        (model, *parameters),
+    ).fetchall()
+
+
+def _ensure_chunk_embeddings(
+    connection: sqlite3.Connection,
+    *,
+    provider: EmbeddingProvider,
+    rows: Sequence[sqlite3.Row],
+) -> dict[str, list[float]]:
+    vectors_by_chunk: dict[str, list[float]] = {}
+    missing_rows: list[sqlite3.Row] = []
+
+    for row in rows:
+        chunk_id = str(row["chunk_id"])
+        vector_payload = row["embedding_vector"]
+        embedding_hash = row["embedding_content_hash"]
+        if vector_payload is not None and embedding_hash == row["content_hash"]:
+            try:
+                vectors_by_chunk[chunk_id] = deserialize_vector(str(vector_payload))
+                continue
+            except EmbeddingProviderError:
+                pass
+        missing_rows.append(row)
+
+    if not missing_rows:
+        return vectors_by_chunk
+
+    generated = provider.embed([str(row["text"]) for row in missing_rows])
+    if len(generated) != len(missing_rows):
+        raise EmbeddingProviderError(
+            f"embedding provider returned {len(generated)} vectors for {len(missing_rows)} chunks"
+        )
+
+    for row, vector in zip(missing_rows, generated):
+        chunk_id = str(row["chunk_id"])
+        vectors_by_chunk[chunk_id] = list(vector)
+        connection.execute(
+            """
+            INSERT INTO embeddings (chunk_id, model, vector, content_hash)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chunk_id, model) DO UPDATE SET
+                vector = excluded.vector,
+                content_hash = excluded.content_hash,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (
+                chunk_id,
+                provider.model,
+                serialize_vector(vector),
+                str(row["content_hash"]),
+            ),
+        )
+    connection.commit()
+    return vectors_by_chunk
+
+
+def _ensure_embeddings_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS embeddings (
+            chunk_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            vector TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chunk_id, model),
+            FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_embeddings_model_hash ON embeddings(model, content_hash);
+        """
+    )
+
+
+def _merge_candidates(
+    base: Sequence[_Candidate],
+    incoming: Sequence[_Candidate],
+) -> list[_Candidate]:
+    candidates_by_document: dict[str, _Candidate] = {}
+    for candidate in (*base, *incoming):
+        existing = candidates_by_document.get(candidate.document_id)
+        if existing is None:
+            candidates_by_document[candidate.document_id] = candidate
+            continue
+
+        preferred = candidate if existing.related and not candidate.related else existing
+        candidates_by_document[candidate.document_id] = replace(
+            preferred,
+            fts_score=max(existing.fts_score, candidate.fts_score),
+            fts_rank=existing.fts_rank if existing.fts_score >= candidate.fts_score else candidate.fts_rank,
+            row_order=min(existing.row_order, candidate.row_order),
+            semantic_score=max(existing.semantic_score, candidate.semantic_score),
+            semantic_similarity=_max_optional(existing.semantic_similarity, candidate.semantic_similarity),
+            related=existing.related and candidate.related,
+        )
+
+    return sorted(candidates_by_document.values(), key=lambda candidate: candidate.row_order)
 
 
 def _related_candidates(
@@ -428,6 +641,8 @@ def _candidate_from_row(
     row_order: int,
     related: bool,
     snippet: Optional[str] = None,
+    semantic_score: float = 0.0,
+    semantic_similarity: Optional[float] = None,
 ) -> _Candidate:
     return _Candidate(
         document_id=str(row["document_id"]),
@@ -448,6 +663,8 @@ def _candidate_from_row(
         fts_score=fts_score,
         fts_rank=float(row["fts_rank"]) if "fts_rank" in row.keys() else 0.0,
         row_order=row_order,
+        semantic_score=semantic_score,
+        semantic_similarity=semantic_similarity,
         related=related,
     )
 
@@ -482,8 +699,11 @@ def _rank_candidate(
         "stale_penalty": stale_penalty,
         "superseded_penalty": superseded_penalty,
     }
+    if candidate.semantic_score > 0.0:
+        breakdown["semantic_score"] = candidate.semantic_score
     score = (
         breakdown["fts_score"]
+        + breakdown.get("semantic_score", 0.0)
         + breakdown["graph_neighbor_boost"]
         + breakdown["memory_type_boost"]
         + breakdown["status_boost"]
@@ -509,6 +729,8 @@ def _rank_candidate(
         "fts_rank": candidate.fts_rank,
         "related": candidate.related,
     }
+    if candidate.semantic_similarity is not None:
+        metadata["semantic_similarity"] = candidate.semantic_similarity
     if candidate.related:
         metadata.update(
             {
@@ -665,6 +887,14 @@ def _optional_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     return float(value)
+
+
+def _max_optional(left: Optional[float], right: Optional[float]) -> Optional[float]:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return max(left, right)
 
 
 def _optional_enum_value(enum_type: Any, value: Any) -> Optional[str]:

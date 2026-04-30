@@ -99,12 +99,14 @@ memory reindex --vault ./memory-vault --clean
 
 ### `memory search`
 
-Implemented in Stage 5.
+Implemented in Stage 5, with optional semantic retrieval added in Stage 6.
 
-Searches the Stage 4 SQLite FTS index and returns ranked memory-level results
-with snippets, score breakdowns, metadata, and Obsidian-relative citations.
-SQLite remains disposable cache data; search does not silently rebuild a missing
-or incomplete index. Run `memory reindex --vault <vault>` first if search reports
+Searches the Stage 4 SQLite FTS index and, when `semantic.provider` is
+configured, lazily generates chunk embeddings for hybrid keyword plus vector
+retrieval. It returns ranked memory-level results with snippets, score
+breakdowns, metadata, and Obsidian-relative citations. SQLite and embeddings
+remain disposable cache data; search does not silently rebuild a missing or
+incomplete index. Run `memory reindex --vault <vault>` first if search reports
 `index_missing`.
 
 Default retrieval includes `active` and `stale` memory, excludes `pending`,
@@ -121,19 +123,26 @@ Supported filters:
 - `--updated-after <date-or-datetime>` and `--updated-before <date-or-datetime>`
 - `--valid-from <date>` and `--valid-to <date>`
 - `--include-related` to include linked graph neighbors from the `links` table
+- `--semantic` or `--no-semantic` to override the config for one query
 - `--limit <n>`
 
-Scoring is deterministic for a fixed index. It combines FTS rank, graph neighbor
-boost, memory type boost, status boost, confidence boost, recency boost, rating
-boost, stale penalty, and superseded penalty. Recency is calculated relative to
-the newest indexed result in the candidate set, not wall-clock time.
+Scoring is deterministic for a fixed index and provider. It combines FTS rank,
+optional semantic similarity, graph neighbor boost, memory type boost, status
+boost, confidence boost, recency boost, rating boost, stale penalty, and
+superseded penalty. Recency is calculated relative to the newest indexed result
+in the candidate set, not wall-clock time.
 
 Example:
 
 ```bash
 memory search "vector db" --vault ./memory-vault --project foo --type decision --status active --json
 memory search "agent memory" --vault ./memory-vault --include-related
+memory search "database decisions" --vault ./memory-vault --semantic
 ```
+
+Semantic search is disabled by default. Configure a provider in
+`.agent-memory/config.yaml` to enable it for normal searches; see
+`docs/semantic-search.md` for local/offline setup.
 
 ### `memory recall`
 
@@ -209,7 +218,8 @@ MCP responses should include:
 - Enough scoring or selection metadata to support `explain_recall`.
 
 `search(query, filters)` is implemented in Stage 5 and accepts the same filter
-keys as the CLI using snake_case names, plus `include_related` and `limit`.
+keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
+`limit`.
 `recall`, `brief`, `explain_recall`, and `mark_status` remain placeholders until
 later stages.
 

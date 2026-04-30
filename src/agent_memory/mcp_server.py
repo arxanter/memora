@@ -74,6 +74,7 @@ def search_tool(
 
     raw_filters = _filters(filters)
     include_related = _bool(raw_filters.pop("include_related", False))
+    semantic = raw_filters.pop("semantic", None)
     limit = int(raw_filters.pop("limit", 10))
     try:
         config = load_config(vault)
@@ -83,6 +84,7 @@ def search_tool(
             filters=SearchFilters.from_mapping(raw_filters),
             include_related=include_related,
             limit=limit,
+            semantic=None if semantic is None else _bool(semantic),
         ).to_dict()
         payload.update({"tool": "search"})
         return payload

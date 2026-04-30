@@ -20,6 +20,44 @@ class ConfigError(ValueError):
     """Raised when a vault config cannot be found or loaded."""
 
 
+class SemanticConfig(BaseModel):
+    """Optional semantic search configuration."""
+
+    provider: Optional[str] = None
+    model: str = "local-embedding-model"
+    command: Optional[list[str]] = None
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    vector_limit: int = Field(default=100, ge=1)
+    keyword_limit: int = Field(default=100, ge=1)
+
+    @property
+    def enabled(self) -> bool:
+        return self.provider is not None
+
+    @field_validator("provider")
+    @classmethod
+    def normalize_provider(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip().lower()
+        return cleaned or None
+
+    @field_validator("model")
+    @classmethod
+    def require_model(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("semantic model must not be empty")
+        return value.strip()
+
+    @field_validator("command")
+    @classmethod
+    def normalize_command(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        if value is None:
+            return None
+        cleaned = [item.strip() for item in value if item.strip()]
+        return cleaned or None
+
+
 class MemoryConfig(BaseModel):
     """Stage 2 configuration for a local Agent Memory vault."""
 
@@ -39,6 +77,7 @@ class MemoryConfig(BaseModel):
     user_default_status: LifecycleStatus = LifecycleStatus.ACTIVE
     agent_default_status: LifecycleStatus = LifecycleStatus.PENDING
     default_author_name: str = "memory CLI"
+    semantic: SemanticConfig = Field(default_factory=SemanticConfig)
 
     @field_validator("schema_version")
     @classmethod
