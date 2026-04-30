@@ -1,0 +1,38 @@
+# macOS/editor noise
+.DS_Store
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pycache_compile/
+
+# Virtual environments
+.venv/
+.test-venv/
+venv/
+
+# Coverage and build artifacts
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environment files
+.env
+.env.*
+
+# Disposable Agent Memory vault state
+.agent-memory/index.sqlite
+.agent-memory/cache/
+.agent-memory/embeddings/
+.agent-memory/locks/
+**/.agent-memory/index.sqlite
+**/.agent-memory/cache/
+**/.agent-memory/embeddings/
+**/.agent-memory/locks/
