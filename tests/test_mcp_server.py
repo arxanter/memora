@@ -81,26 +81,29 @@ def test_mcp_inspect_returns_memory_with_citation(tmp_path):
     assert payload["citations"] == remembered["citations"]
 
 
-def test_mcp_placeholder_explain_recall_has_golden_payload(tmp_path):
+def test_mcp_explain_recall_uses_real_explanation_service(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    vault_path = str(vault.resolve())
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP explain recall reports selected memory chunks.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
 
-    payload = explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault)
+    payload = explain_recall_tool("selected memory chunks", 40, {"status": "pending"}, vault=vault)
 
-    assert payload == {
-        "ok": True,
-        "implemented": False,
-        "command": "explain_recall",
-        "message": "explain_recall is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-        "vault_path": vault_path,
-        "query": "agent memory",
-        "budget": 600,
-        "filters": {"scope": "project"},
-        "explanation": [],
-        "citations": [],
-        "tool": "explain_recall",
-    }
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["tool"] == "explain_recall"
+    assert payload["selected_count"] == 1
+    assert payload["selected"][0]["id"] == remembered["id"]
+    assert payload["selected"][0]["explanation"].startswith("Selected chunk")
+    assert payload["citations"][0]["id"] == remembered["id"]
 
 
 def test_mcp_mark_status_mutates_memory(tmp_path):

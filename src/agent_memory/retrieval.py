@@ -200,6 +200,7 @@ def search_memory(
     limit: int = 10,
     semantic: Optional[bool] = None,
     embedding_provider: Optional[EmbeddingProvider] = None,
+    include_superseded_targets: bool = False,
 ) -> SearchResponse:
     """Search indexed memory chunks and return ranked memory-level results."""
 
@@ -252,7 +253,7 @@ def search_memory(
     finally:
         connection.close()
 
-    if selected_filters.status is None and superseded_ids:
+    if selected_filters.status is None and superseded_ids and not include_superseded_targets:
         candidates = [candidate for candidate in candidates if candidate.document_id not in superseded_ids]
     results = [
         _rank_candidate(candidate, reference_time, connected_primary_ids, superseded_ids)

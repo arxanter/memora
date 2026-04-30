@@ -1,6 +1,6 @@
 from agent_memory.config import RecallConfig, load_config
 from agent_memory.indexer import estimate_tokens, reindex_vault
-from agent_memory.recall import RecallCandidate, pack_candidates, recall_memory
+from agent_memory.recall import RecallCandidate, pack_candidates, pack_candidates_with_trace, recall_memory
 from agent_memory.retrieval import SearchFilters
 from agent_memory.vault import init_vault
 
@@ -46,6 +46,26 @@ def test_pack_candidates_dedupes_near_identical_chunks():
     packed = pack_candidates(candidates, budget=80)
 
     assert [chunk.document_id for chunk in packed] == ["doc-a", "doc-c"]
+
+
+def test_pack_candidates_with_trace_reports_skip_reasons():
+    candidates = [
+        _candidate("doc-a:chunk:1", "doc-a", "Trace packing duplicate text.", score=10.0),
+        _candidate("doc-b:chunk:1", "doc-b", "Trace packing duplicate text.", score=9.0),
+        _candidate("doc-c:chunk:1", "doc-c", "Trace packing project cap text.", score=8.0, project="alpha"),
+        _candidate("doc-d:chunk:1", "doc-d", "Trace packing project cap other.", score=7.0, project="alpha"),
+    ]
+
+    result = pack_candidates_with_trace(
+        candidates,
+        budget=80,
+        recall_config=RecallConfig(max_chunks_per_project=1),
+    )
+
+    assert [chunk.document_id for chunk in result.chunks] == ["doc-a", "doc-c"]
+    skipped = {(item.candidate.document_id, item.reason) for item in result.trace if item.action == "skipped"}
+    assert ("doc-b", "duplicate") in skipped
+    assert ("doc-d", "cap_filtered") in skipped
 
 
 def test_recall_memory_respects_lifecycle_defaults_and_status_filters(tmp_path):

@@ -11,7 +11,7 @@ from agent_memory.config import MemoryConfig, RecallConfig
 from agent_memory.indexer import estimate_tokens
 from agent_memory.lifecycle import touch_last_used
 from agent_memory.retrieval import SearchFilters, search_memory
-from agent_memory.schema import RelationType
+from agent_memory.schema import LifecycleStatus, RelationType
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,46 @@ class PackedChunk:
 
 
 @dataclass(frozen=True)
+class PackingTrace:
+    """A deterministic packing decision for explainability surfaces."""
+
+    action: str
+    reason: str
+    candidate: RecallCandidate
+    details: Mapping[str, Any] = field(default_factory=dict)
+    packed_chunk: Optional[PackedChunk] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "action": self.action,
+            "reason": self.reason,
+            "id": self.candidate.document_id,
+            "chunk_id": self.candidate.chunk_id,
+            "chunk_type": self.candidate.chunk_type,
+            "path": self.candidate.path,
+            "score": round(_packing_score(self.candidate), 6),
+            "token_estimate": self.candidate.token_estimate,
+            "metadata": dict(self.candidate.metadata),
+            "score_breakdown": {
+                key: round(value, 6) for key, value in self.candidate.score_breakdown.items()
+            },
+            "details": dict(self.details),
+            "citation": self.candidate.citation,
+        }
+        if self.packed_chunk is not None:
+            payload["packed_chunk"] = self.packed_chunk.to_dict()
+        return payload
+
+
+@dataclass(frozen=True)
+class PackingResult:
+    """Packed chunks plus a trace of selected and skipped candidates."""
+
+    chunks: tuple[PackedChunk, ...]
+    trace: tuple[PackingTrace, ...]
+
+
+@dataclass(frozen=True)
 class RecallResponse:
     """Structured response returned by CLI and MCP recall surfaces."""
 
@@ -125,6 +165,77 @@ class RecallResponse:
                 "max_chunks_per_memory_type": dict(self.config.recall.max_chunks_per_memory_type),
                 "oversized_chunk_behavior": "truncate_prefix",
             },
+            "chunks": [chunk.to_dict() for chunk in self.chunks],
+            "citations": self.citations,
+        }
+
+
+@dataclass(frozen=True)
+class ExplainRecallResponse:
+    """Structured explanation for why recall packed or skipped candidates."""
+
+    config: MemoryConfig
+    query: str
+    filters: SearchFilters
+    budget: int
+    chunks: tuple[PackedChunk, ...]
+    trace: tuple[PackingTrace, ...]
+    candidate_count: int
+    semantic_enabled: bool
+    semantic_provider: Optional[str]
+
+    @property
+    def selected(self) -> tuple[PackingTrace, ...]:
+        return tuple(item for item in self.trace if item.action == "selected")
+
+    @property
+    def skipped(self) -> tuple[PackingTrace, ...]:
+        return tuple(item for item in self.trace if item.action == "skipped")
+
+    @property
+    def used_tokens_estimate(self) -> int:
+        return sum(chunk.token_estimate for chunk in self.chunks)
+
+    @property
+    def citations(self) -> list[dict[str, Any]]:
+        return [chunk.citation for chunk in self.chunks]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "implemented": True,
+            "command": "explain_recall",
+            "query": self.query,
+            "filters": self.filters.to_dict(),
+            "budget": self.budget,
+            "used_tokens_estimate": self.used_tokens_estimate,
+            "candidate_count": self.candidate_count,
+            "selected_count": len(self.selected),
+            "skipped_count": len(self.skipped),
+            "vault_path": str(self.config.vault_path),
+            "index_path": str(self.config.index_file),
+            "semantic": {
+                "enabled": self.semantic_enabled,
+                "provider": self.semantic_provider,
+            },
+            "selected": [
+                {
+                    **item.to_dict(),
+                    "explanation": _selected_explanation(
+                        item.candidate,
+                        item.packed_chunk,
+                        filters=self.filters,
+                    ),
+                }
+                for item in self.selected
+            ],
+            "skipped": [
+                {
+                    **item.to_dict(),
+                    "explanation": _skipped_explanation(item),
+                }
+                for item in self.skipped
+            ],
             "chunks": [chunk.to_dict() for chunk in self.chunks],
             "citations": self.citations,
         }
@@ -169,6 +280,79 @@ def recall_memory(
     )
 
 
+def explain_recall(
+    config: MemoryConfig,
+    query: str,
+    *,
+    filters: Optional[SearchFilters] = None,
+    budget: int = 1200,
+    include_related: bool = False,
+    semantic: Optional[bool] = None,
+    max_skipped: int = 5,
+) -> ExplainRecallResponse:
+    """Explain deterministic retrieval and packing decisions without touching memory files."""
+
+    selected_budget = _validate_budget(budget)
+    selected_filters = SearchFilters.from_mapping(filters.to_dict()) if filters else SearchFilters()
+    search_response = search_memory(
+        config,
+        query,
+        filters=selected_filters,
+        include_related=include_related,
+        limit=config.recall.candidate_limit,
+        semantic=semantic,
+        include_superseded_targets=True,
+    )
+    candidates = _candidates_from_search(config, search_response.results)
+    trace_prefix: list[PackingTrace] = []
+    packable = candidates
+    if selected_filters.status is None:
+        superseded_by = _superseded_replacements(config, candidates)
+        if superseded_by:
+            packable_items: list[RecallCandidate] = []
+            for candidate in candidates:
+                replacement = superseded_by.get(candidate.document_id)
+                if replacement is None:
+                    packable_items.append(candidate)
+                    continue
+                trace_prefix.append(
+                    PackingTrace(
+                        action="skipped",
+                        reason="superseded",
+                        candidate=candidate,
+                        details={"superseded_by": replacement},
+                    )
+                )
+            packable = tuple(packable_items)
+
+    packing = pack_candidates_with_trace(packable, budget=selected_budget, recall_config=config.recall)
+    selected_trace = tuple(item for item in packing.trace if item.action == "selected")
+    skipped_trace = [
+        *trace_prefix,
+        *(item for item in packing.trace if item.action == "skipped"),
+    ][:max_skipped]
+    trace_suffix = _status_filtered_traces(
+        config,
+        query,
+        selected_filters,
+        include_related=include_related,
+        semantic=semantic,
+        excluded_chunk_ids={item.candidate.chunk_id for item in (*selected_trace, *skipped_trace)},
+        limit=max(0, max_skipped - len(skipped_trace)),
+    )
+    return ExplainRecallResponse(
+        config=config,
+        query=search_response.query,
+        filters=selected_filters,
+        budget=selected_budget,
+        chunks=packing.chunks,
+        trace=selected_trace + tuple(skipped_trace) + trace_suffix,
+        candidate_count=len(candidates),
+        semantic_enabled=search_response.semantic_enabled,
+        semantic_provider=search_response.semantic_provider,
+    )
+
+
 def pack_candidates(
     candidates: Sequence[RecallCandidate],
     *,
@@ -177,32 +361,111 @@ def pack_candidates(
 ) -> tuple[PackedChunk, ...]:
     """Deterministically dedupe, diversify, cap, and pack candidate chunks."""
 
+    return pack_candidates_with_trace(candidates, budget=budget, recall_config=recall_config).chunks
+
+
+def pack_candidates_with_trace(
+    candidates: Sequence[RecallCandidate],
+    *,
+    budget: int,
+    recall_config: Optional[RecallConfig] = None,
+) -> PackingResult:
+    """Deterministically pack candidates and keep reasons for skipped chunks."""
+
     selected_budget = _validate_budget(budget)
     config = recall_config or RecallConfig()
     remaining = selected_budget
     packed: list[PackedChunk] = []
+    trace: list[PackingTrace] = []
     document_counts: dict[str, int] = {}
     type_counts: dict[str, int] = {}
     project_counts: dict[str, int] = {}
+    signatures: list[tuple[str, ...]] = []
+    signature_sources: list[str] = []
 
-    for candidate in _dedupe_near_identical(_rerank_candidates(candidates)):
+    for candidate in _rerank_candidates(candidates):
+        signature = _text_signature(candidate.text)
+        if not signature:
+            trace.append(PackingTrace(action="skipped", reason="empty", candidate=candidate))
+            continue
+        duplicate_of = _duplicate_signature_source(signature, signatures, signature_sources)
+        if duplicate_of is not None:
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="duplicate",
+                    candidate=candidate,
+                    details={"duplicate_of": duplicate_of},
+                )
+            )
+            continue
+        signatures.append(signature)
+        signature_sources.append(candidate.document_id)
+
         if remaining <= 0:
-            break
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="over_budget",
+                    candidate=candidate,
+                    details={"remaining_tokens": 0},
+                )
+            )
+            continue
         if document_counts.get(candidate.document_id, 0) >= config.max_chunks_per_document:
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="cap_filtered",
+                    candidate=candidate,
+                    details={
+                        "cap": "document",
+                        "limit": config.max_chunks_per_document,
+                        "value": candidate.document_id,
+                    },
+                )
+            )
             continue
         type_cap = config.max_chunks_per_memory_type.get(candidate.memory_type)
         if type_cap is not None and type_counts.get(candidate.memory_type, 0) >= type_cap:
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="cap_filtered",
+                    candidate=candidate,
+                    details={"cap": "memory_type", "limit": type_cap, "value": candidate.memory_type},
+                )
+            )
             continue
         if candidate.project and project_counts.get(candidate.project, 0) >= config.max_chunks_per_project:
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="cap_filtered",
+                    candidate=candidate,
+                    details={
+                        "cap": "project",
+                        "limit": config.max_chunks_per_project,
+                        "value": candidate.project,
+                    },
+                )
+            )
             continue
 
         chunk_budget = min(remaining, config.max_tokens_per_chunk)
         text, token_estimate, truncated = _fit_text(candidate.text, chunk_budget)
         if not text:
+            trace.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="over_budget",
+                    candidate=candidate,
+                    details={"remaining_tokens": remaining},
+                )
+            )
             continue
 
-        packed.append(
-            PackedChunk(
+        packed_chunk = PackedChunk(
                 chunk_id=candidate.chunk_id,
                 document_id=candidate.document_id,
                 chunk_type=candidate.chunk_type,
@@ -213,6 +476,15 @@ def pack_candidates(
                 metadata=candidate.metadata,
                 score_breakdown=candidate.score_breakdown,
                 truncated=truncated or token_estimate < candidate.token_estimate,
+        )
+        packed.append(packed_chunk)
+        trace.append(
+            PackingTrace(
+                action="selected",
+                reason="selected",
+                candidate=candidate,
+                details={"remaining_tokens_before": remaining},
+                packed_chunk=packed_chunk,
             )
         )
         remaining -= token_estimate
@@ -221,7 +493,7 @@ def pack_candidates(
         if candidate.project:
             project_counts[candidate.project] = project_counts.get(candidate.project, 0) + 1
 
-    return tuple(packed)
+    return PackingResult(chunks=tuple(packed), trace=tuple(trace))
 
 
 def _candidates_from_search(config: MemoryConfig, results: Sequence[Any]) -> tuple[RecallCandidate, ...]:
@@ -274,23 +546,90 @@ def _remove_superseded_targets(
     config: MemoryConfig,
     candidates: Sequence[RecallCandidate],
 ) -> tuple[RecallCandidate, ...]:
+    superseded_by = _superseded_replacements(config, candidates)
+    if not superseded_by:
+        return tuple(candidates)
+    return tuple(candidate for candidate in candidates if candidate.document_id not in superseded_by)
+
+
+def _superseded_replacements(
+    config: MemoryConfig,
+    candidates: Sequence[RecallCandidate],
+) -> dict[str, str]:
     document_ids = {candidate.document_id for candidate in candidates}
     if not document_ids:
-        return tuple(candidates)
+        return {}
     placeholders = ", ".join("?" for _ in document_ids)
     with sqlite3.connect(config.index_file) as connection:
         rows = connection.execute(
             f"""
-            SELECT to_id
+            SELECT from_id, to_id
             FROM links
             WHERE relation = ? AND to_id IN ({placeholders})
             """,
             (RelationType.SUPERSEDES.value, *document_ids),
         ).fetchall()
-    superseded_ids = {str(row[0]) for row in rows}
-    if not superseded_ids:
-        return tuple(candidates)
-    return tuple(candidate for candidate in candidates if candidate.document_id not in superseded_ids)
+    return {str(row[1]): str(row[0]) for row in rows}
+
+
+def _status_filtered_traces(
+    config: MemoryConfig,
+    query: str,
+    filters: SearchFilters,
+    *,
+    include_related: bool,
+    semantic: Optional[bool],
+    excluded_chunk_ids: set[str],
+    limit: int,
+) -> tuple[PackingTrace, ...]:
+    if limit <= 0 or filters.status is not None:
+        return ()
+
+    traces: list[PackingTrace] = []
+    for status in (
+        LifecycleStatus.PENDING.value,
+        LifecycleStatus.REJECTED.value,
+        LifecycleStatus.SUPERSEDED.value,
+    ):
+        response = search_memory(
+            config,
+            query,
+            filters=_with_status(filters, status),
+            include_related=include_related,
+            limit=max(3, min(config.recall.candidate_limit, limit)),
+            semantic=semantic,
+            include_superseded_targets=True,
+        )
+        for candidate in _candidates_from_search(config, response.results):
+            if candidate.chunk_id in excluded_chunk_ids:
+                continue
+            traces.append(
+                PackingTrace(
+                    action="skipped",
+                    reason="status_filtered",
+                    candidate=candidate,
+                    details={"status": status},
+                )
+            )
+            excluded_chunk_ids.add(candidate.chunk_id)
+            if len(traces) >= limit:
+                return tuple(traces)
+    return tuple(traces)
+
+
+def _with_status(filters: SearchFilters, status: str) -> SearchFilters:
+    return SearchFilters(
+        project=filters.project,
+        memory_type=filters.memory_type,
+        status=status,
+        scope=filters.scope,
+        created_after=filters.created_after,
+        created_before=filters.created_before,
+        updated_after=filters.updated_after,
+        updated_before=filters.updated_before,
+        valid_from=filters.valid_from,
+        valid_to=filters.valid_to,
+    )
 
 
 def _rerank_candidates(candidates: Sequence[RecallCandidate]) -> list[RecallCandidate]:
@@ -323,6 +662,17 @@ def _dedupe_near_identical(candidates: Sequence[RecallCandidate]) -> tuple[Recal
         selected.append(candidate)
         signatures.append(signature)
     return tuple(selected)
+
+
+def _duplicate_signature_source(
+    signature: tuple[str, ...],
+    signatures: Sequence[tuple[str, ...]],
+    sources: Sequence[str],
+) -> Optional[str]:
+    for existing, source in zip(signatures, sources):
+        if _signature_similarity(signature, existing) >= 0.92:
+            return source
+    return None
 
 
 def _text_signature(text: str) -> tuple[str, ...]:
@@ -380,10 +730,64 @@ def _validate_budget(value: int) -> int:
     return budget
 
 
+def _selected_explanation(
+    candidate: RecallCandidate,
+    chunk: Optional[PackedChunk],
+    *,
+    filters: SearchFilters,
+) -> str:
+    reasons: list[str] = []
+    semantic_similarity = candidate.metadata.get("semantic_similarity")
+    if semantic_similarity is not None:
+        reasons.append(f"semantic score {float(semantic_similarity):.2f}")
+    elif candidate.score_breakdown.get("fts_score", 0.0) > 0.0:
+        reasons.append(f"keyword score {candidate.score_breakdown['fts_score']:.2f}")
+    else:
+        reasons.append(f"score {_packing_score(candidate):.2f}")
+
+    reasons.append(f"{candidate.status} {candidate.memory_type.replace('_', ' ')}")
+    if filters.project and candidate.project == filters.project:
+        reasons.append("project match")
+    elif candidate.project:
+        reasons.append(f"project {candidate.project}")
+    if candidate.metadata.get("related"):
+        relation = candidate.metadata.get("relation") or "relation"
+        reasons.append(f"graph {relation}")
+    if chunk and chunk.truncated:
+        reasons.append("truncated to budget")
+    return f"Selected chunk {candidate.document_id} because {', '.join(reasons)}."
+
+
+def _skipped_explanation(trace: PackingTrace) -> str:
+    candidate = trace.candidate
+    details = dict(trace.details)
+    if trace.reason == "superseded":
+        return f"Skipped chunk {candidate.document_id} because superseded by {details.get('superseded_by')}."
+    if trace.reason == "duplicate":
+        return f"Skipped chunk {candidate.document_id} because duplicate of {details.get('duplicate_of')}."
+    if trace.reason == "over_budget":
+        return f"Skipped chunk {candidate.document_id} because over budget."
+    if trace.reason == "cap_filtered":
+        cap = details.get("cap", "packing")
+        limit = details.get("limit")
+        return f"Skipped chunk {candidate.document_id} because {cap} cap reached (max {limit})."
+    if trace.reason == "empty":
+        return f"Skipped chunk {candidate.document_id} because it had no searchable text."
+    if trace.reason == "status_filtered":
+        status = details.get("status", candidate.status)
+        return f"Skipped chunk {candidate.document_id} because status {status} was filtered."
+    return f"Skipped chunk {candidate.document_id} because {trace.reason}."
+
+
 __all__ = [
+    "ExplainRecallResponse",
     "PackedChunk",
+    "PackingResult",
+    "PackingTrace",
     "RecallCandidate",
     "RecallResponse",
+    "explain_recall",
     "pack_candidates",
+    "pack_candidates_with_trace",
     "recall_memory",
 ]

@@ -55,8 +55,8 @@ not useful, it returns `memory_needed: false`, empty Markdown, and no citations
 without requiring a vault or index.
 
 `mark_status` and `mark_superseded` mutate lifecycle frontmatter through the
-Stage 9 lifecycle service. `explain_recall` is still a placeholder for a later
-UX stage.
+Stage 9 lifecycle service. `explain_recall` returns deterministic selected and
+skipped recall explanations backed by retrieval and packing metadata.
 
 ## Automatic Recall Policy
 

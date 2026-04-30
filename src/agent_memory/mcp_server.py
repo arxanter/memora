@@ -8,7 +8,7 @@ from typing import Any, Mapping, Optional, Union
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
 from agent_memory.lifecycle import mark_status, supersede_memory
-from agent_memory.recall import recall_memory
+from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import (
@@ -17,9 +17,8 @@ from agent_memory.schema import (
     MemoryScope,
     MemoryType,
     SourceRef,
-    iter_memory_markdown_files,
-    validate_markdown_file,
 )
+from agent_memory.ux import inspect_memory
 from agent_memory.vault import placeholder_result, remember_memory
 
 try:  # pragma: no cover - exercised only when the optional MCP extra is installed.
@@ -250,22 +249,10 @@ def inspect_tool(memory_id: str, *, vault: Optional[PathLike] = None) -> JsonPay
 
     try:
         config = load_config(vault)
-        for path in iter_memory_markdown_files(config.vault_path):
-            document = validate_markdown_file(path)
-            if document.frontmatter.id != memory_id:
-                continue
-
-            relative_path = path.relative_to(config.vault_path).as_posix()
-            return {
-                "ok": True,
-                "tool": "inspect",
-                "id": memory_id,
-                "found": True,
-                "memory": document.frontmatter.model_dump(mode="json"),
-                "body": document.body.strip(),
-                "citations": [_citation(memory_id, relative_path)],
-            }
-
+        payload = inspect_memory(config, memory_id)
+        payload.update({"tool": "inspect"})
+        return payload
+    except ValueError as exc:
         return {
             "ok": False,
             "tool": "inspect",
@@ -273,7 +260,7 @@ def inspect_tool(memory_id: str, *, vault: Optional[PathLike] = None) -> JsonPay
             "found": False,
             "error": {
                 "code": "memory_not_found",
-                "message": f"memory not found: {memory_id}",
+                "message": str(exc),
             },
             "citations": [],
         }
@@ -288,22 +275,37 @@ def explain_recall_tool(
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
-    """Stage 3 stable placeholder for future recall explanations."""
+    """Explain deterministic recall selection and packing decisions."""
 
     try:
         selected_budget = _budget(budget)
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="explain_recall")
 
-    return _placeholder_tool(
-        "explain_recall",
-        vault=vault,
-        query=query,
-        budget=selected_budget,
-        filters=_filters(filters),
-        explanation=[],
-        citations=[],
-    )
+    raw_filters = _filters(filters)
+    include_related = _bool(raw_filters.pop("include_related", False))
+    semantic = raw_filters.pop("semantic", None)
+    try:
+        config = load_config(vault)
+        payload = explain_recall(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(raw_filters),
+            budget=selected_budget,
+            include_related=include_related,
+            semantic=None if semantic is None else _bool(semantic),
+        ).to_dict()
+        payload.update({"tool": "explain_recall"})
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "explain_recall_failed",
+            tool="explain_recall",
+            query=query,
+            budget=selected_budget,
+            filters=_filters(filters),
+        )
 
 
 def mark_status_tool(memory_id: str, status: str, *, vault: Optional[PathLike] = None) -> JsonPayload:
@@ -431,7 +433,7 @@ def create_server() -> Any:
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
     ) -> JsonPayload:
-        """Explain recall selection. Stage 3 returns a stable placeholder."""
+        """Explain recall selection and skipped candidate reasons."""
 
         return explain_recall_tool(query, budget, filters)
 

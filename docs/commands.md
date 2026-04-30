@@ -14,10 +14,14 @@ memory remember --type decision --text "..."
 memory reindex
 memory search "query"
 memory recall "query" --budget 1200
+memory explain-recall "query" --budget 1200
 memory brief "query" --budget 1200
 memory should-recall "user message"
 memory eval <fixture-or-file>
 memory status
+memory inspect <id>
+memory open <id>
+memory graph <id>
 memory doctor
 memory conflicts
 memory supersede <old_id> --by <new_id>
@@ -192,6 +196,28 @@ Supported filters:
 - `--include-related` to include linked graph-related memories before packing
 - `--semantic` or `--no-semantic` to override the config for one recall
 
+### `memory explain-recall`
+
+Implemented in Stage 13.
+
+Runs the same indexed retrieval and budget-packing path as `memory recall`, but
+returns deterministic explanations for selected and skipped candidate chunks
+without updating `last_used_at`. Human output is meant for terminal debugging;
+`--json` returns structured `selected` and `skipped` arrays with reason codes,
+score metadata, citations, and prose explanations.
+
+Selected chunks explain useful signals such as keyword/semantic score, lifecycle
+status, memory type, project match, graph relation, and budget truncation.
+Skipped chunks report practical reasons when available, including `superseded`,
+`duplicate`, `over_budget`, `cap_filtered`, and `status_filtered`.
+
+Example:
+
+```bash
+memory explain-recall "Obsidian sync decisions" --vault ./memory-vault
+memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --json
+```
+
 ### `memory brief`
 
 Implemented in Stage 8.
@@ -301,6 +327,55 @@ Loads config, validates canonical memory Markdown with the Stage 1 validator,
 and returns a lightweight summary including memory count, pending count, issue
 count, and whether the disposable SQLite index exists.
 
+### `memory inspect`
+
+Implemented in Stage 13.
+
+Inspects one canonical memory by id. Human output shows type/status/scope,
+absolute Markdown path, Obsidian URI, source metadata when present, and body
+text. `--json` returns the same information with stable fields:
+`path`, `relative_path`, `obsidian_uri`, `memory`, `body`, and `citations`.
+
+Example:
+
+```bash
+memory inspect mem_20260430_example --vault ./memory-vault
+memory inspect mem_20260430_example --vault ./memory-vault --json
+```
+
+### `memory open`
+
+Implemented in Stage 13.
+
+Resolves a memory id to its source Markdown file and prints both the absolute
+path and an `obsidian://open?path=...` URI. By default this command has no side
+effects. Pass `--launch` to invoke the system `open` command with the Obsidian
+URI.
+
+Example:
+
+```bash
+memory open mem_20260430_example --vault ./memory-vault
+memory open mem_20260430_example --vault ./memory-vault --launch
+```
+
+### `memory graph`
+
+Implemented in Stage 13.
+
+Shows incoming and outgoing relation links for a memory id from the SQLite index.
+Run `memory reindex` first if the index is missing or stale. JSON output contains
+structured `incoming` and `outgoing` arrays with `from`, `to`, `relation`,
+`confidence`, `direction`, and linked-memory metadata when the target exists
+locally.
+
+Example:
+
+```bash
+memory graph mem_20260430_example --vault ./memory-vault
+memory graph mem_20260430_example --vault ./memory-vault --json
+```
+
 ### `memory doctor`
 
 Expanded in Stages 4, 9, and 11.
@@ -388,12 +463,14 @@ automatic recall policy.
 
 ### `memory review`
 
-Implemented in Stage 9.
+Implemented in Stage 9 and polished in Stage 13.
 
 Lists pending agent-generated memory that needs human review. Agent-created MCP
 memories still default to `pending` unless config opts into direct writes, and
 pending memory remains excluded from default recall/search/brief behavior unless
-requested with `--status pending`.
+requested with `--status pending`. Human output now includes a diff-style preview
+of pending metadata, source, status, and body text while JSON output keeps the
+stable Stage 9 review payload.
 
 ### `memory import`
 
@@ -455,10 +532,12 @@ recommended, it returns a Memory Brief under `brief` plus top-level `markdown`
 and `citations`; when recall is not recommended, it returns `memory_needed:
 false`, empty Markdown, no citations, and does not require a vault or index.
 
+`explain_recall(query, budget, filters)` is implemented in Stage 13 and returns
+the same structured explanation payload as `memory explain-recall --json`.
 `mark_status(id, status)` is implemented in Stage 9 and mutates Markdown
 frontmatter through the lifecycle service. `mark_superseded(old_id, by_id,
 reason)` is a Stage 10 MCP wrapper around the Stage 9 supersede lifecycle
-service. `explain_recall` remains a placeholder until later stages.
+service.
 
 ## Mutation Policy
 

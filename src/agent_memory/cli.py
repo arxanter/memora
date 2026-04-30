@@ -21,11 +21,12 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
-from agent_memory.recall import recall_memory
+from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.sync import detect_sync_conflicts
+from agent_memory.ux import graph_memory, inspect_memory, open_memory
 from agent_memory.vault import (
     doctor_report,
     init_vault,
@@ -272,6 +273,66 @@ def recall(
         console.print(f"   {chunk['text']}")
 
 
+@app.command("explain-recall")
+def explain_recall_command(
+    query: str = typer.Argument(..., help="Recall query to explain."),
+    budget: int = typer.Option(1200, "--budget", min=1, help="Token budget."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
+    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    semantic: Optional[bool] = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Override semantic search config for this explanation.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Explain why recall selected or skipped candidate chunks."""
+
+    try:
+        config = load_config(vault)
+        filters = SearchFilters(
+            project=project,
+            memory_type=memory_type.value if memory_type else None,
+            status=status.value if status else None,
+            scope=scope.value if scope else None,
+        )
+        payload = explain_recall(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(filters.to_dict()),
+            budget=budget,
+            include_related=include_related,
+            semantic=semantic,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "explain_recall_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(
+        f"[green]Selected {payload['selected_count']} chunk(s)[/green] "
+        f"using {payload['used_tokens_estimate']}/{payload['budget']} estimated tokens"
+    )
+    if payload["selected"]:
+        console.print("[bold]Selected[/bold]")
+        for item in payload["selected"]:
+            console.print(f"- {item['explanation']} [dim]{item['path']}[/dim]")
+    if payload["skipped"]:
+        console.print("[bold]Skipped[/bold]")
+        for item in payload["skipped"][:8]:
+            console.print(f"- {item['explanation']} [dim]{item['path']}[/dim]")
+
+
 @app.command()
 def brief(
     query: str = typer.Argument(..., help="Brief query."),
@@ -367,6 +428,107 @@ def status(
     console.print(f"Pending: {payload['pending_count']}")
     console.print(f"Issues: {payload['issue_count']}")
     console.print(f"Index exists: {payload['index_exists']}")
+
+
+@app.command()
+def inspect(
+    memory_id: str = typer.Argument(..., help="Memory id to inspect."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Inspect one memory by id."""
+
+    try:
+        config = load_config(vault)
+        payload = inspect_memory(config, memory_id)
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="memory_not_found" if isinstance(exc, ValueError) else "inspect_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    memory = payload["memory"]
+    console.print(f"[bold]{payload['id']}[/bold] [dim]{payload['relative_path']}[/dim]")
+    console.print(
+        f"{memory['type']} / {memory['status']} / "
+        f"scope={memory['scope']} / project={memory.get('project') or '-'}"
+    )
+    console.print(f"Path: {payload['path']}")
+    console.print(f"Obsidian: {payload['obsidian_uri']}")
+    if memory.get("source"):
+        console.print(f"Source: {memory['source']}")
+    if payload["body"]:
+        console.print("")
+        console.print(payload["body"], markup=False, soft_wrap=True)
+
+
+@app.command("open")
+def open_command(
+    memory_id: str = typer.Argument(..., help="Memory id to locate."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    launch: bool = typer.Option(False, "--launch", help="Open the Obsidian URI with the system `open` command."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Print the Markdown path and Obsidian URI for a memory."""
+
+    try:
+        config = load_config(vault)
+        payload = open_memory(config, memory_id, launch=launch)
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="memory_not_found" if isinstance(exc, ValueError) else "open_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"Path: {payload['path']}")
+    console.print(f"Obsidian: {payload['obsidian_uri']}")
+    if payload["launch_requested"]:
+        if payload["opened"]:
+            console.print("[green]Opened with system handler.[/green]")
+        else:
+            console.print(f"[yellow]Launch failed:[/yellow] {payload['launch_error']}")
+
+
+@app.command()
+def graph(
+    memory_id: str = typer.Argument(..., help="Memory id to graph."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Show incoming and outgoing graph links for a memory."""
+
+    try:
+        config = load_config(vault)
+        payload = graph_memory(config, memory_id)
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="memory_not_found" if isinstance(exc, ValueError) else "graph_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    memory = payload["memory"]
+    console.print(f"[bold]{memory['id']}[/bold] [dim]{memory['path']}[/dim]")
+    console.print(
+        f"{memory['type']} / {memory['status']} / "
+        f"links={payload['link_count']} (out={len(payload['outgoing'])}, in={len(payload['incoming'])})"
+    )
+    _print_graph_links("Outgoing", payload["outgoing"])
+    _print_graph_links("Incoming", payload["incoming"])
 
 
 @app.command()
@@ -578,7 +740,7 @@ def review(
         return
     console.print(f"[yellow]Pending agent memories:[/yellow] {payload['pending_count']}")
     for item in payload["items"]:
-        console.print(f"- {item['id']} [dim]{item['relative_path']}[/dim]")
+        _print_review_diff(item)
 
 
 @app.command("eval")
@@ -640,6 +802,46 @@ def export_command(
     """Placeholder for Markdown export."""
 
     _placeholder_command("export", vault=vault, json_output=json_output, format=export_format)
+
+
+def _print_graph_links(title: str, links: list[dict[str, Any]]) -> None:
+    console.print(f"[bold]{title}[/bold] ({len(links)})")
+    if not links:
+        console.print("  [dim]none[/dim]")
+        return
+    for link in links:
+        other = link.get("other") or {}
+        other_id = other.get("id") or (link["to_id"] if link["direction"] == "outgoing" else link["from_id"])
+        path = other.get("path") or "-"
+        console.print(f"  - {link['relation']}: {other_id} [dim]{path}[/dim]")
+
+
+def _print_review_diff(item: dict[str, Any]) -> None:
+    console.print(f"[bold]diff -- memory/{item['id']} {item['relative_path']}[/bold]")
+    console.print("@@ metadata @@", markup=False)
+    for line in (
+        f"+ id: {item['id']}",
+        f"+ type: {item['type']}",
+        f"+ status: {item['status']}",
+        f"+ confidence: {item['confidence']}",
+        f"+ source: {_format_source(item.get('source'))}",
+    ):
+        console.print(line, markup=False)
+    console.print("@@ body @@", markup=False)
+    body = item.get("body") or ""
+    for line in body.splitlines() or [""]:
+        console.print(f"+ {line}", markup=False)
+
+
+def _format_source(source: Any) -> str:
+    if not source:
+        return "-"
+    if isinstance(source, dict):
+        if source.get("path"):
+            return str(source["path"])
+        if source.get("url"):
+            return str(source["url"])
+    return str(source)
 
 
 def _placeholder_command(

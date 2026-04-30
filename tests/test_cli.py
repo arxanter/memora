@@ -245,3 +245,187 @@ def test_reindex_command_builds_sqlite_index(tmp_path):
     assert payload["documents_skipped"] == 0
     assert payload["graph_ok"] is True
     assert (vault / ".agent-memory" / "index.sqlite").exists()
+
+
+def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/old.md",
+        memory_id="mem_20260430_old",
+        memory_type="fact",
+        body="Stage thirteen graph old memory.",
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/new.md",
+        memory_id="mem_20260430_new",
+        memory_type="decision",
+        body="Stage thirteen graph new memory.",
+        supersedes=["mem_20260430_old"],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    inspect_json = runner.invoke(app, ["inspect", "mem_20260430_new", "--vault", str(vault), "--json"])
+    inspect_human = runner.invoke(app, ["inspect", "mem_20260430_new", "--vault", str(vault)])
+    open_result = runner.invoke(app, ["open", "mem_20260430_new", "--vault", str(vault), "--json"])
+    graph_json = runner.invoke(app, ["graph", "mem_20260430_new", "--vault", str(vault), "--json"])
+    graph_human = runner.invoke(app, ["graph", "mem_20260430_new", "--vault", str(vault)])
+
+    assert inspect_json.exit_code == 0, inspect_json.output
+    inspect_payload = json.loads(inspect_json.output)
+    assert inspect_payload["ok"] is True
+    assert inspect_payload["implemented"] is True
+    assert inspect_payload["relative_path"] == "Memories/decisions/new.md"
+    assert inspect_payload["obsidian_uri"].startswith("obsidian://open?path=")
+    assert "Stage thirteen graph new memory." in inspect_human.output
+
+    assert open_result.exit_code == 0, open_result.output
+    open_payload = json.loads(open_result.output)
+    assert open_payload["opened"] is False
+    assert open_payload["launch_requested"] is False
+    assert open_payload["path"].endswith("Memories/decisions/new.md")
+
+    assert graph_json.exit_code == 0, graph_json.output
+    graph_payload = json.loads(graph_json.output)
+    assert graph_payload["ok"] is True
+    assert graph_payload["source"] == "index"
+    assert graph_payload["outgoing"][0]["relation"] == "supersedes"
+    assert graph_payload["outgoing"][0]["other"]["id"] == "mem_20260430_old"
+    assert "Outgoing" in graph_human.output
+    assert "supersedes" in graph_human.output
+
+
+def test_stage13_explain_recall_cli_reports_selected_and_skipped(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/old.md",
+        memory_id="mem_20260430_old",
+        memory_type="fact",
+        body="Stage thirteen recall explanation selects replacement memory.",
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/new.md",
+        memory_id="mem_20260430_new",
+        memory_type="decision",
+        body="Stage thirteen recall explanation selects replacement memory.",
+        supersedes=["mem_20260430_old"],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    json_result = runner.invoke(
+        app,
+        ["explain-recall", "stage thirteen recall explanation", "--budget", "12", "--vault", str(vault), "--json"],
+    )
+    human_result = runner.invoke(
+        app,
+        ["explain-recall", "stage thirteen recall explanation", "--budget", "12", "--vault", str(vault)],
+    )
+
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["selected_count"] == 1
+    assert payload["selected"][0]["id"] == "mem_20260430_new"
+    assert any(item["reason"] == "superseded" for item in payload["skipped"])
+    assert "Selected chunk mem_20260430_new" in human_result.output
+    assert "Skipped chunk mem_20260430_old" in human_result.output
+
+
+def test_stage13_review_human_output_uses_diff_preview(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/pending-agent.md",
+        memory_id="mem_20260430_pending_agent",
+        memory_type="fact",
+        status="pending",
+        body="Pending agent memory body appears in diff preview.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.7,
+    )
+
+    result = runner.invoke(app, ["review", "--vault", str(vault)])
+
+    assert result.exit_code == 0, result.output
+    assert "diff -- memory/mem_20260430_pending_agent" in result.output
+    assert "+ status: pending" in result.output
+    assert "+ source: Sources/stage13.md" in result.output
+    assert "+ Pending agent memory body appears in diff preview." in result.output
+
+
+def _write_memory(
+    vault,
+    relative_path,
+    *,
+    memory_id,
+    memory_type,
+    body,
+    status="active",
+    scope="user",
+    project=None,
+    confidence=None,
+    author_kind="user",
+    source_path=None,
+    supersedes=None,
+):
+    path = vault / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    source_block = (
+        "source:\n  path: {0}\n".format(source_path)
+        if source_path
+        else "source:\n"
+    )
+    path.write_text(
+        """---
+schema_version: 1
+id: {memory_id}
+type: {memory_type}
+scope: {scope}
+project: {project}
+status: {status}
+confidence: {confidence}
+created_at: 2026-04-30T12:00:00+02:00
+updated_at: 2026-04-30T12:00:00+02:00
+valid_from: 2026-04-30
+valid_to:
+{source_block}author:
+  kind: {author_kind}
+  name: test
+supersedes: {supersedes}
+contradicts: []
+relations: []
+observations:
+  - category: {memory_type}
+    text: {body}
+    confidence: {confidence}
+---
+
+{body}
+""".format(
+            memory_id=memory_id,
+            memory_type=memory_type,
+            scope=scope,
+            project=project or "",
+            status=status,
+            confidence="" if confidence is None else confidence,
+            source_block=source_block,
+            author_kind=author_kind,
+            supersedes=_inline_list(supersedes or []),
+            body=body,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _inline_list(values):
+    if not values:
+        return "[]"
+    return "[" + ", ".join(values) + "]"
