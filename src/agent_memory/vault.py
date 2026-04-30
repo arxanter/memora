@@ -13,6 +13,7 @@ import yaml
 
 from agent_memory.config import MemoryConfig, create_default_config, load_config, write_config
 from agent_memory.schema import (
+    AuthorKind,
     AuthorMetadata,
     LifecycleStatus,
     MemoryFrontmatter,
@@ -20,6 +21,7 @@ from agent_memory.schema import (
     MemoryType,
     Observation,
     SCHEMA_VERSION,
+    SourceRef,
     parse_markdown_document,
     validate_vault,
 )
@@ -105,6 +107,10 @@ def remember_memory(
     project: Optional[str] = None,
     status: Optional[LifecycleStatus] = None,
     tags: Iterable[str] = (),
+    author_kind: AuthorKind = AuthorKind.USER,
+    author_name: Optional[str] = None,
+    source: Optional[Union[SourceRef, dict[str, Any]]] = None,
+    confidence: Optional[float] = None,
 ) -> RememberResult:
     """Create one canonical Markdown memory file."""
 
@@ -117,7 +123,20 @@ def remember_memory(
     if selected_scope == MemoryScope.PROJECT and not selected_project:
         raise ValueError("project-scoped memory requires --project or default_project in config")
 
-    selected_status = LifecycleStatus(status or config.user_default_status)
+    selected_author_kind = AuthorKind(author_kind)
+    selected_status = LifecycleStatus(
+        status
+        or (
+            config.agent_default_status
+            if selected_author_kind == AuthorKind.AGENT
+            else config.user_default_status
+        )
+    )
+    selected_source = (
+        source
+        if isinstance(source, SourceRef) or source is None
+        else SourceRef.model_validate(source)
+    )
     now = datetime.now(timezone.utc).astimezone()
     memory_id = _new_memory_id(now)
     frontmatter = MemoryFrontmatter(
@@ -131,11 +150,22 @@ def remember_memory(
         updated_at=now,
         valid_from=now.date(),
         valid_to=None,
-        author=AuthorMetadata(kind="user", name=config.default_author_name),
+        confidence=confidence,
+        source=selected_source,
+        author=AuthorMetadata(
+            kind=selected_author_kind,
+            name=author_name or config.default_author_name,
+        ),
         supersedes=[],
         contradicts=[],
         relations=[],
-        observations=[Observation(category=memory_type.value, text=cleaned_text)],
+        observations=[
+            Observation(
+                category=memory_type.value,
+                text=cleaned_text,
+                confidence=confidence,
+            )
+        ],
         tags=list(tags),
     )
 
