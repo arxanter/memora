@@ -52,6 +52,9 @@ valid_from: 2026-04-29
 valid_to:
 source:
   path: Sources/2026-04-29_abcd1234/extract.md
+author:
+  kind: agent
+  name: Cursor
 supersedes: []
 contradicts: []
 relations:
@@ -62,6 +65,11 @@ observations:
     text: SQLite is a disposable index, not durable state.
 tags: [memory, retrieval, obsidian]
 ```
+
+The Stage 1 implementation lives in `src/agent_memory/schema.py`. `MemoryFrontmatter`
+is the canonical Pydantic model for YAML frontmatter, and
+`parse_markdown_document`, `validate_markdown_file`, and `validate_vault` provide
+callable validation helpers without introducing a CLI.
 
 Required fields:
 
@@ -77,6 +85,7 @@ Conditional fields:
 - `project` is required for project-scoped memory.
 - `source` and `confidence` are required for agent-generated memory.
 - User-authored memory may omit `confidence` and should be treated as high-authority by default.
+- `migration` is optional and records durable schema rewrites with `from_schema_version`, `migrated_at`, optional `tool`, and optional `notes`.
 
 ## Supported Types
 
@@ -134,4 +143,16 @@ embeddings(chunk_id, model, vector, content_hash)
 
 ## Compatibility Notes
 
-Basic Memory-like observations and relations should map naturally into `observations` and `relations` where feasible. Imported project memory files such as `CLAUDE.md`, `AGENTS.md`, and Cursor rules should be represented as source material unless a user promotes extracted items into canonical memories.
+Basic Memory-like observations and relations should map naturally into
+`observations` and `relations` where feasible:
+
+- Basic Memory observations become `observations[]` entries with a preserved
+  `category`, `text`, and optional `confidence`.
+- Directional Basic Memory relations become `relations[]` entries when the
+  relation type fits the Stage 1 vocabulary: `supports`, `supersedes`,
+  `contradicts`, `depends_on`, `related_to`, or `belongs_to_project`.
+- Unsupported relation names should be preserved as source material during
+  import until a later migration maps or rejects them explicitly.
+- Imported project memory files such as `CLAUDE.md`, `AGENTS.md`, and Cursor
+  rules should be represented as `source_extract` material unless a user
+  promotes extracted items into canonical memories.
