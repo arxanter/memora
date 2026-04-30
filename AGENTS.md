@@ -2,11 +2,41 @@
 
 This project uses Agent Memory via MCP.
 
+## Session Startup Review Check
+
+At the beginning of each new AI session in this project, check whether there is
+pending agent-created memory awaiting human review.
+
+Preferred path:
+
+1. Use MCP `review()` when it is available.
+2. If `review()` is not exposed by the current MCP client, run
+   `memory review --json`.
+3. If pending items exist, summarize them in a compact review queue and ask the
+   user whether to inspect, approve, reject, or defer them.
+4. Do not approve or reject memory without explicit user confirmation.
+
+For approval, use MCP `approve(id, reason)` when available, or
+`mark_status(id, "active")` / `memory mark <id> --status active` otherwise. For
+rejection, use MCP `reject(id, reason)` when available, or `memory reject <id>`
+otherwise.
+
 At the start of substantial work, call:
 
 `build_context(task, budget=1200, filters={ "project": "<project-name>" })`
 
 Use returned memory only when `memory_needed` is true.
+
+When the user asks to find information in the knowledge base, prefer:
+
+1. `search(query, filters)` for direct lookup and citations.
+2. `recall(query, budget=1200, filters)` when the agent needs compact source
+   chunks to answer a question.
+3. `brief(query, budget=1200, filters)` when the user wants a synthesized,
+   citation-preserving summary.
+
+Useful filters include `project`, `type`, `status`, `scope`, `limit`,
+`include_related`, and `semantic`.
 
 ## Capturing New Material
 

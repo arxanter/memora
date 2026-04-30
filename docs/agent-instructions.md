@@ -25,6 +25,23 @@ Agent Memory:
 
 ## Startup Recall
 
+At the beginning of each new AI session, check the review queue before doing
+substantial work:
+
+```text
+review()
+```
+
+If the current MCP client does not expose `review`, use the CLI fallback:
+
+```bash
+memory review --json
+```
+
+When pending items exist, summarize them for the user and ask whether to inspect,
+approve, reject, or defer each item. Do not approve or reject memory without
+explicit user confirmation.
+
 At the start of substantial work, call:
 
 ```text
@@ -123,3 +140,18 @@ memory reindex
 
 Do not store secrets, temporary logs, one-off debugging traces, or unreviewed raw
 dumps as canonical memory.
+
+## Finding Information
+
+Use natural-language questions rather than trying to remember exact filenames.
+The usual choices are:
+
+```text
+search(query, filters)
+recall(query, budget=1200, filters)
+brief(query, budget=1200, filters)
+```
+
+Use `search` for direct lookup, `recall` for compact cited context, and `brief`
+for a synthesized answer. Useful filters include `project`, `type`, `status`,
+`scope`, `limit`, `include_related`, and `semantic`.
