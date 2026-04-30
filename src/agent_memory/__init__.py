@@ -1,5 +1,17 @@
-"""Agent Memory schema models and validation helpers."""
+"""Agent Memory schema models, config loading, and vault helpers."""
 
+from agent_memory.config import (
+    CONFIG_DIR_NAME,
+    CONFIG_FILE_NAME,
+    ENV_VAULT_PATH,
+    ConfigError,
+    MemoryConfig,
+    config_to_dict,
+    create_default_config,
+    find_config_path,
+    load_config,
+    write_config,
+)
 from agent_memory.schema import (
     AuthorKind,
     AuthorMetadata,
@@ -21,11 +33,27 @@ from agent_memory.schema import (
     validate_markdown_file,
     validate_vault,
 )
+from agent_memory.vault import (
+    InitResult,
+    RememberResult,
+    doctor_report,
+    init_vault,
+    placeholder_result,
+    remember_memory,
+    render_memory_markdown,
+    status_summary,
+)
 
 __all__ = [
+    "CONFIG_DIR_NAME",
+    "CONFIG_FILE_NAME",
+    "ENV_VAULT_PATH",
     "AuthorKind",
     "AuthorMetadata",
+    "ConfigError",
+    "InitResult",
     "LifecycleStatus",
+    "MemoryConfig",
     "MemoryDocument",
     "MemoryFrontmatter",
     "MemoryScope",
@@ -34,12 +62,24 @@ __all__ = [
     "Observation",
     "Relation",
     "RelationType",
+    "RememberResult",
     "SCHEMA_VERSION",
     "SourceRef",
     "ValidationIssue",
     "VaultValidationReport",
+    "config_to_dict",
+    "create_default_config",
+    "doctor_report",
+    "find_config_path",
+    "init_vault",
     "iter_memory_markdown_files",
+    "load_config",
     "parse_markdown_document",
+    "placeholder_result",
+    "remember_memory",
+    "render_memory_markdown",
+    "status_summary",
     "validate_markdown_file",
     "validate_vault",
+    "write_config",
 ]

@@ -1,0 +1,45 @@
+import pytest
+
+from agent_memory.config import ConfigError, ENV_VAULT_PATH, load_config
+from agent_memory.vault import init_vault
+
+
+def test_load_config_from_explicit_vault(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    config = load_config(vault)
+
+    assert config.vault_path == vault.resolve()
+    assert config.memory_root == vault.resolve() / "Memories"
+    assert config.config_path == vault.resolve() / ".agent-memory" / "config.yaml"
+
+
+def test_load_config_walks_up_from_child_path(tmp_path):
+    vault = tmp_path / "memory-vault"
+    child = vault / "Memories" / "decisions"
+    init_vault(vault)
+
+    config = load_config(start_path=child)
+
+    assert config.vault_path == vault.resolve()
+
+
+def test_load_config_uses_environment_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    monkeypatch.setenv(ENV_VAULT_PATH, str(vault))
+
+    config = load_config()
+
+    assert config.vault_path == vault.resolve()
+
+
+def test_invalid_config_schema_version_is_rejected(tmp_path):
+    vault = tmp_path / "memory-vault"
+    config_dir = vault / ".agent-memory"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yaml").write_text("schema_version: 999\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="schema_version must be 1"):
+        load_config(vault)

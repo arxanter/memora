@@ -23,43 +23,116 @@ memory export --format markdown
 
 ### `memory init <vault>`
 
-Creates the vault structure and `.agent-memory/config.yaml`. It should not overwrite user content.
+Implemented in Stage 2.
+
+Creates the vault structure and `.agent-memory/config.yaml`. It does not
+overwrite user content or an existing config.
+
+Created folders:
+
+- `Memories/facts`
+- `Memories/preferences`
+- `Memories/decisions`
+- `Memories/tasks`
+- `Memories/sources`
+- `Memories/projects`
+- `Memories/conversations`
+- `Sources`
+- `Briefs`
+- `Profiles/projects`
+- `Synthesis`
+- `.agent-memory/schemas`
+- `.agent-memory/cache`
+- `.agent-memory/embeddings`
+- `.agent-memory/locks`
+
+Example:
+
+```bash
+memory init ./memory-vault --json
+```
 
 ### `memory remember`
 
-Creates a Markdown memory file. Agent-created memories default to `pending`; user-created memories may become `active` immediately.
+Implemented in Stage 2.
+
+Creates a valid Stage 1 Markdown memory file under the matching
+`Memories/<type>` subfolder. The initial CLI writes user-authored memories with
+`active` status by default, includes one observation that mirrors the body text,
+and validates the rendered Markdown before saving it.
+
+The command loads config from `--vault`, `AGENT_MEMORY_VAULT`, or the nearest
+parent `.agent-memory/config.yaml`.
+
+Example:
+
+```bash
+memory remember --vault ./memory-vault --type decision --text "Use Markdown as durable memory." --json
+```
 
 ### `memory reindex`
 
-Rebuilds the local SQLite cache from Markdown. The index is disposable, so this command must be enough to restore local search state after syncing a vault.
+Stage 2 placeholder.
+
+The command signature is stable and returns structured output, but SQLite index
+rebuilding is planned for a later stage.
 
 ### `memory search`
 
-Returns ranked matching memories and chunks using SQLite FTS5 first. Later stages may merge graph and semantic candidates.
+Stage 2 placeholder.
+
+The command accepts `query` and supports `--json`. Ranked keyword, graph, and
+semantic retrieval are planned for later stages.
 
 ### `memory recall`
 
-Returns packed chunks under a strict token budget, with citations for every included chunk.
+Stage 2 placeholder.
+
+The command accepts `query` and `--budget`. Budgeted context packing with
+citations is planned for later stages.
 
 ### `memory brief`
 
-Returns a concise agent-oriented memory brief with stable sections, warnings for stale or superseded context, open questions when known, and citations.
+Stage 2 placeholder.
+
+The command accepts `query` and `--budget`. Brief generation is planned for a
+later stage.
 
 ### `memory status`
 
-Summarizes vault health, index freshness, pending memory count, and configured providers.
+Implemented in Stage 2.
+
+Loads config, validates canonical memory Markdown with the Stage 1 validator,
+and returns a lightweight summary including memory count, pending count, issue
+count, and whether the disposable SQLite index exists.
 
 ### `memory doctor`
 
-Validates schema, links, lifecycle consistency, orphaned relations, missing source files, and index rebuildability.
+Partially implemented in Stage 2.
+
+Runs Stage 1 schema validation across `Memories/**/*.md` and reports document
+and issue counts. Link integrity, lifecycle consistency, missing source checks,
+and index rebuildability are planned for later stages.
 
 ### `memory import`
 
-Imports generic Markdown and Basic Memory-like observations or relations where feasible. Imported material should preserve provenance.
+Stage 2 placeholder.
+
+The command accepts a source path and supports `--json`. Markdown and Basic
+Memory-compatible import are planned for later stages.
 
 ### `memory export`
 
-Exports canonical memories as Markdown and, where practical, Basic Memory-compatible observations and relations.
+Stage 2 placeholder.
+
+The command accepts `--format markdown` and supports `--json`. Export is planned
+for a later stage.
+
+## JSON Output
+
+All Stage 2 commands support `--json` so coding agents can consume stable,
+structured responses. Placeholder commands return `implemented: false` while
+preserving the intended command signatures.
 
 ## MCP Tools
 

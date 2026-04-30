@@ -10,7 +10,12 @@ requires-python = ">=3.9"
 dependencies = [
   "pydantic>=2.7",
   "PyYAML>=6.0",
+  "rich>=13.0",
+  "typer>=0.12",
 ]
+
+[project.scripts]
+memory = "agent_memory.cli:app"
 
 [project.optional-dependencies]
 test = [
