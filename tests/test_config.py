@@ -2,6 +2,8 @@ import pytest
 
 from agent_memory.config import (
     ConfigError,
+    ENV_AGENT_DEFAULT_RECALL_BUDGET,
+    ENV_AGENT_TRUST_LEVEL,
     ENV_SEMANTIC_BATCH_SIZE,
     ENV_SEMANTIC_DIMENSIONS,
     ENV_SEMANTIC_MIN_SIMILARITY,
@@ -61,6 +63,20 @@ def test_load_config_applies_semantic_environment_overrides(tmp_path, monkeypatc
     assert config.semantic.batch_size == 7
     assert config.semantic.dimensions == 64
     assert config.semantic.min_similarity == 0.25
+
+
+def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    monkeypatch.setenv(ENV_AGENT_TRUST_LEVEL, "autonomous")
+    monkeypatch.setenv(ENV_AGENT_DEFAULT_RECALL_BUDGET, "1800")
+
+    config = load_config(vault)
+
+    assert config.agent_policy.aliases == ["Toby", "Тоби", "tb"]
+    assert config.agent_policy.trust_level == "autonomous"
+    assert config.agent_policy.default_recall_budget == 1800
+    assert config.agent_policy.min_active_confidence == 0.85
 
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):

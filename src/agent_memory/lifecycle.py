@@ -109,6 +109,9 @@ class ReviewItem:
     source: Optional[dict[str, Any]]
     body: str
     updated_at: str
+    risk_flags: tuple[str, ...] = ()
+    recommended_action: str = "inspect"
+    proposed_actions: tuple[str, ...] = ("approve", "reject", "defer", "inspect")
 
     @property
     def citation(self) -> dict[str, str]:
@@ -130,6 +133,9 @@ class ReviewItem:
             "source": self.source,
             "body": self.body.strip(),
             "updated_at": self.updated_at,
+            "risk_flags": list(self.risk_flags),
+            "recommended_action": self.recommended_action,
+            "proposed_actions": list(self.proposed_actions),
             "citation": self.citation,
         }
 
@@ -449,10 +455,37 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
                 source=frontmatter.source.model_dump(mode="json") if frontmatter.source else None,
                 body=record.body,
                 updated_at=frontmatter.updated_at.isoformat(),
+                risk_flags=_review_risk_flags(config, frontmatter),
+                recommended_action=_review_recommended_action(config, frontmatter),
             )
         )
     items.sort(key=lambda item: (item.updated_at, item.relative_path.as_posix()))
     return ReviewQueue(config=config, items=tuple(items))
+
+
+def _review_risk_flags(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> tuple[str, ...]:
+    flags: list[str] = []
+    confidence = frontmatter.confidence
+    if confidence is None:
+        flags.append("missing_confidence")
+    elif confidence < config.agent_policy.min_pending_confidence:
+        flags.append("low_confidence")
+    elif confidence < config.agent_policy.min_active_confidence:
+        flags.append("needs_human_judgment")
+    if frontmatter.source is None:
+        flags.append("missing_source")
+    if frontmatter.contradicts:
+        flags.append("has_contradictions")
+    return tuple(flags)
+
+
+def _review_recommended_action(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> str:
+    flags = _review_risk_flags(config, frontmatter)
+    if "low_confidence" in flags or "missing_source" in flags or "missing_confidence" in flags:
+        return "inspect"
+    if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
+        return "approve"
+    return "defer"
 
 
 def touch_last_used(config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None) -> None:

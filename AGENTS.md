@@ -2,10 +2,33 @@
 
 This project uses Agent Memory via MCP.
 
-## Session Startup Review Check
+## Toby / Agent Memory Policy
 
-At the beginning of each new AI session in this project, check whether there is
-pending agent-created memory awaiting human review.
+Treat `Toby`, `Тоби`, and `tb` as explicit Agent Memory triggers. When the user
+addresses Toby, classify the request as memory work and route it through the MCP
+memory tools instead of treating it as a generic chat request.
+
+The vault may define `.agent-memory/config.yaml` `agent_policy` settings:
+
+- `manual`: ask before saving or changing lifecycle status.
+- `review`: create agent-authored memories as `pending`.
+- `explicit_active`: explicit user saves may become `active`; inferred memories
+  remain `pending`.
+- `autonomous`: Toby may write and update lifecycle status under policy, with
+  source, confidence, reason, and audit history.
+
+Use confidence consistently:
+
+- `0.90-1.00`: explicit user instruction, direct quote, or confirmed decision.
+- `0.75-0.89`: strong source-backed extraction.
+- `0.55-0.74`: plausible inference that should usually stay reviewable.
+- `<0.55`: ask before creating canonical memory.
+
+## Review And Recall Policy
+
+Do not run memory review on every turn. Check the pending review queue once at
+the beginning of a new session when memory work is relevant, or when the user
+asks Toby to review memory.
 
 Preferred path:
 
@@ -14,14 +37,20 @@ Preferred path:
    `memory review --json`.
 3. If pending items exist, summarize them in a compact review queue and ask the
    user whether to inspect, approve, reject, or defer them.
-4. Do not approve or reject memory without explicit user confirmation.
+4. Do not approve or reject memory without explicit user confirmation unless the
+   vault policy is `autonomous` and the change is source-backed with a reason.
 
 For approval, use MCP `approve(id, reason)` when available, or
 `mark_status(id, "active")` / `memory mark <id> --status active` otherwise. For
 rejection, use MCP `reject(id, reason)` when available, or `memory reject <id>`
 otherwise.
 
-At the start of substantial work, call:
+Do not run `build_context()` for generic coding or shell tasks. For normal user
+requests, first decide whether memory is relevant. Recall is relevant when the
+request uses a Toby alias, asks about previous decisions, earlier work, stored
+preferences, project history/status, or project-specific memory.
+
+When recall is relevant, call:
 
 `build_context(task, budget=1200, filters={ "project": "<project-name>" })`
 
@@ -57,7 +86,9 @@ When the user asks to save a URL, article, notes, transcript, document, or raw m
    - Relevant quotes
 6. Do not store raw dumps as canonical memory.
 7. Promote only durable, atomic facts, decisions, preferences, tasks, or project context into separate Agent Memory items when useful.
-8. Agent-created memories should remain `pending` for review.
+8. Choose status from `agent_policy`: inferred agent-created memories should
+   remain `pending`; explicit user saves may become `active` when policy allows
+   it and confidence is high enough.
 
 Do not expect Agent Memory to fetch or analyze URLs by itself. The AI agent is
 responsible for reading the material, producing the extract, and deciding which
@@ -69,8 +100,10 @@ Use MCP review tools when the user asks to process pending memory:
 
 1. Call `review()` to list pending agent-generated memories.
 2. Call `inspect(id)` when an item needs more detail.
-3. Call `approve(id, reason)` for durable, correct memory.
-4. Call `reject(id, reason)` for incorrect, transient, duplicated, or low-value memory.
+3. Present each item with id, type, confidence, source, summary, risk flags, and
+   recommended action.
+4. Call `approve(id, reason)` for durable, correct memory.
+5. Call `reject(id, reason)` for incorrect, transient, duplicated, or low-value memory.
 
 Use `mark_status(id, status)` only when you need a lifecycle state other than
 `active` or `rejected`, such as `stale`.

@@ -63,6 +63,34 @@ def test_mcp_remember_creates_pending_agent_memory(tmp_path):
     assert document.body.strip() == "Use MCP handlers as a thin layer over shared services."
 
 
+def test_mcp_remember_can_activate_explicit_user_save_by_policy(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("trust_level: review", "trust_level: explicit_active"),
+        encoding="utf-8",
+    )
+
+    payload = remember_tool(
+        {
+            "type": "decision",
+            "text": "Explicit Toby saves can become active when policy allows it.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.91,
+            "explicit_user_save": True,
+        },
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "active"
+    assert payload["review_required"] is False
+    assert payload["policy"]["trust_level"] == "explicit_active"
+    document = validate_markdown_file(vault / payload["relative_path"])
+    assert document.frontmatter.status == "active"
+
+
 def test_mcp_save_source_creates_raw_source_and_extract(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -294,6 +322,8 @@ def test_mcp_review_approve_and_reject_pending_memories(tmp_path):
     assert review_payload["tool"] == "review"
     assert review_payload["pending_count"] == 2
     assert {item["id"] for item in review_payload["items"]} == {first["id"], second["id"]}
+    assert review_payload["items"][0]["proposed_actions"] == ["approve", "reject", "defer", "inspect"]
+    assert "recommended_action" in review_payload["items"][0]
 
     assert approve_payload["ok"] is True
     assert approve_payload["tool"] == "approve"

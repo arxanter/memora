@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping, Optional, Union
 
 import yaml
 
-from agent_memory.config import MemoryConfig
+from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType, SourceRef
 from agent_memory.sync import atomic_write_many, vault_lock
 from agent_memory.vault import RememberResult, remember_memory
@@ -76,7 +76,7 @@ class SourceCaptureResult:
 
 @dataclass(frozen=True)
 class PromotedMemoryResult:
-    """One pending memory promoted from a saved source extract."""
+    """One memory promoted from a saved source extract."""
 
     result: RememberResult
     source: SourceRef
@@ -130,6 +130,11 @@ class SourcePromotionResult:
             for memory in self.memories
             if memory.result.status == LifecycleStatus.PENDING
         )
+        next_steps = ["Review the saved source and extract under Sources/."]
+        if pending_count:
+            next_steps.append("Review the pending atomic memories before approving them.")
+        else:
+            next_steps.append("Atomic memories were activated by the configured agent policy.")
         return {
             "ok": True,
             "implemented": True,
@@ -139,10 +144,7 @@ class SourcePromotionResult:
             "review_required": pending_count > 0,
             "memories": [memory.to_dict() for memory in self.memories],
             "citations": self.citations,
-            "next_steps": [
-                "Review the saved source and extract under Sources/.",
-                "Review the pending atomic memories before approving them.",
-            ],
+            "next_steps": next_steps,
         }
 
 
@@ -154,6 +156,7 @@ class _PlannedMemory:
     project: Optional[str]
     tags: tuple[str, ...]
     confidence: float
+    status: LifecycleStatus
 
 
 _PROMOTABLE_MEMORY_TYPES = {
@@ -246,7 +249,11 @@ def save_source_with_memories(
 
     source_payload = dict(source)
     planned = tuple(
-        _plan_promoted_memory(memory, default_project=_optional_string(source_payload.get("project")))
+        _plan_promoted_memory(
+            memory,
+            default_project=_optional_string(source_payload.get("project")),
+            policy=config.agent_policy,
+        )
         for memory in memories
     )
     if not planned:
@@ -275,7 +282,7 @@ def save_source_with_memories(
             text=item.text,
             scope=item.scope,
             project=item.project,
-            status=LifecycleStatus.PENDING,
+            status=item.status,
             tags=item.tags,
             author_kind=AuthorKind.AGENT,
             author_name=author_name,
@@ -408,6 +415,14 @@ def _optional_string(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _clean_list(values: Optional[Iterable[str]]) -> list[str]:
     if values is None:
         return []
@@ -425,6 +440,7 @@ def _plan_promoted_memory(
     memory: Mapping[str, Any],
     *,
     default_project: Optional[str],
+    policy: AgentPolicyConfig,
 ) -> _PlannedMemory:
     memory_type = MemoryType(memory.get("type", MemoryType.FACT.value))
     if memory_type not in _PROMOTABLE_MEMORY_TYPES:
@@ -433,7 +449,7 @@ def _plan_promoted_memory(
             f"source promotion only supports durable atomic memory types: {allowed}"
         )
 
-    confidence = float(memory.get("confidence", 0.5))
+    confidence = float(memory.get("confidence", policy.min_pending_confidence))
     if confidence < 0 or confidence > 1:
         raise ValueError("confidence must be between 0 and 1")
 
@@ -444,7 +460,53 @@ def _plan_promoted_memory(
         project=_optional_string(memory.get("project")) or default_project,
         tags=tuple(_clean_list(memory.get("tags", ()))),
         confidence=confidence,
+        status=_promoted_memory_status(memory, policy, confidence),
     )
+
+
+def _promoted_memory_status(
+    memory: Mapping[str, Any],
+    policy: AgentPolicyConfig,
+    confidence: float,
+) -> LifecycleStatus:
+    if policy.require_review_for_source_extracts:
+        return LifecycleStatus.PENDING
+
+    trust_level = _trust_level(policy)
+    explicit_user_save = _explicit_user_save(memory)
+    requested = _optional_string(memory.get("status"))
+    requested_status = LifecycleStatus(requested) if requested else None
+    if requested_status and requested_status != LifecycleStatus.ACTIVE:
+        return requested_status if trust_level == AgentTrustLevel.AUTONOMOUS.value else LifecycleStatus.PENDING
+
+    if confidence < policy.min_active_confidence:
+        return LifecycleStatus.PENDING
+    if trust_level == AgentTrustLevel.AUTONOMOUS.value:
+        return LifecycleStatus.ACTIVE
+    if (
+        trust_level == AgentTrustLevel.EXPLICIT_ACTIVE.value
+        and policy.explicit_user_saves_active
+        and explicit_user_save
+    ):
+        return LifecycleStatus.ACTIVE
+    return LifecycleStatus.PENDING
+
+
+def _explicit_user_save(memory: Mapping[str, Any]) -> bool:
+    return any(
+        _bool(memory.get(key))
+        for key in (
+            "explicit_user_save",
+            "user_explicit",
+            "authorized_by_user",
+            "direct_user_instruction",
+        )
+    )
+
+
+def _trust_level(policy: AgentPolicyConfig) -> str:
+    value = policy.trust_level
+    return value.value if isinstance(value, AgentTrustLevel) else str(value)
 
 
 def _memory_text(memory: Mapping[str, Any]) -> str:

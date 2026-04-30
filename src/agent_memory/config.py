@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, SCHEMA_VERSION
 
@@ -23,6 +24,17 @@ ENV_FRESHNESS_ENABLED = "AGENT_MEMORY_FRESHNESS_ENABLED"
 ENV_FRESHNESS_INTERVAL_SECONDS = "AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS"
 ENV_FRESHNESS_DEBOUNCE_SECONDS = "AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS"
 ENV_FRESHNESS_CLEAN = "AGENT_MEMORY_FRESHNESS_CLEAN"
+ENV_AGENT_TRUST_LEVEL = "AGENT_MEMORY_TRUST_LEVEL"
+ENV_AGENT_DEFAULT_RECALL_BUDGET = "AGENT_MEMORY_DEFAULT_RECALL_BUDGET"
+
+
+class AgentTrustLevel(str, Enum):
+    """How much autonomy agents have when writing or mutating memory."""
+
+    MANUAL = "manual"
+    REVIEW = "review"
+    EXPLICIT_ACTIVE = "explicit_active"
+    AUTONOMOUS = "autonomous"
 
 
 class ConfigError(ValueError):
@@ -104,6 +116,45 @@ class RecallConfig(BaseModel):
         return cleaned
 
 
+class AgentPolicyConfig(BaseModel):
+    """User-configurable rules for AI agent memory behavior."""
+
+    model_config = ConfigDict(use_enum_values=True, validate_default=True)
+
+    aliases: list[str] = Field(default_factory=lambda: ["Toby", "Тоби", "tb"])
+    trust_level: AgentTrustLevel = AgentTrustLevel.REVIEW
+    default_recall_budget: int = Field(default=1200, ge=1)
+    min_active_confidence: float = Field(default=0.85, ge=0, le=1)
+    min_pending_confidence: float = Field(default=0.55, ge=0, le=1)
+    explicit_user_saves_active: bool = True
+    autonomous_lifecycle: bool = False
+    require_review_for_source_extracts: bool = True
+
+    @field_validator("aliases")
+    @classmethod
+    def normalize_aliases(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for alias in value:
+            normalized = str(alias).strip()
+            if not normalized:
+                continue
+            key = normalized.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        if not cleaned:
+            raise ValueError("agent_policy.aliases must include at least one alias")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> AgentPolicyConfig:
+        if self.min_active_confidence < self.min_pending_confidence:
+            raise ValueError("min_active_confidence must be greater than or equal to min_pending_confidence")
+        return self
+
+
 class IndexFreshnessConfig(BaseModel):
     """Polling freshness settings for the local service."""
 
@@ -134,6 +185,7 @@ class MemoryConfig(BaseModel):
     default_author_name: str = "memory CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
+    agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
 
     @field_validator("schema_version")
@@ -282,7 +334,16 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             freshness_overrides[field_name] = value
 
-    if not semantic_overrides and not freshness_overrides:
+    agent_policy_overrides: dict[str, Any] = {}
+    for env_name, field_name in (
+        (ENV_AGENT_TRUST_LEVEL, "trust_level"),
+        (ENV_AGENT_DEFAULT_RECALL_BUDGET, "default_recall_budget"),
+    ):
+        value = os.environ.get(env_name)
+        if value not in (None, ""):
+            agent_policy_overrides[field_name] = value
+
+    if not semantic_overrides and not freshness_overrides and not agent_policy_overrides:
         return config_data
 
     semantic_config = config_data.get("semantic") or {}
@@ -291,6 +352,9 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
     freshness_config = config_data.get("index_freshness") or {}
     if not isinstance(freshness_config, dict):
         freshness_config = {}
+    agent_policy_config = config_data.get("agent_policy") or {}
+    if not isinstance(agent_policy_config, dict):
+        agent_policy_config = {}
     return {
         **config_data,
         "semantic": {
@@ -300,6 +364,10 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         "index_freshness": {
             **freshness_config,
             **freshness_overrides,
+        },
+        "agent_policy": {
+            **agent_policy_config,
+            **agent_policy_overrides,
         },
     }
 

@@ -25,8 +25,13 @@ Agent Memory:
 
 ## Startup Recall
 
-At the beginning of each new AI session, check the review queue before doing
-substantial work:
+Do not spend memory context on every user message. Recall is recommended when the
+request addresses `Toby`, `Тоби`, or `tb`; asks what was previously decided;
+references earlier work; asks about preferences; asks project-specific questions;
+or asks for history/status.
+
+Review the pending queue once near session startup when memory work is relevant,
+or when the user explicitly asks Toby to review memory:
 
 ```text
 review()
@@ -38,11 +43,13 @@ If the current MCP client does not expose `review`, use the CLI fallback:
 memory review --json
 ```
 
-When pending items exist, summarize them for the user and ask whether to inspect,
-approve, reject, or defer each item. Do not approve or reject memory without
-explicit user confirmation.
+When pending items exist, summarize them with id, type, confidence, source,
+summary, risk flags, and recommended action. Ask whether to inspect, approve,
+reject, or defer each item. Do not approve or reject memory without explicit user
+confirmation unless the vault policy is `autonomous` and the lifecycle change is
+source-backed with an audit reason.
 
-At the start of substantial work, call:
+When recall is relevant, call:
 
 ```text
 build_context(task, budget=1200, filters={ "project": "<project-name>" })
@@ -50,6 +57,50 @@ build_context(task, budget=1200, filters={ "project": "<project-name>" })
 
 Use returned memory only when `memory_needed` is true. Preserve citations when
 summarizing or making decisions from recalled memory.
+
+## Toby Triggers And Trust Levels
+
+Treat `Toby`, `Тоби`, and `tb` as explicit Agent Memory aliases.
+
+Intent routing:
+
+- `Toby, что мы решили ...`: call `build_context` or `brief` and answer with citations.
+- `Toby, сохрани ...`: save memory according to `agent_policy.trust_level`.
+- `Toby, проанализируй статью и сохрани ...`: fetch/read the source, create an extract, save source/extract, then promote durable atomic memories.
+- `Toby, review memory`: call `review()` and present a readable queue.
+- `Toby, актуализируй память`: find related entries and propose or apply lifecycle changes according to policy.
+
+Recommended `.agent-memory/config.yaml` policy shape:
+
+```yaml
+agent_policy:
+  aliases: [Toby, Тоби, tb]
+  trust_level: review
+  default_recall_budget: 1200
+  min_active_confidence: 0.85
+  min_pending_confidence: 0.55
+  explicit_user_saves_active: true
+  autonomous_lifecycle: false
+  require_review_for_source_extracts: true
+```
+
+Trust levels:
+
+- `manual`: ask before saving or changing lifecycle status.
+- `review`: create agent-authored memories as `pending`.
+- `explicit_active`: explicit user saves may become `active`; inferred memories remain `pending`.
+- `autonomous`: Toby may create memories and change lifecycle status under policy, with source, confidence, reason, and audit history.
+
+Confidence guidance:
+
+- `0.90-1.00`: explicit user instruction, direct quote, or confirmed project decision.
+- `0.75-0.89`: strong source-backed extraction or clear document fact.
+- `0.55-0.74`: reasonable inference from source; keep reviewable by default.
+- `<0.55`: do not create canonical memory without asking; keep as source/extract or open question.
+
+Ask the user before saving or mutating memory when scope/project is ambiguous,
+content may contain secrets, a new item contradicts active memory, confidence is
+below the configured threshold, or the user asks only to analyze/propose.
 
 ## Capturing URLs And Raw Material
 
@@ -61,7 +112,9 @@ material into memory:
 3. Call `ingest_url` for URL-centered material or `save_source` for arbitrary
    source material.
 4. Call `remember` for each durable atomic memory extracted from the source.
-5. Tell the user that new memories are pending review.
+5. Apply `agent_policy`: inferred agent-created memories remain `pending`;
+   explicit user saves may become `active` only when the configured trust level
+   and confidence threshold allow it.
 
 Do not store raw dumps as canonical memory. Raw material belongs in `Sources/`;
 canonical memory belongs in `Memories/` and should be small, durable, and
@@ -129,7 +182,8 @@ Promote a durable decision:
 
 ## Review Policy
 
-Agent-created memories should stay `pending` until reviewed:
+Agent-created memories should stay `pending` until reviewed unless
+`agent_policy.trust_level` allows direct activation for an explicit user save:
 
 ```bash
 memory review

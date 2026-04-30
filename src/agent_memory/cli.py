@@ -989,8 +989,19 @@ def _print_graph_links(title: str, links: list[dict[str, Any]]) -> None:
 
 
 def _print_review_diff(item: dict[str, Any]) -> None:
-    console.print(f"[bold]diff -- memory/{item['id']} {item['relative_path']}[/bold]")
-    console.print("@@ metadata @@", markup=False)
+    console.print("")
+    console.print(f"[dim]diff -- memory/{item['id']} {item['relative_path']}[/dim]")
+    console.print(f"[bold]{item['id']}[/bold] [dim]{item['relative_path']}[/dim]")
+    console.print(
+        f"type={item['type']} status={item['status']} "
+        f"confidence={item['confidence']} recommended={item.get('recommended_action', 'inspect')}"
+    )
+    console.print(f"source: {_format_source(item.get('source'))}")
+    risk_flags = item.get("risk_flags") or []
+    if risk_flags:
+        console.print(f"risk: {', '.join(risk_flags)}")
+    actions = item.get("proposed_actions") or ["approve", "reject", "defer", "inspect"]
+    console.print(f"actions: {', '.join(actions)}")
     for line in (
         f"+ id: {item['id']}",
         f"+ type: {item['type']}",
@@ -999,7 +1010,7 @@ def _print_review_diff(item: dict[str, Any]) -> None:
         f"+ source: {_format_source(item.get('source'))}",
     ):
         console.print(line, markup=False)
-    console.print("@@ body @@", markup=False)
+    console.print("body:", markup=False)
     body = item.get("body") or ""
     for line in body.splitlines() or [""]:
         console.print(f"+ {line}", markup=False)

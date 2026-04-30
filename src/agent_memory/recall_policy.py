@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 
 Matcher = Callable[[str], bool]
@@ -58,19 +58,33 @@ class _Rule:
 
 
 _THRESHOLD = 0.6
+_DEFAULT_AGENT_ALIASES = ("Toby", "Тоби", "tb")
 
 
-def should_recall(message: str) -> RecallDecision:
+def should_recall(message: str, aliases: Sequence[str] | None = None) -> RecallDecision:
     """Classify whether a user request should be enriched with memory."""
 
     original = str(message or "").strip()
     normalized = _normalize(original)
-    triggers = tuple(_trigger for _trigger in _match_rules(normalized))
+    selected_aliases = _DEFAULT_AGENT_ALIASES if aliases is None else tuple(aliases)
+    alias = _leading_agent_alias(original, selected_aliases)
+    alias_triggers = (
+        (
+            RecallTrigger(
+                "agent_memory_alias",
+                "User addressed the Agent Memory assistant explicitly.",
+                0.99,
+            ),
+        )
+        if alias
+        else ()
+    )
+    triggers = (*alias_triggers, *tuple(_trigger for _trigger in _match_rules(normalized)))
     confidence = min(0.99, sum(trigger.weight for trigger in triggers))
     should_recall_result = confidence >= _THRESHOLD
     return RecallDecision(
         message=original,
-        query=_memory_query(original),
+        query=_memory_query(original, selected_aliases),
         should_recall=should_recall_result,
         confidence=confidence if should_recall_result else min(confidence, _THRESHOLD - 0.01),
         triggers=triggers,
@@ -103,9 +117,30 @@ def _is_low_context_command(text: str) -> bool:
     )
 
 
-def _memory_query(message: str) -> str:
+def _leading_agent_alias(message: str, aliases: Sequence[str]) -> str | None:
+    cleaned_aliases = tuple(alias.strip() for alias in aliases if alias.strip())
+    if not cleaned_aliases:
+        return None
+    for alias in sorted(cleaned_aliases, key=len, reverse=True):
+        pattern = rf"\A\s*{re.escape(alias)}(?:\b|(?=\s|[,.:;!\-]))"
+        if re.search(pattern, message, flags=re.IGNORECASE):
+            return alias
+    return None
+
+
+def _strip_leading_agent_alias(message: str, aliases: Sequence[str]) -> str:
+    cleaned = message.strip()
+    for alias in sorted((alias.strip() for alias in aliases if alias.strip()), key=len, reverse=True):
+        pattern = rf"\A\s*{re.escape(alias)}(?:\b|(?=\s|[,.:;!\-]))[\s,.:;!\-]*"
+        updated = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip()
+        if updated != cleaned:
+            return updated
+    return cleaned
+
+
+def _memory_query(message: str, aliases: Sequence[str] = _DEFAULT_AGENT_ALIASES) -> str:
     cleaned = re.sub(r"\s+", " ", message.strip())
-    query = cleaned
+    query = _strip_leading_agent_alias(cleaned, aliases)
     replacements = (
         r"\Awhat did (we|i) (decide|choose|agree) (about|on|for)\s+",
         r"\Awhat was (previously |earlier |already )?(decided|chosen|agreed) (about|on|for)\s+",

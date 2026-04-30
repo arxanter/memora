@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
-from agent_memory.config import ConfigError, load_config
+from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, ConfigError, MemoryConfig, load_config
 from agent_memory.lifecycle import mark_status, reject_memory, review_queue, supersede_memory
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
@@ -38,15 +38,17 @@ def remember_tool(memory: Mapping[str, Any], *, vault: Optional[PathLike] = None
         config = load_config(_vault_from(memory, vault))
         memory_type = MemoryType(memory.get("type", MemoryType.FACT.value))
         text = _memory_text(memory)
-        confidence = float(memory.get("confidence", 0.5))
+        confidence = float(memory.get("confidence", config.agent_policy.min_pending_confidence))
         source = _memory_source(memory)
         author_name = _optional_string(memory.get("author_name")) or "MCP agent"
+        selected_status = _agent_memory_status(memory, config.agent_policy, confidence)
         result = remember_memory(
             config,
             memory_type=memory_type,
             text=text,
             scope=_optional_enum(MemoryScope, memory.get("scope")),
             project=_optional_string(memory.get("project")),
+            status=selected_status,
             tags=_string_list(memory.get("tags", ())),
             author_kind=AuthorKind.AGENT,
             author_name=author_name,
@@ -60,6 +62,12 @@ def remember_tool(memory: Mapping[str, Any], *, vault: Optional[PathLike] = None
                 "review_required": payload["status"] == LifecycleStatus.PENDING.value,
                 "author": {"kind": AuthorKind.AGENT.value, "name": author_name},
                 "confidence": confidence,
+                "policy": _agent_policy_payload(
+                    config.agent_policy,
+                    selected_status=selected_status,
+                    confidence=confidence,
+                    explicit_user_save=_explicit_user_save(memory),
+                ),
                 "citations": [_citation(payload["id"], payload["relative_path"])],
             }
         )
@@ -115,7 +123,17 @@ def save_source_with_memories_tool(
             memories=memories,
             author_name=_optional_string(author_name) or "MCP agent",
         ).to_dict()
-        payload.update({"tool": "save_source_with_memories"})
+        payload.update(
+            {
+                "tool": "save_source_with_memories",
+                "policy": {
+                    "trust_level": _trust_level(config.agent_policy),
+                    "require_review_for_source_extracts": config.agent_policy.require_review_for_source_extracts,
+                    "min_active_confidence": config.agent_policy.min_active_confidence,
+                    "min_pending_confidence": config.agent_policy.min_pending_confidence,
+                },
+            }
+        )
         return payload
     except Exception as exc:
         return _error_payload(
@@ -290,9 +308,11 @@ def build_context_tool(
 ) -> JsonPayload:
     """Build agent context by applying recall policy before generating a brief."""
 
-    policy = should_recall(task).to_dict()
+    config = _optional_config(vault)
+    agent_policy = config.agent_policy if config else AgentPolicyConfig()
+    policy = should_recall(task, aliases=agent_policy.aliases).to_dict()
     try:
-        selected_budget = _budget(budget)
+        selected_budget = _budget(budget or agent_policy.default_recall_budget)
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="build_context", task=task, policy=policy)
 
@@ -435,6 +455,7 @@ def mark_status_tool(memory_id: str, status: str, *, vault: Optional[PathLike] =
                 "id": memory_id,
                 "status": selected_status,
                 "mutated": payload["mutation_count"] > 0,
+                "policy": _lifecycle_policy_payload(config.agent_policy, selected_status),
             }
         )
         return payload
@@ -448,7 +469,16 @@ def review_tool(*, vault: Optional[PathLike] = None) -> JsonPayload:
     try:
         config = load_config(vault)
         payload = review_queue(config).to_dict()
-        payload.update({"tool": "review"})
+        payload.update(
+            {
+                "tool": "review",
+                "policy": {
+                    "trust_level": _trust_level(config.agent_policy),
+                    "autonomous_lifecycle": config.agent_policy.autonomous_lifecycle,
+                    "min_active_confidence": config.agent_policy.min_active_confidence,
+                },
+            }
+        )
         return payload
     except Exception as exc:
         return _error_payload(exc, code="review_failed", tool="review")
@@ -466,6 +496,7 @@ def approve_tool(memory_id: str, reason: Optional[str] = None, *, vault: Optiona
                 "id": memory_id,
                 "status": LifecycleStatus.ACTIVE.value,
                 "mutated": payload["mutation_count"] > 0,
+                "policy": _lifecycle_policy_payload(config.agent_policy, LifecycleStatus.ACTIVE.value),
             }
         )
         return payload
@@ -485,6 +516,7 @@ def reject_tool(memory_id: str, reason: Optional[str] = None, *, vault: Optional
                 "id": memory_id,
                 "status": LifecycleStatus.REJECTED.value,
                 "mutated": payload["mutation_count"] > 0,
+                "policy": _lifecycle_policy_payload(config.agent_policy, LifecycleStatus.REJECTED.value),
             }
         )
         return payload
@@ -510,6 +542,7 @@ def mark_superseded_tool(
                 "old_id": old_id,
                 "by_id": by_id,
                 "mutated": payload["mutation_count"] > 0,
+                "policy": _lifecycle_policy_payload(config.agent_policy, LifecycleStatus.SUPERSEDED.value),
             }
         )
         return payload
@@ -673,6 +706,103 @@ def _placeholder_tool(command: str, *, vault: Optional[PathLike], **details: Any
         return payload
     except Exception as exc:
         return _error_payload(exc, code=f"{command}_failed", tool=command)
+
+
+def _optional_config(vault: Optional[PathLike]) -> Optional[MemoryConfig]:
+    try:
+        return load_config(vault)
+    except ConfigError:
+        return None
+
+
+def _agent_memory_status(
+    memory: Mapping[str, Any],
+    policy: AgentPolicyConfig,
+    confidence: float,
+) -> LifecycleStatus:
+    requested = _optional_string(memory.get("status"))
+    requested_status = LifecycleStatus(requested) if requested else None
+    explicit_user_save = _explicit_user_save(memory)
+    confirmed = _bool(memory.get("confirmed_by_user") or memory.get("user_confirmed"))
+    trust_level = _trust_level(policy)
+
+    if trust_level == AgentTrustLevel.MANUAL.value and not confirmed:
+        raise ValueError("agent_policy.trust_level=manual requires confirmed_by_user before saving memory")
+
+    if requested_status and requested_status != LifecycleStatus.ACTIVE:
+        return requested_status if _agent_can_choose_status(policy, requested_status) else LifecycleStatus.PENDING
+
+    active_allowed = (
+        confidence >= policy.min_active_confidence
+        and (
+            trust_level == AgentTrustLevel.AUTONOMOUS.value
+            or (
+                trust_level == AgentTrustLevel.EXPLICIT_ACTIVE.value
+                and policy.explicit_user_saves_active
+                and explicit_user_save
+            )
+        )
+    )
+    if (requested_status == LifecycleStatus.ACTIVE or explicit_user_save) and active_allowed:
+        return LifecycleStatus.ACTIVE
+    return LifecycleStatus.PENDING
+
+
+def _agent_can_choose_status(policy: AgentPolicyConfig, status: LifecycleStatus) -> bool:
+    trust_level = _trust_level(policy)
+    if trust_level == AgentTrustLevel.AUTONOMOUS.value:
+        return True
+    return status == LifecycleStatus.PENDING
+
+
+def _explicit_user_save(memory: Mapping[str, Any]) -> bool:
+    return any(
+        _bool(memory.get(key))
+        for key in (
+            "explicit_user_save",
+            "user_explicit",
+            "authorized_by_user",
+            "direct_user_instruction",
+        )
+    )
+
+
+def _agent_policy_payload(
+    policy: AgentPolicyConfig,
+    *,
+    selected_status: LifecycleStatus,
+    confidence: float,
+    explicit_user_save: bool,
+) -> dict[str, Any]:
+    return {
+        "trust_level": _trust_level(policy),
+        "selected_status": selected_status.value,
+        "explicit_user_save": explicit_user_save,
+        "review_required": selected_status == LifecycleStatus.PENDING,
+        "confidence": confidence,
+        "min_active_confidence": policy.min_active_confidence,
+        "min_pending_confidence": policy.min_pending_confidence,
+    }
+
+
+def _lifecycle_policy_payload(policy: AgentPolicyConfig, status: str) -> dict[str, Any]:
+    trust_level = _trust_level(policy)
+    terminal_status = status in {
+        LifecycleStatus.REJECTED.value,
+        LifecycleStatus.STALE.value,
+        LifecycleStatus.SUPERSEDED.value,
+    }
+    return {
+        "trust_level": trust_level,
+        "autonomous_lifecycle": policy.autonomous_lifecycle,
+        "requires_user_confirmation": terminal_status
+        and not (trust_level == AgentTrustLevel.AUTONOMOUS.value and policy.autonomous_lifecycle),
+    }
+
+
+def _trust_level(policy: AgentPolicyConfig) -> str:
+    value = policy.trust_level
+    return value.value if isinstance(value, AgentTrustLevel) else str(value)
 
 
 def _memory_text(memory: Mapping[str, Any]) -> str:

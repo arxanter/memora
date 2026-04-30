@@ -44,3 +44,20 @@ def test_recall_policy_avoids_false_positives(message):
     assert decision.should_recall is False
     assert decision.confidence < 0.6
     assert decision.triggers == ()
+
+
+@pytest.mark.parametrize(
+    "message, query",
+    [
+        ("Toby, сохрани это решение", "сохрани это решение"),
+        ("Тоби проанализируй статью и сохрани", "проанализируй статью и сохрани"),
+        ("tb what did we decide about status?", "status"),
+    ],
+)
+def test_recall_policy_treats_toby_alias_as_memory_trigger(message, query):
+    decision = should_recall(message)
+
+    assert decision.should_recall is True
+    assert decision.confidence == 0.99
+    assert "agent_memory_alias" in {trigger.name for trigger in decision.triggers}
+    assert decision.query == query
