@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
+from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
 from agent_memory.recall import recall_memory
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -146,22 +147,37 @@ def brief_tool(
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
-    """Stage 3 stable placeholder for future agent-facing brief generation."""
+    """Generate a citation-preserving memory brief under a strict budget."""
 
     try:
         selected_budget = _budget(budget)
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="brief")
 
-    return _placeholder_tool(
-        "brief",
-        vault=vault,
-        query=query,
-        budget=selected_budget,
-        filters=_filters(filters),
-        brief=None,
-        citations=[],
-    )
+    raw_filters = _filters(filters)
+    include_related = _bool(raw_filters.pop("include_related", False))
+    semantic = raw_filters.pop("semantic", None)
+    try:
+        config = load_config(vault)
+        payload = brief_memory(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(raw_filters),
+            budget=selected_budget,
+            include_related=include_related,
+            semantic=None if semantic is None else _bool(semantic),
+        ).to_dict()
+        payload.update({"tool": "brief"})
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "brief_failed",
+            tool="brief",
+            query=query,
+            budget=selected_budget,
+            filters=_filters(filters),
+        )
 
 
 def inspect_tool(memory_id: str, *, vault: Optional[PathLike] = None) -> JsonPayload:
@@ -281,7 +297,7 @@ def create_server() -> Any:
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
     ) -> JsonPayload:
-        """Generate a memory brief. Stage 3 returns a stable placeholder."""
+        """Generate a citation-preserving memory brief under a strict budget."""
 
         return brief_tool(query, budget, filters)
 

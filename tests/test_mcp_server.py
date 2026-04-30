@@ -84,25 +84,11 @@ def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
     vault_path = str(vault.resolve())
 
     payloads = [
-        brief_tool("agent memory", 700, {"project": "agent-memory"}, vault=vault),
         explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault),
         mark_status_tool("mem_20260430_test01", "active", vault=vault),
     ]
 
     assert payloads == [
-        {
-            "ok": True,
-            "implemented": False,
-            "command": "brief",
-            "message": "brief is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-            "vault_path": vault_path,
-            "query": "agent memory",
-            "budget": 700,
-            "filters": {"project": "agent-memory"},
-            "brief": None,
-            "citations": [],
-            "tool": "brief",
-        },
         {
             "ok": True,
             "implemented": False,
@@ -180,6 +166,33 @@ def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
     assert payload["chunks"][0]["citation"] == payload["citations"][0]
     assert payload["citations"][0]["id"] == remembered["id"]
     assert payload["citations"][0]["path"] == remembered["relative_path"]
+
+
+def test_mcp_brief_uses_memory_brief_service(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP brief builds citation-preserving Markdown under a strict token budget.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = brief_tool("MCP brief", 90, {"status": "pending"}, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "brief"
+    assert payload["implemented"] is True
+    assert payload["budget_mode"] == "strict"
+    assert payload["used_tokens_estimate"] <= 90
+    assert payload["sections"]["warnings"][0]["source_id"] == remembered["id"]
+    assert payload["sections"]["warnings"][0]["citations"] == ["C1"]
+    assert payload["citations"][0]["path"] == remembered["relative_path"]
+    assert "Citations:" in payload["markdown"]
 
 
 def test_mcp_missing_inspect_has_stable_error_payload(tmp_path):

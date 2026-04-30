@@ -19,6 +19,12 @@ from agent_memory.embeddings import (
     EmbeddingProviderError,
     LocalCommandEmbeddingProvider,
 )
+from agent_memory.brief import (
+    BriefItem,
+    BriefResponse,
+    brief_memory,
+    render_brief_markdown,
+)
 from agent_memory.indexer import (
     GraphIssue,
     GraphValidationReport,
@@ -85,6 +91,8 @@ __all__ = [
     "ENV_VAULT_PATH",
     "AuthorKind",
     "AuthorMetadata",
+    "BriefItem",
+    "BriefResponse",
     "ConfigError",
     "DeterministicEmbeddingProvider",
     "EmbeddingProviderError",
@@ -122,6 +130,7 @@ __all__ = [
     "config_to_dict",
     "content_hash",
     "create_default_config",
+    "brief_memory",
     "doctor_report",
     "ensure_schema",
     "estimate_tokens",
@@ -135,6 +144,7 @@ __all__ = [
     "placeholder_result",
     "reindex_vault",
     "remember_memory",
+    "render_brief_markdown",
     "recall_memory",
     "render_memory_markdown",
     "search_memory",

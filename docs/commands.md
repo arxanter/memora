@@ -181,10 +181,58 @@ Supported filters:
 
 ### `memory brief`
 
-Stage 2 placeholder.
+Implemented in Stage 8.
 
-The command accepts `query` and `--budget`. Brief generation is planned for a
-later stage.
+Builds an agent-facing Memory Brief from Stage 7 recall output. The brief is
+deterministic, citation-preserving, and rendered under a strict estimated token
+budget. Markdown is the default output and `--json` returns the same rendered
+Markdown with structured sections, citations, budget metadata, and recall
+summary data.
+
+Stable Markdown section shape:
+
+```markdown
+## Memory Brief
+
+Current relevant facts:
+
+Current decisions:
+
+Warnings:
+
+Open questions:
+
+Citations:
+```
+
+Brief behavior:
+
+- `active` facts, preferences, project context, conversation summaries, and
+  source extracts are placed in Current relevant facts.
+- `active` decisions are placed in Current decisions.
+- `task` memory is placed in Open questions.
+- `stale`, `superseded`, `pending`, and `rejected` memory is kept out of the
+  main sections and shown only in Warnings when selected.
+- `supersedes` graph links add warnings, and `contradicts` graph links add
+  conflict bullets under Open questions when connected to selected memory.
+- Every bullet carries citation keys such as `[C1]`, and the Citations section
+  maps those keys to Obsidian-relative memory paths.
+
+Supported filters match `memory recall`:
+
+- `--project <name>`
+- `--type <fact|preference|decision|task|source_extract|project_context|conversation_summary>`
+- `--status <pending|active|stale|superseded|rejected>`
+- `--scope <user|project|global>`
+- `--include-related` to include graph-related memories before brief generation
+- `--semantic` or `--no-semantic` to override the config for one brief
+
+Example:
+
+```bash
+memory brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
+memory brief "Obsidian sync decisions" --vault ./memory-vault --json
+```
 
 ### `memory status`
 
@@ -249,8 +297,10 @@ MCP responses should include:
 keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
 `limit`.
 `recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
-filter keys, plus `include_related` and `semantic`. `brief`, `explain_recall`,
-and `mark_status` remain placeholders until later stages.
+filter keys, plus `include_related` and `semantic`. `brief(query, budget,
+filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
+`citations`, `budget`, and `used_tokens_estimate`. `explain_recall` and
+`mark_status` remain placeholders until later stages.
 
 ## Mutation Policy
 

@@ -74,7 +74,6 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
     runner.invoke(app, ["init", str(vault), "--json"])
 
     commands = [
-        ["brief", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["import", str(source), "--vault", str(vault), "--json"],
         ["export", "--format", "markdown", "--vault", str(vault), "--json"],
     ]
@@ -85,6 +84,41 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
         payload = json.loads(result.output)
         assert payload["ok"] is True
         assert payload["implemented"] is False
+
+
+def test_brief_command_generates_markdown_and_json(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Memory brief CLI returns citation-preserving Markdown.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    markdown_result = runner.invoke(app, ["brief", "memory brief", "--vault", str(vault)])
+    json_result = runner.invoke(app, ["brief", "memory brief", "--vault", str(vault), "--json"])
+
+    assert markdown_result.exit_code == 0, markdown_result.output
+    assert "## Memory Brief" in markdown_result.output
+    assert "Current decisions:" in markdown_result.output
+    assert "[C1]" in markdown_result.output
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["budget_mode"] == "strict"
+    assert payload["used_tokens_estimate"] <= payload["budget"]
+    assert payload["markdown"] == markdown_result.output
+    assert payload["sections"]["current_decisions"][0]["citations"] == ["C1"]
 
 
 def test_recall_command_packs_indexed_chunks_under_budget(tmp_path):
