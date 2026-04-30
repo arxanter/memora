@@ -26,6 +26,13 @@ from agent_memory.indexer import (
     split_document_chunks,
     validate_graph,
 )
+from agent_memory.retrieval import (
+    RetrievalIndexError,
+    SearchFilters,
+    SearchResponse,
+    SearchResult,
+    search_memory,
+)
 from agent_memory.schema import (
     AuthorKind,
     AuthorMetadata,
@@ -82,7 +89,11 @@ __all__ = [
     "RelationType",
     "RememberResult",
     "ReindexResult",
+    "RetrievalIndexError",
     "SCHEMA_VERSION",
+    "SearchFilters",
+    "SearchResponse",
+    "SearchResult",
     "SourceRef",
     "ValidationIssue",
     "VaultValidationReport",
@@ -102,6 +113,7 @@ __all__ = [
     "reindex_vault",
     "remember_memory",
     "render_memory_markdown",
+    "search_memory",
     "split_document_chunks",
     "status_summary",
     "validate_graph",

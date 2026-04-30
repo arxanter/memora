@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 from agent_memory.config import ConfigError, load_config
+from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import (
     AuthorKind,
     LifecycleStatus,
@@ -69,16 +70,30 @@ def search_tool(
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
-    """Stage 3 stable placeholder for future keyword/semantic retrieval."""
+    """Search indexed memory using the shared Stage 5 retrieval service."""
 
-    return _placeholder_tool(
-        "search",
-        vault=vault,
-        query=query,
-        filters=_filters(filters),
-        results=[],
-        citations=[],
-    )
+    raw_filters = _filters(filters)
+    include_related = _bool(raw_filters.pop("include_related", False))
+    limit = int(raw_filters.pop("limit", 10))
+    try:
+        config = load_config(vault)
+        payload = search_memory(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(raw_filters),
+            include_related=include_related,
+            limit=limit,
+        ).to_dict()
+        payload.update({"tool": "search"})
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "search_failed",
+            tool="search",
+            query=query,
+            filters=raw_filters,
+        )
 
 
 def recall_tool(
@@ -228,7 +243,7 @@ def create_server() -> Any:
 
     @server.tool()
     def search(query: str, filters: Optional[dict[str, Any]] = None) -> JsonPayload:
-        """Search memory. Stage 3 returns a stable placeholder."""
+        """Search memory using keyword, metadata, and graph signals."""
 
         return search_tool(query, filters)
 
@@ -323,6 +338,14 @@ def _budget(value: int) -> int:
     if budget < 1:
         raise ValueError("budget must be at least 1")
     return budget
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _optional_string(value: Any) -> Optional[str]:

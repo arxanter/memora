@@ -74,7 +74,6 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
     runner.invoke(app, ["init", str(vault), "--json"])
 
     commands = [
-        ["search", "agent memory", "--vault", str(vault), "--json"],
         ["recall", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["brief", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["import", str(source), "--vault", str(vault), "--json"],
@@ -87,6 +86,52 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
         payload = json.loads(result.output)
         assert payload["ok"] is True
         assert payload["implemented"] is False
+
+
+def test_search_command_returns_ranked_json_results(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--scope",
+            "project",
+            "--project",
+            "agent-memory",
+            "--text",
+            "Use SQLite FTS for keyword memory search.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "keyword memory",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--type",
+            "decision",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["result_count"] == 1
+    assert payload["results"][0]["metadata"]["project"] == "agent-memory"
+    assert payload["results"][0]["citation"]["path"].startswith("Memories/decisions/")
 
 
 def test_reindex_command_builds_sqlite_index(tmp_path):

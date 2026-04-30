@@ -11,6 +11,7 @@ from rich.console import Console
 
 from agent_memory.config import ConfigError, load_config
 from agent_memory.indexer import reindex_vault
+from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.vault import (
     doctor_report,
@@ -118,11 +119,70 @@ def reindex(
 def search(
     query: str = typer.Argument(..., help="Search query."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
+    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    created_after: Optional[str] = typer.Option(None, "--created-after", help="Created-at lower bound."),
+    created_before: Optional[str] = typer.Option(None, "--created-before", help="Created-at upper bound."),
+    updated_after: Optional[str] = typer.Option(None, "--updated-after", help="Updated-at lower bound."),
+    updated_before: Optional[str] = typer.Option(None, "--updated-before", help="Updated-at upper bound."),
+    valid_from: Optional[str] = typer.Option(None, "--valid-from", help="Valid-from lower bound date."),
+    valid_to: Optional[str] = typer.Option(None, "--valid-to", help="Valid-to upper bound date."),
+    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """Placeholder for keyword/semantic memory search."""
+    """Search indexed memory using keyword, metadata, and graph signals."""
 
-    _placeholder_command("search", vault=vault, json_output=json_output, query=query, results=[])
+    try:
+        config = load_config(vault)
+        filters = SearchFilters(
+            project=project,
+            memory_type=memory_type.value if memory_type else None,
+            status=status.value if status else None,
+            scope=scope.value if scope else None,
+            created_after=created_after,
+            created_before=created_before,
+            updated_after=updated_after,
+            updated_before=updated_before,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
+        payload = search_memory(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(filters.to_dict()),
+            include_related=include_related,
+            limit=limit,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "search_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["results"]:
+        console.print("[yellow]No memories found.[/yellow]")
+        return
+
+    for position, result in enumerate(payload["results"], start=1):
+        metadata = result["metadata"]
+        related_marker = " [cyan](related)[/cyan]" if result["related"] else ""
+        console.print(
+            f"[bold]{position}. {result['id']}[/bold]{related_marker} "
+            f"[dim]score={result['score']:.2f} path={result['path']}[/dim]"
+        )
+        console.print(
+            f"   {metadata['type']} / {metadata['status']} / "
+            f"project={metadata['project'] or '-'} / chunk={metadata['chunk_type']}"
+        )
+        console.print(f"   {result['snippet']}")
 
 
 @app.command()

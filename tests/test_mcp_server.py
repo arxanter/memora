@@ -1,3 +1,5 @@
+from agent_memory.config import load_config
+from agent_memory.indexer import reindex_vault
 from agent_memory.mcp_server import (
     brief_tool,
     explain_recall_tool,
@@ -82,7 +84,6 @@ def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
     vault_path = str(vault.resolve())
 
     payloads = [
-        search_tool("agent memory", {"status": "active"}, vault=vault),
         recall_tool("agent memory", 800, {"type": "decision"}, vault=vault),
         brief_tool("agent memory", 700, {"project": "agent-memory"}, vault=vault),
         explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault),
@@ -90,18 +91,6 @@ def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
     ]
 
     assert payloads == [
-        {
-            "ok": True,
-            "implemented": False,
-            "command": "search",
-            "message": "search is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-            "vault_path": vault_path,
-            "query": "agent memory",
-            "filters": {"status": "active"},
-            "results": [],
-            "citations": [],
-            "tool": "search",
-        },
         {
             "ok": True,
             "implemented": False,
@@ -154,6 +143,30 @@ def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
             "tool": "mark_status",
         },
     ]
+
+
+def test_mcp_search_uses_retrieval_service(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP search uses the shared keyword retrieval service.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = search_tool("keyword retrieval", {"status": "pending"}, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "search"
+    assert payload["implemented"] is True
+    assert payload["result_count"] == 1
+    assert payload["results"][0]["id"] == remembered["id"]
+    assert payload["results"][0]["citation"] == remembered["citations"][0]
 
 
 def test_mcp_missing_inspect_has_stable_error_payload(tmp_path):

@@ -99,10 +99,41 @@ memory reindex --vault ./memory-vault --clean
 
 ### `memory search`
 
-Stage 2 placeholder.
+Implemented in Stage 5.
 
-The command accepts `query` and supports `--json`. Ranked keyword, graph, and
-semantic retrieval are planned for later stages.
+Searches the Stage 4 SQLite FTS index and returns ranked memory-level results
+with snippets, score breakdowns, metadata, and Obsidian-relative citations.
+SQLite remains disposable cache data; search does not silently rebuild a missing
+or incomplete index. Run `memory reindex --vault <vault>` first if search reports
+`index_missing`.
+
+Default retrieval includes `active` and `stale` memory, excludes `pending`,
+`rejected`, and `superseded`, and applies stale/superseded penalties. Pass
+`--status` to search one explicit lifecycle status.
+
+Supported filters:
+
+- `--project <name>`
+- `--type <fact|preference|decision|task|source_extract|project_context|conversation_summary>`
+- `--status <pending|active|stale|superseded|rejected>`
+- `--scope <user|project|global>`
+- `--created-after <date-or-datetime>` and `--created-before <date-or-datetime>`
+- `--updated-after <date-or-datetime>` and `--updated-before <date-or-datetime>`
+- `--valid-from <date>` and `--valid-to <date>`
+- `--include-related` to include linked graph neighbors from the `links` table
+- `--limit <n>`
+
+Scoring is deterministic for a fixed index. It combines FTS rank, graph neighbor
+boost, memory type boost, status boost, confidence boost, recency boost, rating
+boost, stale penalty, and superseded penalty. Recency is calculated relative to
+the newest indexed result in the candidate set, not wall-clock time.
+
+Example:
+
+```bash
+memory search "vector db" --vault ./memory-vault --project foo --type decision --status active --json
+memory search "agent memory" --vault ./memory-vault --include-related
+```
 
 ### `memory recall`
 
@@ -176,6 +207,11 @@ MCP responses should include:
 - Obsidian-style path citations.
 - Lifecycle status for returned memories.
 - Enough scoring or selection metadata to support `explain_recall`.
+
+`search(query, filters)` is implemented in Stage 5 and accepts the same filter
+keys as the CLI using snake_case names, plus `include_related` and `limit`.
+`recall`, `brief`, `explain_recall`, and `mark_status` remain placeholders until
+later stages.
 
 ## Mutation Policy
 
