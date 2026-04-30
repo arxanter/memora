@@ -558,6 +558,8 @@ Initial MCP tools:
 
 ```text
 remember(memory)
+save_source(source)
+ingest_url(url, title, content, extract, project, tags)
 search(query, filters)
 recall(query, budget, filters)
 brief(query, budget, filters)
@@ -590,6 +592,12 @@ deterministic recall policy payload as `memory should-recall --json`.
 recommended, it returns a Memory Brief under `brief` plus top-level `markdown`
 and `citations`; when recall is not recommended, it returns `memory_needed:
 false`, empty Markdown, no citations, and does not require a vault or index.
+
+`save_source(source)` and `ingest_url(url, ...)` save raw/source material under
+`Sources/YYYY-MM-DD_slug/`. They intentionally do not perform AI analysis or
+promote content into canonical memory. Agents should fetch/read/analyze material,
+save source plus extract, then call `remember(memory)` for durable atomic facts,
+decisions, preferences, project context, or tasks.
 
 `explain_recall(query, budget, filters)` is implemented in Stage 13 and returns
 the same structured explanation payload as `memory explain-recall --json`.

@@ -92,6 +92,7 @@ def test_local_install_docs_reference_existing_scripts():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     docs = (ROOT / "docs" / "local-install.md").read_text(encoding="utf-8")
     commands = (ROOT / "docs" / "commands.md").read_text(encoding="utf-8")
+    agent_docs = (ROOT / "docs" / "agent-instructions.md").read_text(encoding="utf-8")
 
     for script_name in ("install.sh", "agent-memory-service.sh", "uninstall.sh"):
         assert (SCRIPTS / script_name).exists()
@@ -103,3 +104,6 @@ def test_local_install_docs_reference_existing_scripts():
     assert "python3.12" in docs
     assert "systemd --user" in docs
     assert "launchd" in docs
+    assert "save_source" in agent_docs
+    assert "ingest_url" in agent_docs
+    assert "remember" in agent_docs

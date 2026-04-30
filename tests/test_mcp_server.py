@@ -4,11 +4,13 @@ from agent_memory.mcp_server import (
     brief_tool,
     build_context_tool,
     explain_recall_tool,
+    ingest_url_tool,
     inspect_tool,
     mark_superseded_tool,
     mark_status_tool,
     recall_tool,
     remember_tool,
+    save_source_tool,
     search_tool,
     should_recall_tool,
 )
@@ -55,6 +57,67 @@ def test_mcp_remember_creates_pending_agent_memory(tmp_path):
     assert document.frontmatter.source is not None
     assert document.frontmatter.source.path == "Sources/2026-04-30_mcp/source.md"
     assert document.body.strip() == "Use MCP handlers as a thin layer over shared services."
+
+
+def test_mcp_save_source_creates_raw_source_and_extract(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = save_source_tool(
+        {
+            "title": "Agent memory article",
+            "url": "https://example.com/agent-memory",
+            "content": "Raw article content about durable memory.",
+            "extract": "Summary: Durable facts should be promoted with remember().",
+            "project": "agent-memory",
+            "tags": ["article", "memory"],
+        },
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "save_source"
+    assert payload["relative_source_path"].endswith("/source.md")
+    assert payload["relative_extract_path"].endswith("/extract.md")
+    assert payload["citations"] == [
+        {
+            "id": payload["source_id"],
+            "path": payload["relative_source_path"],
+            "kind": "source",
+        },
+        {
+            "id": payload["source_id"],
+            "path": payload["relative_extract_path"],
+            "kind": "source_extract",
+        },
+    ]
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    extract_text = (vault / payload["relative_extract_path"]).read_text(encoding="utf-8")
+    assert "Source URL: https://example.com/agent-memory" in source_text
+    assert "Raw article content about durable memory." in source_text
+    assert "Summary: Durable facts should be promoted with remember()." in extract_text
+    assert "remember(memory)" in payload["next_steps"][1]
+
+
+def test_mcp_ingest_url_saves_url_stub_without_fetching(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = ingest_url_tool(
+        "https://example.com/no-content-yet",
+        title="No content yet",
+        project="agent-memory",
+        tags=["url"],
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "ingest_url"
+    assert payload["url"] == "https://example.com/no-content-yet"
+    assert payload["relative_extract_path"] is None
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    assert "No raw content was provided to Agent Memory" in source_text
+    assert "https://example.com/no-content-yet" in source_text
 
 
 def test_mcp_inspect_returns_memory_with_citation(tmp_path):

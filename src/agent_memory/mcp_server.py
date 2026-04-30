@@ -18,6 +18,7 @@ from agent_memory.schema import (
     MemoryType,
     SourceRef,
 )
+from agent_memory.sources import save_source_material
 from agent_memory.ux import inspect_memory
 from agent_memory.vault import placeholder_result, remember_memory
 
@@ -65,6 +66,64 @@ def remember_tool(memory: Mapping[str, Any], *, vault: Optional[PathLike] = None
         return payload
     except Exception as exc:
         return _error_payload(exc, code="remember_failed")
+
+
+def save_source_tool(source: Mapping[str, Any], *, vault: Optional[PathLike] = None) -> JsonPayload:
+    """Save raw source material and optional extract under Sources/."""
+
+    try:
+        config = load_config(_vault_from(source, vault))
+        payload = save_source_material(
+            config,
+            title=_optional_string(source.get("title")),
+            url=_optional_string(source.get("url")),
+            content=_optional_string(source.get("content") or source.get("raw") or source.get("markdown")),
+            extract=_optional_string(source.get("extract") or source.get("summary")),
+            project=_optional_string(source.get("project")),
+            tags=_string_list(source.get("tags", ())),
+            slug=_optional_string(source.get("slug")),
+        ).to_dict()
+        payload.update(
+            {
+                "tool": "save_source",
+                "next_steps": [
+                    "Review source.md and extract.md in the vault.",
+                    "Call remember(memory) for durable facts, decisions, preferences, project_context, or tasks.",
+                    "Keep agent-created memories pending until reviewed.",
+                ],
+            }
+        )
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="save_source_failed", tool="save_source")
+
+
+def ingest_url_tool(
+    url: str,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    extract: Optional[str] = None,
+    project: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Save URL source material; the agent is responsible for fetching/analyzing content."""
+
+    if not _optional_string(url):
+        return _error_payload(ValueError("url must not be empty"), code="invalid_url", tool="ingest_url")
+
+    return save_source_tool(
+        {
+            "url": url,
+            "title": title,
+            "content": content,
+            "extract": extract,
+            "project": project,
+            "tags": tags or [],
+        },
+        vault=vault,
+    ) | {"tool": "ingest_url"}
 
 
 def search_tool(
@@ -380,6 +439,25 @@ def create_server() -> Any:
         return remember_tool(memory)
 
     @server.tool()
+    def save_source(source: dict[str, Any]) -> JsonPayload:
+        """Save raw material and an optional extract under Sources/."""
+
+        return save_source_tool(source)
+
+    @server.tool()
+    def ingest_url(
+        url: str,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        extract: Optional[str] = None,
+        project: Optional[str] = None,
+        tags: Optional[list[str]] = None,
+    ) -> JsonPayload:
+        """Save URL material after the agent has fetched or summarized it."""
+
+        return ingest_url_tool(url, title, content, extract, project, tags)
+
+    @server.tool()
     def search(query: str, filters: Optional[dict[str, Any]] = None) -> JsonPayload:
         """Search memory using keyword, metadata, and graph signals."""
 
@@ -560,6 +638,8 @@ __all__ = [
     "mark_status_tool",
     "recall_tool",
     "remember_tool",
+    "ingest_url_tool",
+    "save_source_tool",
     "search_tool",
     "should_recall_tool",
 ]

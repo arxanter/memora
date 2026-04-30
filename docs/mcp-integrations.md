@@ -29,6 +29,8 @@ export AGENT_MEMORY_VAULT=~/MemoryVault
 Available tools:
 
 - `remember(memory)`
+- `save_source(source)`
+- `ingest_url(url, title, content, extract, project, tags)`
 - `search(query, filters)`
 - `recall(query, budget, filters)`
 - `brief(query, budget, filters)`
@@ -43,6 +45,12 @@ Agent-authored memories default to the config's `agent_default_status`, which is
 `pending` in the generated config. They include `author.kind: agent` and require
 source and confidence metadata through the shared schema validator. The server
 supplies safe defaults when an agent omits source or confidence.
+
+`save_source(source)` and `ingest_url(...)` save raw material under `Sources/`.
+They do not perform LLM analysis and do not promote content into canonical memory
+by themselves. The agent should fetch/read/analyze material, call one of these
+tools to preserve the source and extract, then call `remember(memory)` for
+durable atomic facts, decisions, preferences, project context, or tasks.
 
 `should_recall(message)` is a deterministic policy check with no LLM dependency.
 It returns `should_recall`, `confidence`, and matched `triggers`. Agents should
@@ -81,6 +89,66 @@ Write a Python function that reverses a list.
 Run git status.
 Explain what a binary search tree is.
 Create a new React project called dashboard.
+```
+
+## Source Capture Workflow
+
+When the user asks to save a URL, article, notes, transcript, document, or raw
+material into memory, agents should follow this workflow:
+
+1. Read or fetch the source material using the agent's normal browser/file tools.
+2. Call `save_source` or `ingest_url` with the raw content and a structured
+   extract.
+3. Promote only durable atomic items with `remember(memory)`.
+4. Leave agent-created memories `pending` for review.
+5. Tell the user which source paths and pending memories were created.
+
+Suggested extract shape:
+
+```markdown
+## Summary
+
+## Key Ideas
+
+## Durable Facts
+
+## Decisions
+
+## Preferences
+
+## Open Questions
+
+## Relevant Quotes
+```
+
+Example `ingest_url` call:
+
+```json
+{
+  "url": "https://example.com/article",
+  "title": "Article title",
+  "content": "Raw Markdown or readable text fetched by the agent.",
+  "extract": "## Summary\n...\n\n## Durable Facts\n- ...",
+  "project": "agent-memory",
+  "tags": ["source", "article"]
+}
+```
+
+Then call `remember(memory)` for each durable item:
+
+```json
+{
+  "type": "decision",
+  "text": "Use Obsidian Markdown as durable memory; SQLite remains rebuildable cache.",
+  "scope": "project",
+  "project": "agent-memory",
+  "confidence": 0.86,
+  "source": {
+    "path": "Sources/2026-04-30_article-title/extract.md",
+    "title": "Article title"
+  },
+  "tags": ["memory", "architecture"]
+}
 ```
 
 ## Codex
@@ -158,6 +226,8 @@ Recommended Claude Code workflow:
 4. Use `remember(memory)` for new durable memory; it defaults to pending review.
 5. Use `mark_status(id, status)` or `mark_superseded(old_id, by_id, reason)` for
    explicit lifecycle updates.
+6. For "save this URL/material" requests, fetch the material, call `ingest_url`
+   or `save_source`, then promote durable items with `remember`.
 
 ## Cursor
 
@@ -186,4 +256,6 @@ Recommended Cursor workflow:
 2. Skip memory when `memory_needed` is `false`.
 3. Use `remember` only when the user explicitly asks to save a durable memory or
    when a completed task creates a stable decision worth review.
+4. For URLs and raw material, save source/extract first with `ingest_url` or
+   `save_source`, then create pending atomic memories with `remember`.
 

@@ -97,6 +97,10 @@ from agent_memory.schema import (
     validate_markdown_file,
     validate_vault,
 )
+from agent_memory.sources import (
+    SourceCaptureResult,
+    save_source_material,
+)
 from agent_memory.sync import (
     ConflictIssue,
     ConflictReport,
@@ -168,6 +172,7 @@ __all__ = [
     "SearchResponse",
     "SearchResult",
     "SemanticConfig",
+    "SourceCaptureResult",
     "SourceRef",
     "ValidationIssue",
     "VaultValidationReport",
@@ -202,6 +207,7 @@ __all__ = [
     "review_queue",
     "run_evaluation",
     "search_memory",
+    "save_source_material",
     "should_recall",
     "split_document_chunks",
     "status_summary",
