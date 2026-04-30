@@ -10,6 +10,7 @@ Agent-facing operations should support structured JSON responses, stable error c
 
 ```bash
 memory init <vault>
+memory mcp-config
 memory remember --type decision --text "..."
 memory reindex
 memory search "query"
@@ -64,6 +65,41 @@ Example:
 ```bash
 memory init ./memory-vault --json
 ```
+
+### `memory mcp-config`
+
+Prints MCP client configuration for Agent Memory. This is the easiest way to
+redisplay the `memory-mcp` setup snippet after installation.
+
+Examples:
+
+```bash
+memory mcp-config
+memory mcp-config --format claude
+memory mcp-config --format cursor
+memory mcp-config --vault ~/MemoryVault --command ~/.local/bin/memory-mcp
+memory mcp-config --json
+```
+
+Human output is the JSON snippet agents expect in MCP client settings:
+
+```json
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "/Users/you/.local/bin/memory-mcp",
+      "env": {
+        "AGENT_MEMORY_VAULT": "/Users/you/MemoryVault"
+      }
+    }
+  }
+}
+```
+
+`--json` wraps that snippet with metadata such as selected format, command path,
+and vault path. Supported formats are `generic`, `claude`, and `cursor`; the
+current generated config shape is intentionally the same for all three because
+they use compatible MCP server declarations.
 
 ### `memory remember`
 
@@ -485,6 +521,29 @@ Stage 2 placeholder.
 
 The command accepts `--format markdown` and supports `--json`. Export is planned
 for a later stage.
+
+## Local Installer And Service Commands
+
+The project also ships local machine helper scripts:
+
+```bash
+./scripts/install.sh --vault ~/MemoryVault
+agent-memory-service install
+agent-memory-service start
+agent-memory-service status
+agent-memory-service logs
+agent-memory-service restart
+./scripts/uninstall.sh
+```
+
+`scripts/install.sh` creates a managed virtual environment and stable wrapper
+commands for `memory`, `memory-mcp`, and `agent-memory-service`. The wrapper
+commands mean users do not need to activate a venv manually after installation.
+
+`agent-memory-service` manages a user-level maintenance service on macOS
+(`launchd`) and Linux (`systemd --user`). The service is intentionally not the
+stdio MCP daemon; MCP clients should launch `memory-mcp` on demand. See
+`docs/local-install.md` for full setup, service, upgrade, and uninstall details.
 
 ## JSON Output
 

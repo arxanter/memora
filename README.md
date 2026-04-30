@@ -75,7 +75,21 @@ Typical data flow:
 
 ## Installation
 
-The package requires Python 3.9 or newer.
+The core package requires Python 3.9 or newer. The local installer installs the
+MCP extra by default, and the upstream `mcp` package requires Python 3.10 or
+newer. On macOS, if `/usr/bin/python3` is 3.9, install a newer Python first or
+pass `--python /path/to/python3.10`.
+
+For local machine setup without manually activating a venv, use the installer:
+
+```bash
+./scripts/install.sh --vault ~/MemoryVault
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+This creates stable `memory`, `memory-mcp`, and `agent-memory-service` wrapper
+commands. It supports macOS and Linux. See `docs/local-install.md` for service
+management, MCP activation, upgrade, and uninstall details.
 
 For development and local CLI usage from a clone:
 
@@ -179,6 +193,14 @@ Primary MCP tools include `remember`, `search`, `recall`, `brief`,
 and `mark_superseded`. `build_context` is the recommended entry point for
 agents: it avoids spending context when memory is not relevant, and otherwise
 returns a citation-preserving Memory Brief.
+
+To print the MCP client snippet again:
+
+```bash
+memory mcp-config
+memory mcp-config --format claude
+memory mcp-config --format cursor
+```
 
 See `docs/mcp-integrations.md` for client-specific notes for Codex, Claude Code,
 Cursor, and custom MCP clients.
@@ -392,5 +414,5 @@ pytest
 ```
 
 For deeper design docs, start with `docs/spec.md`, `docs/schema.md`,
-`docs/commands.md`, `docs/mcp-integrations.md`, `docs/semantic-search.md`,
-`docs/sync.md`, and `docs/evaluation.md`.
+`docs/commands.md`, `docs/local-install.md`, `docs/mcp-integrations.md`,
+`docs/semantic-search.md`, `docs/sync.md`, and `docs/evaluation.md`.

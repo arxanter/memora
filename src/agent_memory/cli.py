@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json as json_module
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,6 +42,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
 
 
 @app.command("init")
@@ -64,6 +67,30 @@ def init_command(
         console.print(f"Created config: {payload['config_path']}")
     else:
         console.print(f"Preserved existing config: {payload['config_path']}")
+
+
+@app.command("mcp-config")
+def mcp_config(
+    config_format: str = typer.Option("generic", "--format", help="Config format: generic, claude, or cursor."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    command: Optional[Path] = typer.Option(None, "--command", help="Path to memory-mcp wrapper."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON with metadata."),
+) -> None:
+    """Print MCP client configuration for Agent Memory."""
+
+    try:
+        selected_format = config_format.strip().lower()
+        if selected_format not in MCP_CONFIG_FORMATS:
+            raise ValueError("format must be one of: generic, claude, cursor")
+        payload = _mcp_config_payload(vault=vault, command=command, config_format=selected_format)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="mcp_config_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo(json_module.dumps(payload["config"], indent=2))
 
 
 @app.command()
@@ -868,6 +895,51 @@ def _print_json(payload: dict[str, Any]) -> None:
     typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
 
 
+def _mcp_config_payload(
+    *,
+    vault: Optional[Path],
+    command: Optional[Path],
+    config_format: str,
+) -> dict[str, Any]:
+    config = load_config(vault)
+    command_path = _resolve_mcp_command(command)
+    client_config = {
+        "mcpServers": {
+            "agent-memory": {
+                "command": command_path,
+                "env": {
+                    "AGENT_MEMORY_VAULT": str(config.vault_path),
+                },
+            }
+        }
+    }
+    return {
+        "ok": True,
+        "implemented": True,
+        "format": config_format,
+        "vault_path": str(config.vault_path),
+        "command": command_path,
+        "config": client_config,
+    }
+
+
+def _resolve_mcp_command(command: Optional[Path]) -> str:
+    if command is not None:
+        return str(command.expanduser().resolve())
+
+    found = shutil.which("memory-mcp")
+    if found:
+        return found
+
+    bin_dir = os.environ.get("AGENT_MEMORY_BIN_DIR")
+    if bin_dir:
+        candidate = Path(bin_dir).expanduser() / "memory-mcp"
+        if candidate.exists():
+            return str(candidate.resolve())
+
+    return "memory-mcp"
+
+
 def _handle_error(exc: Exception, *, json_output: bool, code: str) -> None:
     message = str(exc)
     if isinstance(exc, ConfigError):
@@ -880,4 +952,14 @@ def _handle_error(exc: Exception, *, json_output: bool, code: str) -> None:
     raise typer.Exit(1)
 
 
-__all__ = ["app"]
+def main() -> None:
+    """Run the Typer CLI when invoked as `python -m agent_memory.cli`."""
+
+    app()
+
+
+__all__ = ["app", "main"]
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
