@@ -1,0 +1,13 @@
+vault: .
+cases:
+  - id: smoke_recall_sqlite_fixture
+    mode: recall
+    query: sqlite fts index
+    max_tokens: 120
+    expected_include: [mem_20260430_arch_sqlite]
+    expected_exclude: [mem_20260430_old_index]
+  - id: smoke_brief_citations_fixture
+    mode: brief
+    query: brief citations keys sections
+    max_tokens: 90
+    expected_include: [mem_20260430_brief_citations]

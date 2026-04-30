@@ -1,0 +1,23 @@
+memories:
+  - id: basic_001
+    title: Basic Memory compatibility source
+    content: Basic Memory observations should map to Agent Memory observations.
+    observations:
+      - category: decision
+        text: Importers should preserve observation category and text.
+        confidence: 0.82
+    relations:
+      - type: supports
+        target: basic_002
+        confidence: 0.8
+  - id: basic_002
+    title: Related compatibility source
+    content: Related sources can become source extracts before promotion.
+expected_agent_memory_shape:
+  memory_type: source_extract
+  preserves:
+    - observations[].category
+    - observations[].text
+    - relations[].type
+    - relations[].target
+  unsupported_relation_policy: preserve_as_source_material

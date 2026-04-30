@@ -13,9 +13,12 @@ The first evaluation focus is deterministic behavior:
 - Token budgets are respected.
 - SQLite can be rebuilt from Markdown with equivalent results.
 
-## Initial Evaluation Set
+## Stage 12 Evaluation Set
 
-Later implementation stages should build a set of 30-50 representative coding-agent questions. Each case should include:
+Stage 12 adds an executable deterministic evaluation set at
+`tests/fixtures/evaluation/coding-agent-questions.yaml`. It currently contains
+30-50 representative coding-agent questions over `tests/fixtures/vault-basic`.
+Each case includes:
 
 - Query text.
 - Project or scope filters, when relevant.
@@ -24,6 +27,8 @@ Later implementation stages should build a set of 30-50 representative coding-ag
 - Expected warning or conflict behavior.
 - Maximum token budget.
 - Expected citation paths.
+- Optional explainability expectations that assert returned chunks/results expose
+  citations and score metadata.
 
 Example categories:
 
@@ -70,7 +75,7 @@ Compatibility:
 
 ## Fixture Vaults
 
-Recommended fixtures:
+Stage 12 fixture vaults:
 
 ```text
 tests/fixtures/vault-basic
@@ -79,7 +84,28 @@ tests/fixtures/vault-large
 tests/fixtures/vault-basic-memory-import
 ```
 
-Each fixture should be small enough to review manually and rich enough to cover lifecycle state, relations, citations, and project scoping.
+Each fixture is small enough to review manually and rich enough to cover
+lifecycle state, relations, citations, project scoping, sync conflicts, rebuilds,
+and Basic Memory import/export compatibility shape.
+
+## Running Evaluation
+
+Use the lightweight CLI harness:
+
+```bash
+memory eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
+memory eval tests/fixtures/vault-basic
+```
+
+The harness copies the fixture vault to a temporary directory, runs a clean
+reindex, then evaluates search, recall, brief, review, conflict, or doctor cases
+against expected IDs, warning text, token budget, and explainability metadata.
+This keeps repository fixtures immutable while still testing rebuild behavior.
+
+Import/export remains a placeholder command surface in Stage 12. The
+`vault-basic-memory-import` fixture documents the Basic Memory-compatible shape
+expected by a later importer and tests that the placeholder command contract is
+stable until that implementation is scoped.
 
 ## Stage 0 Acceptance
 

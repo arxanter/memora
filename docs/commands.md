@@ -16,6 +16,7 @@ memory search "query"
 memory recall "query" --budget 1200
 memory brief "query" --budget 1200
 memory should-recall "user message"
+memory eval <fixture-or-file>
 memory status
 memory doctor
 memory conflicts
@@ -273,6 +274,23 @@ Agent usage pattern:
 if memory should-recall "$USER_MESSAGE" --json | jq -e '.should_recall'; then
   memory brief "$USER_MESSAGE" --budget 1200
 fi
+```
+
+### `memory eval`
+
+Implemented in Stage 12.
+
+Runs a deterministic YAML evaluation spec, or a fixture directory containing
+`evaluation.yaml`, against a temporary copy of the fixture vault. The command
+performs a clean reindex first, then checks expected included IDs, excluded IDs,
+warning/conflict text, token budgets, and basic explainability metadata for
+search, recall, brief, review, conflict, and doctor cases.
+
+Example:
+
+```bash
+memory eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
+memory eval tests/fixtures/vault-basic
 ```
 
 ### `memory status`

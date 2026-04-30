@@ -11,6 +11,7 @@ from rich.console import Console
 
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
+from agent_memory.evaluation import run_evaluation
 from agent_memory.indexer import reindex_vault
 from agent_memory.lifecycle import (
     contradict_memories,
@@ -578,6 +579,45 @@ def review(
     console.print(f"[yellow]Pending agent memories:[/yellow] {payload['pending_count']}")
     for item in payload["items"]:
         console.print(f"- {item['id']} [dim]{item['relative_path']}[/dim]")
+
+
+@app.command("eval")
+def eval_command(
+    fixture_or_file: Path = typer.Argument(..., help="Evaluation fixture directory or YAML spec."),
+    keep_working_vault: bool = typer.Option(
+        False,
+        "--keep-working-vault",
+        help="Keep the throwaway copied vault for debugging.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Run deterministic fixture-backed recall/search/brief evaluation cases."""
+
+    try:
+        payload = run_evaluation(fixture_or_file, keep_working_vault=keep_working_vault).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="eval_failed")
+
+    if json_output:
+        _print_json(payload)
+        if not payload["ok"]:
+            raise typer.Exit(1)
+        return
+
+    status_label = "[green]passed[/green]" if payload["ok"] else "[red]failed[/red]"
+    console.print(
+        f"Evaluation {status_label}: "
+        f"{payload['case_count'] - payload['failed_count']}/{payload['case_count']} cases passed"
+    )
+    if not payload["ok"]:
+        for case in payload["cases"]:
+            if case["passed"]:
+                continue
+            console.print(
+                f"- {case['id']}: missing={case['missing_ids']} "
+                f"unexpected={case['unexpected_ids']} warnings={case['missing_warnings']}"
+            )
+        raise typer.Exit(1)
 
 
 @app.command("import")

@@ -19,6 +19,11 @@ from agent_memory.embeddings import (
     EmbeddingProviderError,
     LocalCommandEmbeddingProvider,
 )
+from agent_memory.evaluation import (
+    EvaluationCaseResult,
+    EvaluationReport,
+    run_evaluation,
+)
 from agent_memory.brief import (
     BriefItem,
     BriefResponse,
@@ -126,6 +131,8 @@ __all__ = [
     "ConflictReport",
     "DeterministicEmbeddingProvider",
     "EmbeddingProviderError",
+    "EvaluationCaseResult",
+    "EvaluationReport",
     "GraphIssue",
     "GraphValidationReport",
     "InitResult",
@@ -193,6 +200,7 @@ __all__ = [
     "recall_memory",
     "render_memory_markdown",
     "review_queue",
+    "run_evaluation",
     "search_memory",
     "should_recall",
     "split_document_chunks",
