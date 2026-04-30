@@ -9,7 +9,7 @@ from typing import Any, Optional, Union
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from agent_memory.schema import LifecycleStatus, MemoryScope, SCHEMA_VERSION
+from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, SCHEMA_VERSION
 
 CONFIG_DIR_NAME = ".agent-memory"
 CONFIG_FILE_NAME = "config.yaml"
@@ -58,6 +58,40 @@ class SemanticConfig(BaseModel):
         return cleaned or None
 
 
+class RecallConfig(BaseModel):
+    """Deterministic recall packing limits."""
+
+    candidate_limit: int = Field(default=50, ge=1)
+    max_tokens_per_chunk: int = Field(default=300, ge=1)
+    max_chunks_per_document: int = Field(default=2, ge=1)
+    max_chunks_per_project: int = Field(default=8, ge=1)
+    max_chunks_per_memory_type: dict[str, int] = Field(
+        default_factory=lambda: {
+            MemoryType.PREFERENCE.value: 4,
+            MemoryType.DECISION.value: 6,
+            MemoryType.PROJECT_CONTEXT.value: 6,
+            MemoryType.FACT.value: 8,
+            MemoryType.TASK.value: 4,
+            MemoryType.SOURCE_EXTRACT.value: 3,
+            MemoryType.CONVERSATION_SUMMARY.value: 3,
+        }
+    )
+
+    @field_validator("max_chunks_per_memory_type")
+    @classmethod
+    def validate_memory_type_caps(cls, value: dict[str, int]) -> dict[str, int]:
+        valid_types = {memory_type.value for memory_type in MemoryType}
+        cleaned: dict[str, int] = {}
+        for key, cap in value.items():
+            memory_type = MemoryType(key).value if key in valid_types else key
+            if memory_type not in valid_types:
+                raise ValueError(f"unknown memory type cap: {key}")
+            if int(cap) < 1:
+                raise ValueError("memory type caps must be at least 1")
+            cleaned[memory_type] = int(cap)
+        return cleaned
+
+
 class MemoryConfig(BaseModel):
     """Stage 2 configuration for a local Agent Memory vault."""
 
@@ -78,6 +112,7 @@ class MemoryConfig(BaseModel):
     agent_default_status: LifecycleStatus = LifecycleStatus.PENDING
     default_author_name: str = "memory CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
+    recall: RecallConfig = Field(default_factory=RecallConfig)
 
     @field_validator("schema_version")
     @classmethod

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 from agent_memory.config import ConfigError, load_config
+from agent_memory.recall import recall_memory
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import (
     AuthorKind,
@@ -105,22 +106,37 @@ def recall_tool(
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
-    """Stage 3 stable placeholder for future budgeted context packing."""
+    """Recall ranked memory chunks packed under a strict token budget."""
 
     try:
         selected_budget = _budget(budget)
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="recall")
 
-    return _placeholder_tool(
-        "recall",
-        vault=vault,
-        query=query,
-        budget=selected_budget,
-        filters=_filters(filters),
-        items=[],
-        citations=[],
-    )
+    raw_filters = _filters(filters)
+    include_related = _bool(raw_filters.pop("include_related", False))
+    semantic = raw_filters.pop("semantic", None)
+    try:
+        config = load_config(vault)
+        payload = recall_memory(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(raw_filters),
+            budget=selected_budget,
+            include_related=include_related,
+            semantic=None if semantic is None else _bool(semantic),
+        ).to_dict()
+        payload.update({"tool": "recall"})
+        return payload
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "recall_failed",
+            tool="recall",
+            query=query,
+            budget=selected_budget,
+            filters=_filters(filters),
+        )
 
 
 def brief_tool(
@@ -255,7 +271,7 @@ def create_server() -> Any:
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
     ) -> JsonPayload:
-        """Recall budgeted memory context. Stage 3 returns a stable placeholder."""
+        """Recall budgeted memory context from the indexed vault."""
 
         return recall_tool(query, budget, filters)
 

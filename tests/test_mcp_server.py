@@ -84,26 +84,12 @@ def test_mcp_placeholder_tools_have_golden_payloads(tmp_path):
     vault_path = str(vault.resolve())
 
     payloads = [
-        recall_tool("agent memory", 800, {"type": "decision"}, vault=vault),
         brief_tool("agent memory", 700, {"project": "agent-memory"}, vault=vault),
         explain_recall_tool("agent memory", 600, {"scope": "project"}, vault=vault),
         mark_status_tool("mem_20260430_test01", "active", vault=vault),
     ]
 
     assert payloads == [
-        {
-            "ok": True,
-            "implemented": False,
-            "command": "recall",
-            "message": "recall is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-            "vault_path": vault_path,
-            "query": "agent memory",
-            "budget": 800,
-            "filters": {"type": "decision"},
-            "items": [],
-            "citations": [],
-            "tool": "recall",
-        },
         {
             "ok": True,
             "implemented": False,
@@ -167,6 +153,33 @@ def test_mcp_search_uses_retrieval_service(tmp_path):
     assert payload["result_count"] == 1
     assert payload["results"][0]["id"] == remembered["id"]
     assert payload["results"][0]["citation"] == remembered["citations"][0]
+
+
+def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP recall packs keyword retrieval chunks under a strict token budget.",
+            "source": "Sources/2026-04-30_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = recall_tool("keyword retrieval", 10, {"status": "pending"}, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "recall"
+    assert payload["implemented"] is True
+    assert payload["budget"] == 10
+    assert payload["used_tokens_estimate"] <= 10
+    assert payload["chunks"][0]["id"] == remembered["id"]
+    assert payload["chunks"][0]["citation"] == payload["citations"][0]
+    assert payload["citations"][0]["id"] == remembered["id"]
+    assert payload["citations"][0]["path"] == remembered["relative_path"]
 
 
 def test_mcp_missing_inspect_has_stable_error_payload(tmp_path):

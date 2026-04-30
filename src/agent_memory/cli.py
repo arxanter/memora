@@ -11,6 +11,7 @@ from rich.console import Console
 
 from agent_memory.config import ConfigError, load_config
 from agent_memory.indexer import reindex_vault
+from agent_memory.recall import recall_memory
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.vault import (
@@ -196,11 +197,67 @@ def recall(
     query: str = typer.Argument(..., help="Recall query."),
     budget: int = typer.Option(1200, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
+    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    semantic: Optional[bool] = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Override semantic search config for this query.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """Placeholder for budgeted recall."""
+    """Recall ranked memory chunks packed under a strict token budget."""
 
-    _placeholder_command("recall", vault=vault, json_output=json_output, query=query, budget=budget, items=[])
+    try:
+        config = load_config(vault)
+        filters = SearchFilters(
+            project=project,
+            memory_type=memory_type.value if memory_type else None,
+            status=status.value if status else None,
+            scope=scope.value if scope else None,
+        )
+        payload = recall_memory(
+            config,
+            query,
+            filters=SearchFilters.from_mapping(filters.to_dict()),
+            budget=budget,
+            include_related=include_related,
+            semantic=semantic,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "recall_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["chunks"]:
+        console.print("[yellow]No memories packed.[/yellow]")
+        return
+
+    console.print(
+        f"[green]Packed {payload['chunk_count']} chunk(s)[/green] "
+        f"using {payload['used_tokens_estimate']}/{payload['budget']} estimated tokens"
+    )
+    for position, chunk in enumerate(payload["chunks"], start=1):
+        metadata = chunk["metadata"]
+        truncated = " [yellow](truncated)[/yellow]" if chunk["truncated"] else ""
+        console.print(
+            f"[bold]{position}. {chunk['id']}[/bold]{truncated} "
+            f"[dim]tokens={chunk['token_estimate']} path={chunk['path']}[/dim]"
+        )
+        console.print(
+            f"   {metadata['type']} / {metadata['status']} / "
+            f"project={metadata['project'] or '-'} / chunk={chunk['chunk_type']}"
+        )
+        console.print(f"   {chunk['text']}")
 
 
 @app.command()

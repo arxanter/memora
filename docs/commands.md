@@ -146,10 +146,38 @@ Semantic search is disabled by default. Configure a provider in
 
 ### `memory recall`
 
-Stage 2 placeholder.
+Implemented in Stage 7.
 
-The command accepts `query` and `--budget`. Budgeted context packing with
-citations is planned for later stages.
+Searches indexed memory with the same retrieval layer as `memory search`, then
+packs ranked chunks under a strict estimated token budget. The JSON response
+includes `budget`, `used_tokens_estimate`, packed `chunks`, and a citation object
+for every packed chunk.
+
+Packing behavior is deterministic for a fixed index and search configuration:
+
+- Default lifecycle handling includes `active` and `stale` memory and excludes
+  `pending`, `rejected`, and `superseded`; pass `--status` for an explicit
+  lifecycle recall.
+- Memories superseded by graph links are excluded by default unless an explicit
+  status filter is used.
+- Near-identical chunks are deduplicated before packing.
+- Chunk selection is reranked by retrieval score plus small chunk-type metadata
+  boosts.
+- Per-document, per-memory-type, and per-project caps are enforced from
+  `.agent-memory/config.yaml` recall settings.
+- Oversized chunks are truncated deterministically from the start of the chunk,
+  then re-estimated, rather than skipped.
+- `used_tokens_estimate` never exceeds `budget` according to the built-in
+  deterministic token estimator.
+
+Supported filters:
+
+- `--project <name>`
+- `--type <fact|preference|decision|task|source_extract|project_context|conversation_summary>`
+- `--status <pending|active|stale|superseded|rejected>`
+- `--scope <user|project|global>`
+- `--include-related` to include linked graph-related memories before packing
+- `--semantic` or `--no-semantic` to override the config for one recall
 
 ### `memory brief`
 
@@ -220,8 +248,9 @@ MCP responses should include:
 `search(query, filters)` is implemented in Stage 5 and accepts the same filter
 keys as the CLI using snake_case names, plus `include_related`, `semantic`, and
 `limit`.
-`recall`, `brief`, `explain_recall`, and `mark_status` remain placeholders until
-later stages.
+`recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
+filter keys, plus `include_related` and `semantic`. `brief`, `explain_recall`,
+and `mark_status` remain placeholders until later stages.
 
 ## Mutation Policy
 
@@ -230,7 +259,7 @@ Agent-originated writes default to reviewable `pending` memory. The system shoul
 Default retrieval behavior:
 
 - Include `active`.
+- Include `stale`.
 - Exclude `pending` unless explicitly requested.
 - Exclude `rejected`.
 - Exclude `superseded` unless explicitly requested or shown as a warning.
-- Include `stale` only as warning context when relevant.

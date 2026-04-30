@@ -74,7 +74,6 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
     runner.invoke(app, ["init", str(vault), "--json"])
 
     commands = [
-        ["recall", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["brief", "agent memory", "--budget", "1200", "--vault", str(vault), "--json"],
         ["import", str(source), "--vault", str(vault), "--json"],
         ["export", "--format", "markdown", "--vault", str(vault), "--json"],
@@ -86,6 +85,39 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
         payload = json.loads(result.output)
         assert payload["ok"] is True
         assert payload["implemented"] is False
+
+
+def test_recall_command_packs_indexed_chunks_under_budget(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Use token budget packing for keyword memory recall results.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        ["recall", "token budget", "--budget", "12", "--vault", str(vault), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["budget"] == 12
+    assert payload["used_tokens_estimate"] <= 12
+    assert payload["chunk_count"] == 1
+    assert payload["chunks"][0]["citation"] == payload["citations"][0]
 
 
 def test_search_command_returns_ranked_json_results(tmp_path):
