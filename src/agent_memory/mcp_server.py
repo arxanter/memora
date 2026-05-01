@@ -905,7 +905,7 @@ def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[d
             "skipped": True,
             "reason": "disabled_for_operation",
         }
-    payload = refresh_index_if_needed(config).to_dict()
+    payload = refresh_index_if_needed(config, debounce_seconds=0).to_dict()
     payload.update({"trigger": f"before_{before}", "skipped": False})
     return payload
 
