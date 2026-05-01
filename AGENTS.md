@@ -72,10 +72,14 @@ Useful filters include `project`, `type`, `status`, `scope`, `limit`,
 When the user asks to save a URL, article, notes, transcript, document, or raw material into memory:
 
 1. Read or fetch the source material.
-2. Do not create local `Sources/...` files unless the user explicitly asks for local files.
-3. Create a concise extract from the material.
-4. Save the extract through Agent Memory using `remember(memory)` with type `source_extract`.
-5. The `source_extract` should include:
+2. Create a concise extract from the material.
+3. Preserve the raw source and extract with `save_source`, `ingest_url`, or
+   `save_source_with_memories` so the material lives under `Sources/...`.
+4. Promote only durable atomic facts, decisions, preferences, tasks, or project
+   context into canonical `Memories/...` items.
+5. Leave inferred agent-created memories `pending` for review unless policy
+   explicitly allows activation.
+6. The source extract should include:
    - Source URL or origin
    - Short summary
    - Key ideas
@@ -84,11 +88,7 @@ When the user asks to save a URL, article, notes, transcript, document, or raw m
    - User preferences, if any
    - Open questions
    - Relevant quotes
-6. Do not store raw dumps as canonical memory.
-7. Promote only durable, atomic facts, decisions, preferences, tasks, or project context into separate Agent Memory items when useful.
-8. Choose status from `agent_policy`: inferred agent-created memories should
-   remain `pending`; explicit user saves may become `active` when policy allows
-   it and confidence is high enough.
+7. Do not store raw dumps as canonical memory.
 
 Do not expect Agent Memory to fetch or analyze URLs by itself. The AI agent is
 responsible for reading the material, producing the extract, and deciding which
@@ -115,18 +115,32 @@ Canonical memories should be small and atomic:
 - `preference`: user preference
 - `project_context`: durable project background
 - `task`: open follow-up or question
-- `source_extract`: summary of imported source material
+- `source_extract`: durable source summary only when the summary itself should
+  be recallable as canonical memory; most raw summaries belong under `Sources/`
 
 Example source capture:
 
 ```json
 {
-  "type": "source_extract",
-  "title": "Article title",
-  "source_url": "https://example.com/article",
-  "content": "Summary, key ideas, durable facts, decisions, preferences, open questions, and relevant quotes.",
-  "project": "agent-memory",
-  "tags": ["source", "article"]
+  "source": {
+    "url": "https://example.com/article",
+    "title": "Article title",
+    "content": "Raw Markdown or readable text fetched by the agent.",
+    "extract": "Summary, key ideas, durable facts, decisions, preferences, open questions, and relevant quotes.",
+    "project": "agent-memory",
+    "tags": ["source", "article"]
+  },
+  "memories": [
+    {
+      "type": "decision",
+      "text": "Use Obsidian Markdown as durable memory; SQLite remains rebuildable cache.",
+      "scope": "project",
+      "project": "agent-memory",
+      "confidence": 0.86,
+      "tags": ["memory", "architecture"]
+    }
+  ],
+  "author_name": "MCP agent"
 }
 ```
 

@@ -4,6 +4,8 @@ from agent_memory.config import (
     ConfigError,
     ENV_AGENT_DEFAULT_RECALL_BUDGET,
     ENV_AGENT_TRUST_LEVEL,
+    ENV_FRESHNESS_REFRESH_BEFORE_RECALL,
+    ENV_FRESHNESS_REFRESH_BEFORE_SEARCH,
     ENV_SEMANTIC_BATCH_SIZE,
     ENV_SEMANTIC_DIMENSIONS,
     ENV_SEMANTIC_MIN_SIMILARITY,
@@ -77,6 +79,19 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
     assert config.agent_policy.trust_level == "autonomous"
     assert config.agent_policy.default_recall_budget == 1800
     assert config.agent_policy.min_active_confidence == 0.85
+
+
+def test_load_config_includes_freshness_defaults_and_overrides(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    monkeypatch.setenv(ENV_FRESHNESS_REFRESH_BEFORE_SEARCH, "false")
+    monkeypatch.setenv(ENV_FRESHNESS_REFRESH_BEFORE_RECALL, "false")
+
+    config = load_config(vault)
+
+    assert config.index_freshness.enabled is True
+    assert config.index_freshness.refresh_before_search is False
+    assert config.index_freshness.refresh_before_recall is False
 
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):

@@ -22,6 +22,14 @@ from agent_memory.schema import validate_markdown_file
 from agent_memory.vault import init_vault
 
 
+def _disable_freshness_debounce(vault):
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("debounce_seconds: 2.0", "debounce_seconds: 0"),
+        encoding="utf-8",
+    )
+
+
 def test_mcp_remember_creates_pending_agent_memory(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -366,6 +374,29 @@ def test_mcp_search_uses_retrieval_service(tmp_path):
     assert payload["results"][0]["citation"] == remembered["citations"][0]
 
 
+def test_mcp_search_refreshes_index_when_configured(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _disable_freshness_debounce(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP search refreshes the derived index before retrieval when configured.",
+            "source": "Sources/2026-05-01_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+
+    payload = search_tool("refreshes the derived index", {"status": "pending"}, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["result_count"] == 1
+    assert payload["results"][0]["id"] == remembered["id"]
+    assert payload["freshness"]["trigger"] == "before_search"
+    assert payload["freshness"]["reindexed"] is True
+
+
 def test_mcp_search_accepts_legacy_boolean_semantic_filter(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -420,6 +451,28 @@ def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
     assert payload["citations"][0]["path"] == remembered["relative_path"]
     assert payload["retrieval"]["planned_query_variants"][0] == "keyword retrieval"
     assert payload["retrieval"]["mode"] == "text"
+
+
+def test_mcp_recall_refreshes_index_when_configured(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _disable_freshness_debounce(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP recall refreshes the derived index before packing chunks.",
+            "source": "Sources/2026-05-01_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+
+    payload = recall_tool("refreshes the derived index", 80, {"status": "pending"}, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["chunks"][0]["id"] == remembered["id"]
+    assert payload["freshness"]["trigger"] == "before_recall"
+    assert payload["freshness"]["reindexed"] is True
 
 
 def test_mcp_brief_uses_memory_brief_service(tmp_path):
@@ -514,6 +567,7 @@ def test_mcp_build_context_returns_brief_when_policy_recommends_recall(tmp_path)
     assert payload["trace"]["mode"] == "text"
     assert payload["trace"]["semantic"]["status"] == "not_used"
     assert payload["trace"]["attempted_searches"]
+    assert payload["trace"]["freshness"]["trigger"] == "before_recall"
     assert payload["trace"]["selected_count"] == 1
 
 

@@ -7,6 +7,7 @@ from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
 from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, ConfigError, MemoryConfig, load_config
+from agent_memory.freshness import refresh_index_if_needed
 from agent_memory.lifecycle import mark_status, reject_memory, review_queue, supersede_memory
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
@@ -186,6 +187,7 @@ def search_tool(
     limit = int(raw_filters.pop("limit", 10))
     try:
         config = load_config(vault)
+        freshness = _refresh_index_for_query(config, before="search")
         payload = search_memory(
             config,
             query,
@@ -195,7 +197,7 @@ def search_tool(
             semantic=None if semantic is None else _bool(semantic),
             mode=mode,
         ).to_dict()
-        payload.update({"tool": "search"})
+        payload.update({"tool": "search", "freshness": freshness})
         return payload
     except Exception as exc:
         return _error_payload(
@@ -227,6 +229,7 @@ def recall_tool(
     mode = str(raw_filters.pop("mode", "auto"))
     try:
         config = load_config(vault)
+        freshness = _refresh_index_for_query(config, before="recall")
         payload = recall_memory(
             config,
             query,
@@ -236,7 +239,7 @@ def recall_tool(
             semantic=None if semantic is None else _bool(semantic),
             mode=mode,
         ).to_dict()
-        payload.update({"tool": "recall"})
+        payload.update({"tool": "recall", "freshness": freshness})
         return payload
     except Exception as exc:
         return _error_payload(
@@ -269,6 +272,7 @@ def brief_tool(
     mode = str(raw_filters.pop("mode", "auto"))
     try:
         config = load_config(vault)
+        freshness = _refresh_index_for_query(config, before="recall")
         payload = brief_memory(
             config,
             query,
@@ -278,7 +282,7 @@ def brief_tool(
             semantic=None if semantic is None else _bool(semantic),
             mode=mode,
         ).to_dict()
-        payload.update({"tool": "brief"})
+        payload.update({"tool": "brief", "freshness": freshness})
         return payload
     except Exception as exc:
         return _error_payload(
@@ -363,6 +367,7 @@ def build_context_tool(
         "trace": _build_context_trace(
             policy,
             retrieval=retrieval_trace,
+            freshness=brief_payload.get("freshness"),
             selected_count=chunk_count,
             empty_reason=empty_reason,
         ),
@@ -849,6 +854,7 @@ def _build_context_trace(
     policy: Mapping[str, Any],
     *,
     retrieval: Optional[Any] = None,
+    freshness: Optional[Any] = None,
     selected_count: int = 0,
     empty_reason: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -868,6 +874,7 @@ def _build_context_trace(
     attempts = retrieval_trace.get("attempted_searches")
     if not isinstance(attempts, list):
         attempts = []
+    freshness_trace = dict(freshness) if isinstance(freshness, Mapping) else None
     return {
         "policy_query": policy_query,
         "planned_query_variants": planned,
@@ -875,9 +882,32 @@ def _build_context_trace(
         "requested_mode": retrieval_trace.get("requested_mode"),
         "semantic": dict(semantic),
         "attempted_searches": attempts,
+        "freshness": freshness_trace,
         "selected_count": selected_count,
         "empty_reason": empty_reason or retrieval_trace.get("empty_reason"),
     }
+
+
+def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[dict[str, Any]]:
+    """Refresh the derived index for MCP retrieval paths when configured."""
+
+    freshness_config = config.index_freshness
+    if before == "search":
+        enabled = freshness_config.refresh_before_search
+    elif before == "recall":
+        enabled = freshness_config.refresh_before_recall
+    else:
+        raise ValueError("before must be 'search' or 'recall'")
+    if not enabled:
+        return {
+            "enabled": freshness_config.enabled,
+            "trigger": f"before_{before}",
+            "skipped": True,
+            "reason": "disabled_for_operation",
+        }
+    payload = refresh_index_if_needed(config).to_dict()
+    payload.update({"trigger": f"before_{before}", "skipped": False})
+    return payload
 
 
 def _optional_string(value: Any) -> Optional[str]:

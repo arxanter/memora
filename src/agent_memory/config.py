@@ -24,6 +24,8 @@ ENV_FRESHNESS_ENABLED = "AGENT_MEMORY_FRESHNESS_ENABLED"
 ENV_FRESHNESS_INTERVAL_SECONDS = "AGENT_MEMORY_FRESHNESS_INTERVAL_SECONDS"
 ENV_FRESHNESS_DEBOUNCE_SECONDS = "AGENT_MEMORY_FRESHNESS_DEBOUNCE_SECONDS"
 ENV_FRESHNESS_CLEAN = "AGENT_MEMORY_FRESHNESS_CLEAN"
+ENV_FRESHNESS_REFRESH_BEFORE_SEARCH = "AGENT_MEMORY_REFRESH_BEFORE_SEARCH"
+ENV_FRESHNESS_REFRESH_BEFORE_RECALL = "AGENT_MEMORY_REFRESH_BEFORE_RECALL"
 ENV_AGENT_TRUST_LEVEL = "AGENT_MEMORY_TRUST_LEVEL"
 ENV_AGENT_DEFAULT_RECALL_BUDGET = "AGENT_MEMORY_DEFAULT_RECALL_BUDGET"
 
@@ -162,6 +164,8 @@ class IndexFreshnessConfig(BaseModel):
     interval_seconds: int = Field(default=30, ge=1)
     debounce_seconds: float = Field(default=2.0, ge=0)
     clean: bool = False
+    refresh_before_search: bool = True
+    refresh_before_recall: bool = True
 
 
 class MemoryConfig(BaseModel):
@@ -329,6 +333,8 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         (ENV_FRESHNESS_INTERVAL_SECONDS, "interval_seconds"),
         (ENV_FRESHNESS_DEBOUNCE_SECONDS, "debounce_seconds"),
         (ENV_FRESHNESS_CLEAN, "clean"),
+        (ENV_FRESHNESS_REFRESH_BEFORE_SEARCH, "refresh_before_search"),
+        (ENV_FRESHNESS_REFRESH_BEFORE_RECALL, "refresh_before_recall"),
     ):
         value = os.environ.get(env_name)
         if value not in (None, ""):
