@@ -2,12 +2,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 import agent_memory.mcp_server as mcp_server
 from agent_memory.cli import app
-from agent_memory.config import load_config
+from agent_memory.config import ProfileConfig, load_config
 from agent_memory.indexer import estimate_tokens
 from agent_memory.mcp_server import build_profile_tool
 from agent_memory.profile import build_profile
@@ -163,6 +164,69 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
     assert "../../Memories/decisions/project-a.md" in markdown
     assert "Other project memory should be excluded." not in markdown
     assert "This second exact project memory" not in markdown
+
+
+def test_build_profile_uses_configured_default_budgets_and_explicit_override(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/preferences/user-default-budget.md",
+        memory_id="mem_20260501_user_default_budget",
+        memory_type="preference",
+        body="Profile builders should use the configured user budget.",
+    )
+    _write_memory(
+        vault,
+        "Memories/project-context/project-default-budget.md",
+        memory_id="mem_20260501_project_default_budget",
+        memory_type="project_context",
+        scope="project",
+        project="agent-memory",
+        body="Project profiles should use the configured project budget.",
+    )
+    config = load_config(vault).model_copy(
+        update={"profile": ProfileConfig(user_budget=321, project_budget=654)}
+    )
+
+    user_result = build_profile(
+        config,
+        profile_type="user",
+        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+    project_result = build_profile(
+        config,
+        profile_type="project",
+        project="agent-memory",
+        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+    explicit_result = build_profile(
+        config,
+        profile_type="user",
+        budget=777,
+        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    user_frontmatter = yaml.safe_load(user_result.markdown.split("---", 2)[1])
+    project_frontmatter = yaml.safe_load(project_result.markdown.split("---", 2)[1])
+    explicit_frontmatter = yaml.safe_load(explicit_result.markdown.split("---", 2)[1])
+    assert user_result.budget == 321
+    assert user_frontmatter["token_budget"] == 321
+    assert project_result.budget == 654
+    assert project_frontmatter["token_budget"] == 654
+    assert explicit_result.budget == 777
+    assert explicit_frontmatter["token_budget"] == 777
+
+
+def test_build_profile_respects_disabled_config(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config = load_config(vault).model_copy(update={"profile": ProfileConfig(enabled=False)})
+
+    with pytest.raises(ValueError, match="profile generation is disabled"):
+        build_profile(config, profile_type="user", budget=500)
+
+    assert not (vault / "Profiles" / "user.md").exists()
 
 
 def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):

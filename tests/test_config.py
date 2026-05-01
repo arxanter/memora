@@ -6,12 +6,18 @@ from agent_memory.config import (
     ENV_AGENT_TRUST_LEVEL,
     ENV_FRESHNESS_REFRESH_BEFORE_RECALL,
     ENV_FRESHNESS_REFRESH_BEFORE_SEARCH,
+    ENV_PROFILE_ENABLED,
+    ENV_PROFILE_INJECT_BY_DEFAULT,
+    ENV_PROFILE_PROJECT_BUDGET,
+    ENV_PROFILE_REFRESH_AFTER_REVIEW,
+    ENV_PROFILE_USER_BUDGET,
     ENV_SEMANTIC_BATCH_SIZE,
     ENV_SEMANTIC_DIMENSIONS,
     ENV_SEMANTIC_MIN_SIMILARITY,
     ENV_SEMANTIC_MODEL,
     ENV_SEMANTIC_PROVIDER,
     ENV_VAULT_PATH,
+    config_to_dict,
     load_config,
 )
 from agent_memory.vault import init_vault
@@ -95,6 +101,45 @@ def test_load_config_includes_freshness_defaults_and_overrides(tmp_path, monkeyp
     assert config.index_freshness.enabled is True
     assert config.index_freshness.refresh_before_search is False
     assert config.index_freshness.refresh_before_recall is False
+
+
+def test_load_config_includes_profile_defaults_and_summary(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    config = load_config(vault)
+    summary = config_to_dict(config)
+
+    assert config.profile.enabled is True
+    assert config.profile.user_budget == 500
+    assert config.profile.project_budget == 700
+    assert config.profile.refresh_after_review is True
+    assert config.profile.inject_by_default is False
+    assert summary["profile"] == {
+        "enabled": True,
+        "user_budget": 500,
+        "project_budget": 700,
+        "refresh_after_review": True,
+        "inject_by_default": False,
+    }
+
+
+def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    monkeypatch.setenv(ENV_PROFILE_ENABLED, "false")
+    monkeypatch.setenv(ENV_PROFILE_USER_BUDGET, "321")
+    monkeypatch.setenv(ENV_PROFILE_PROJECT_BUDGET, "654")
+    monkeypatch.setenv(ENV_PROFILE_REFRESH_AFTER_REVIEW, "false")
+    monkeypatch.setenv(ENV_PROFILE_INJECT_BY_DEFAULT, "true")
+
+    config = load_config(vault)
+
+    assert config.profile.enabled is False
+    assert config.profile.user_budget == 321
+    assert config.profile.project_budget == 654
+    assert config.profile.refresh_after_review is False
+    assert config.profile.inject_by_default is True
 
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):

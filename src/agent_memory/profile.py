@@ -138,7 +138,10 @@ def build_profile(
     if selected_profile_type == "user" and selected_project is not None:
         raise ValueError("user profile does not accept project")
 
-    selected_budget = _validate_budget(DEFAULT_PROFILE_BUDGET if budget is None else budget)
+    if not config.profile.enabled:
+        raise ValueError("profile generation is disabled")
+
+    selected_budget = _validate_budget(_configured_budget(config, selected_profile_type) if budget is None else budget)
     generated_at = _normalize_now(now)
 
     report = validate_vault(config.vault_path)
@@ -425,6 +428,12 @@ def _validate_budget(value: int) -> int:
     if budget < 1:
         raise ValueError("budget must be at least 1")
     return budget
+
+
+def _configured_budget(config: MemoryConfig, profile_type: str) -> int:
+    if profile_type == "project":
+        return config.profile.project_budget
+    return config.profile.user_budget
 
 
 def _normalize_now(value: Optional[datetime]) -> datetime:

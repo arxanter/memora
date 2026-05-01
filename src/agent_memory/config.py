@@ -28,6 +28,11 @@ ENV_FRESHNESS_REFRESH_BEFORE_SEARCH = "AGENT_MEMORY_FRESHNESS_REFRESH_BEFORE_SEA
 ENV_FRESHNESS_REFRESH_BEFORE_RECALL = "AGENT_MEMORY_FRESHNESS_REFRESH_BEFORE_RECALL"
 ENV_AGENT_TRUST_LEVEL = "AGENT_MEMORY_TRUST_LEVEL"
 ENV_AGENT_DEFAULT_RECALL_BUDGET = "AGENT_MEMORY_DEFAULT_RECALL_BUDGET"
+ENV_PROFILE_ENABLED = "AGENT_MEMORY_PROFILE_ENABLED"
+ENV_PROFILE_USER_BUDGET = "AGENT_MEMORY_PROFILE_USER_BUDGET"
+ENV_PROFILE_PROJECT_BUDGET = "AGENT_MEMORY_PROFILE_PROJECT_BUDGET"
+ENV_PROFILE_REFRESH_AFTER_REVIEW = "AGENT_MEMORY_PROFILE_REFRESH_AFTER_REVIEW"
+ENV_PROFILE_INJECT_BY_DEFAULT = "AGENT_MEMORY_PROFILE_INJECT_BY_DEFAULT"
 
 
 class AgentTrustLevel(str, Enum):
@@ -222,6 +227,16 @@ class IndexFreshnessConfig(BaseModel):
     refresh_before_recall: bool = True
 
 
+class ProfileConfig(BaseModel):
+    """Generated profile configuration."""
+
+    enabled: bool = True
+    user_budget: int = Field(default=500, ge=1)
+    project_budget: int = Field(default=700, ge=1)
+    refresh_after_review: bool = True
+    inject_by_default: bool = False
+
+
 class MemoryConfig(BaseModel):
     """Stage 2 configuration for a local Agent Memory vault."""
 
@@ -246,6 +261,7 @@ class MemoryConfig(BaseModel):
     recall_policies: dict[str, TaskRecallPolicyConfig] = Field(default_factory=_default_recall_policies)
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
+    profile: ProfileConfig = Field(default_factory=ProfileConfig)
 
     @field_validator("schema_version")
     @classmethod
@@ -404,7 +420,19 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             agent_policy_overrides[field_name] = value
 
-    if not semantic_overrides and not freshness_overrides and not agent_policy_overrides:
+    profile_overrides: dict[str, Any] = {}
+    for env_name, field_name in (
+        (ENV_PROFILE_ENABLED, "enabled"),
+        (ENV_PROFILE_USER_BUDGET, "user_budget"),
+        (ENV_PROFILE_PROJECT_BUDGET, "project_budget"),
+        (ENV_PROFILE_REFRESH_AFTER_REVIEW, "refresh_after_review"),
+        (ENV_PROFILE_INJECT_BY_DEFAULT, "inject_by_default"),
+    ):
+        value = os.environ.get(env_name)
+        if value not in (None, ""):
+            profile_overrides[field_name] = value
+
+    if not semantic_overrides and not freshness_overrides and not agent_policy_overrides and not profile_overrides:
         return config_data
 
     semantic_config = config_data.get("semantic") or {}
@@ -416,6 +444,9 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
     agent_policy_config = config_data.get("agent_policy") or {}
     if not isinstance(agent_policy_config, dict):
         agent_policy_config = {}
+    profile_config = config_data.get("profile") or {}
+    if not isinstance(profile_config, dict):
+        profile_config = {}
     return {
         **config_data,
         "semantic": {
@@ -429,6 +460,10 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         "agent_policy": {
             **agent_policy_config,
             **agent_policy_overrides,
+        },
+        "profile": {
+            **profile_config,
+            **profile_overrides,
         },
     }
 
