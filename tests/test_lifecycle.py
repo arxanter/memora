@@ -244,6 +244,8 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
         source_path="Sources/2026-04-30_lifecycle/source.md",
         confidence=0.7,
     )
+    agent_path = vault / "Memories/facts/agent.md"
+    before_agent = agent_path.read_text(encoding="utf-8")
     _write_memory(
         vault,
         "Memories/facts/user.md",
@@ -256,14 +258,82 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
 
     payload = review_queue(config).to_dict()
 
+    assert agent_path.read_text(encoding="utf-8") == before_agent
     assert payload["pending_count"] == 1
-    assert payload["items"][0]["id"] == "mem_20260430_agent_pending"
-    assert payload["items"][0]["duplicate_candidates"] == []
-    assert payload["items"][0]["contradiction_candidates"] == []
-    assert "possible_duplicate" not in payload["items"][0]["risk_flags"]
-    assert "has_contradictions" not in payload["items"][0]["risk_flags"]
+    item = payload["items"][0]
+    assert item["id"] == "mem_20260430_agent_pending"
+    assert item["importance"] == {
+        "score": 0.53,
+        "source": "proposed",
+        "reasons": ["type:fact", "scope:user", "confidence:reviewable", "has_source"],
+    }
+    assert item["duplicate_candidates"] == []
+    assert item["contradiction_candidates"] == []
+    assert "possible_duplicate" not in item["risk_flags"]
+    assert "has_contradictions" not in item["risk_flags"]
     assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_lifecycle/source.md"
     assert payload["source_groups"][0]["memory_ids"] == ["mem_20260430_agent_pending"]
+    assert payload["source_groups"][0]["items"][0]["importance"] == item["importance"]
+
+
+def test_review_queue_surfaces_frontmatter_importance_without_schema_migration(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/decisions/frontmatter.md",
+        memory_id="mem_20260430_frontmatter_importance",
+        memory_type="decision",
+        status="pending",
+        body="Frontmatter importance should be surfaced for review.",
+        scope="project",
+        project="agent-memory",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_importance/extract.md",
+        confidence=0.7,
+        importance=0.82,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/invalid.md",
+        memory_id="mem_20260430_invalid_importance",
+        memory_type="fact",
+        status="pending",
+        body="Invalid frontmatter importance should fall back to proposed review metadata.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_importance/extract.md",
+        confidence=0.7,
+        importance="urgent",
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    items = {item["id"]: item for item in payload["items"]}
+    frontmatter_item = items["mem_20260430_frontmatter_importance"]
+    assert frontmatter_item["importance"] == {
+        "score": 0.82,
+        "source": "frontmatter",
+        "reasons": ["frontmatter_importance"],
+    }
+    assert "high_importance" in frontmatter_item["risk_flags"]
+    assert frontmatter_item["recommended_action"] == "defer"
+
+    invalid_item = items["mem_20260430_invalid_importance"]
+    assert invalid_item["importance"] == {
+        "score": 0.53,
+        "source": "proposed",
+        "reasons": [
+            "invalid_frontmatter_importance",
+            "type:fact",
+            "scope:user",
+            "confidence:reviewable",
+            "has_source",
+        ],
+    }
 
 
 def test_review_queue_surfaces_duplicate_candidates_without_mutating_memories(tmp_path):
@@ -487,9 +557,11 @@ def _write_memory(
     supersedes=None,
     contradicts=None,
     relations=None,
+    importance=None,
 ):
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
+    importance_block = "" if importance is None else "importance: {0}\n".format(importance)
     source_block = (
         "source:\n  path: {0}\n".format(source_path)
         if source_path
@@ -504,7 +576,7 @@ scope: {scope}
 project: {project}
 status: {status}
 confidence: {confidence}
-created_at: {created_at}
+{importance_block}created_at: {created_at}
 updated_at: {updated_at}
 valid_from: {valid_from}
 valid_to: {valid_to}
@@ -528,6 +600,7 @@ observations:
             project=project or "",
             status=status,
             confidence="" if confidence is None else confidence,
+            importance_block=importance_block,
             created_at=created_at,
             updated_at=updated_at,
             valid_from=valid_from,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,24 @@ _DUPLICATE_CANDIDATE_STATUSES = {
     LifecycleStatus.ACTIVE.value,
     LifecycleStatus.PENDING.value,
 }
+_HIGH_IMPORTANCE_THRESHOLD = 0.8
+_MISSING = object()
+
+
+@dataclass(frozen=True)
+class ReviewImportance:
+    """Review-only ranking metadata for a pending memory."""
+
+    score: float
+    source: str
+    reasons: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "score": self.score,
+            "source": self.source,
+            "reasons": list(self.reasons),
+        }
 
 
 @dataclass(frozen=True)
@@ -165,6 +184,7 @@ class ReviewItem:
     confidence: Optional[float]
     author: dict[str, Any]
     source: Optional[dict[str, Any]]
+    importance: ReviewImportance
     body: str
     updated_at: str
     risk_flags: tuple[str, ...] = ()
@@ -191,6 +211,7 @@ class ReviewItem:
             "confidence": self.confidence,
             "author": self.author,
             "source": self.source,
+            "importance": self.importance.to_dict(),
             "body": self.body.strip(),
             "updated_at": self.updated_at,
             "risk_flags": list(self.risk_flags),
@@ -511,6 +532,11 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
             continue
         duplicate_candidates = _duplicate_candidates(config, record, signature_index)
         contradiction_candidates = _contradiction_candidates(config, record, records, record_index)
+        importance = _review_importance(
+            frontmatter,
+            has_duplicate_candidates=bool(duplicate_candidates),
+            has_contradiction_candidates=bool(contradiction_candidates),
+        )
         items.append(
             ReviewItem(
                 memory_id=frontmatter.id,
@@ -521,11 +547,13 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
                 confidence=frontmatter.confidence,
                 author=author.model_dump(mode="json"),
                 source=frontmatter.source.model_dump(mode="json") if frontmatter.source else None,
+                importance=importance,
                 body=record.body,
                 updated_at=frontmatter.updated_at.isoformat(),
                 risk_flags=_review_risk_flags(
                     config,
                     frontmatter,
+                    importance=importance,
                     has_duplicate_candidates=bool(duplicate_candidates),
                     has_contradiction_candidates=bool(contradiction_candidates),
                 ),
@@ -567,6 +595,7 @@ def _review_risk_flags(
     config: MemoryConfig,
     frontmatter: MemoryFrontmatter,
     *,
+    importance: Optional[ReviewImportance] = None,
     has_duplicate_candidates: bool = False,
     has_contradiction_candidates: bool = False,
 ) -> tuple[str, ...]:
@@ -584,6 +613,8 @@ def _review_risk_flags(
         flags.append("has_contradictions")
     if has_duplicate_candidates:
         flags.append("possible_duplicate")
+    if importance is not None and importance.score >= _HIGH_IMPORTANCE_THRESHOLD:
+        flags.append("high_importance")
     return tuple(flags)
 
 
@@ -611,6 +642,123 @@ def _review_recommended_action(
     if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
         return "approve"
     return "defer"
+
+
+def _review_importance(
+    frontmatter: MemoryFrontmatter,
+    *,
+    has_duplicate_candidates: bool = False,
+    has_contradiction_candidates: bool = False,
+) -> ReviewImportance:
+    raw_importance = _frontmatter_extra(frontmatter, "importance")
+    if raw_importance is not _MISSING:
+        score, invalid_reason = _frontmatter_importance_score(raw_importance)
+        if score is not None:
+            return ReviewImportance(
+                score=score,
+                source="frontmatter",
+                reasons=("frontmatter_importance",),
+            )
+        return _proposed_review_importance(
+            frontmatter,
+            has_duplicate_candidates=has_duplicate_candidates,
+            has_contradiction_candidates=has_contradiction_candidates,
+            extra_reasons=(invalid_reason or "invalid_frontmatter_importance",),
+        )
+    return _proposed_review_importance(
+        frontmatter,
+        has_duplicate_candidates=has_duplicate_candidates,
+        has_contradiction_candidates=has_contradiction_candidates,
+    )
+
+
+def _proposed_review_importance(
+    frontmatter: MemoryFrontmatter,
+    *,
+    has_duplicate_candidates: bool,
+    has_contradiction_candidates: bool,
+    extra_reasons: tuple[str, ...] = (),
+) -> ReviewImportance:
+    memory_type = frontmatter.type.value
+    scope = frontmatter.scope.value
+    score = {
+        "decision": 0.62,
+        "project_context": 0.58,
+        "preference": 0.55,
+        "task": 0.5,
+        "fact": 0.45,
+        "source_extract": 0.4,
+        "conversation_summary": 0.4,
+    }.get(memory_type, 0.45)
+    reasons: list[str] = [*extra_reasons, f"type:{memory_type}", f"scope:{scope}"]
+
+    if scope == "global":
+        score += 0.12
+    elif scope == "project":
+        score += 0.1
+
+    confidence = frontmatter.confidence
+    if confidence is None:
+        reasons.append("missing_confidence")
+    elif confidence >= 0.9:
+        score += 0.12
+        reasons.append("confidence:high")
+    elif confidence >= 0.75:
+        score += 0.08
+        reasons.append("confidence:medium")
+    elif confidence >= 0.55:
+        score += 0.03
+        reasons.append("confidence:reviewable")
+    else:
+        score -= 0.08
+        reasons.append("confidence:low")
+
+    if frontmatter.source is None:
+        score -= 0.05
+        reasons.append("missing_source")
+    else:
+        score += 0.05
+        reasons.append("has_source")
+
+    if has_contradiction_candidates or frontmatter.contradicts:
+        score -= 0.15
+        reasons.append("has_contradictions")
+    if has_duplicate_candidates:
+        score -= 0.1
+        reasons.append("possible_duplicate")
+
+    return ReviewImportance(
+        score=_bounded_score(score),
+        source="proposed",
+        reasons=tuple(reasons),
+    )
+
+
+def _frontmatter_extra(frontmatter: MemoryFrontmatter, key: str) -> Any:
+    extra = getattr(frontmatter, "model_extra", None) or {}
+    return extra.get(key, _MISSING)
+
+
+def _frontmatter_importance_score(value: Any) -> tuple[Optional[float], Optional[str]]:
+    if isinstance(value, dict):
+        if "score" not in value:
+            return None, "frontmatter_importance_missing_score"
+        value = value["score"]
+    if isinstance(value, bool):
+        return None, "invalid_frontmatter_importance"
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None, "invalid_frontmatter_importance"
+    if not math.isfinite(score):
+        return None, "invalid_frontmatter_importance"
+    if score < 0 or score > 1:
+        return None, "frontmatter_importance_out_of_range"
+    return score, None
+
+
+def _bounded_score(score: float) -> float:
+    return round(max(0.0, min(1.0, score)), 2)
 
 
 def _contradiction_candidates(
@@ -920,6 +1068,7 @@ def _now() -> datetime:
 __all__ = [
     "LifecycleMutation",
     "LifecycleResult",
+    "ReviewImportance",
     "ReviewItem",
     "ReviewQueue",
     "contradict_memories",
