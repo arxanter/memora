@@ -1126,11 +1126,13 @@ def decay(
 @app.command()
 def review(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    group_by: Optional[str] = typer.Option(None, "--group-by", help="Group human output by: source."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """List pending agent-generated memories awaiting review."""
 
     try:
+        group_by = _normalize_review_group_by(group_by)
         config = load_config(vault)
         payload = review_queue(config).to_dict()
     except Exception as exc:
@@ -1144,6 +1146,10 @@ def review(
         console.print("[green]No pending agent memories.[/green]")
         return
     console.print(f"[yellow]Pending agent memories:[/yellow] {payload['pending_count']}")
+    if group_by == "source":
+        for group in payload["source_groups"]:
+            _print_review_source_group(group)
+        return
     for item in payload["items"]:
         _print_review_diff(item)
 
@@ -1279,6 +1285,16 @@ def _print_review_diff(item: dict[str, Any]) -> None:
         console.print(f"+ {line}", markup=False)
 
 
+def _print_review_source_group(group: dict[str, Any]) -> None:
+    console.print("")
+    console.print(
+        f"[bold]Source: {_format_source(group.get('source'))}[/bold] "
+        f"[dim]({group['item_count']} pending)[/dim]"
+    )
+    for item in group["items"]:
+        _print_review_diff(item)
+
+
 def _print_curation_proposal(item: dict[str, Any]) -> None:
     console.print(
         f"- [bold]{item['id']}[/bold]: {item['recommended_action']} "
@@ -1305,6 +1321,15 @@ def _format_source(source: Any) -> str:
         if source.get("url"):
             return str(source["url"])
     return str(source)
+
+
+def _normalize_review_group_by(group_by: Optional[str]) -> Optional[str]:
+    if group_by is None:
+        return None
+    normalized = group_by.strip().lower()
+    if normalized == "source":
+        return normalized
+    raise ValueError(f"unsupported --group-by value {group_by!r}; expected 'source'")
 
 
 def _placeholder_command(

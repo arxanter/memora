@@ -629,6 +629,55 @@ def test_stage13_review_human_output_uses_diff_preview(tmp_path):
     assert "+ status: pending" in result.output
     assert "+ source: Sources/stage13.md" in result.output
     assert "+ Pending agent memory body appears in diff preview." in result.output
+    assert "Source: Sources/stage13.md" not in result.output
+
+
+def test_review_group_by_source_human_output_groups_pending_items(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/pending-agent-one.md",
+        memory_id="mem_20260430_pending_agent_one",
+        memory_type="fact",
+        status="pending",
+        body="First grouped pending memory appears below its source.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.7,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-agent-two.md",
+        memory_id="mem_20260430_pending_agent_two",
+        memory_type="fact",
+        status="pending",
+        body="Second grouped pending memory appears below its source.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.8,
+    )
+
+    result = runner.invoke(app, ["review", "--vault", str(vault), "--group-by", "source"])
+
+    assert result.exit_code == 0, result.output
+    assert "Pending agent memories: 2" in result.output
+    assert "Source: Sources/stage13.md" in result.output
+    assert "(2 pending)" in result.output
+    assert "diff -- memory/mem_20260430_pending_agent_one" in result.output
+    assert "diff -- memory/mem_20260430_pending_agent_two" in result.output
+    assert "+ First grouped pending memory appears below its source." in result.output
+    assert "+ Second grouped pending memory appears below its source." in result.output
+
+
+def test_review_group_by_rejects_unsupported_value(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(app, ["review", "--vault", str(vault), "--group-by", "project"])
+
+    assert result.exit_code == 1, result.output
+    assert "unsupported --group-by value 'project'; expected 'source'" in result.output
 
 
 def _write_memory(
