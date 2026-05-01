@@ -32,7 +32,7 @@ from agent_memory.schema import (
     MemoryType,
     SourceRef,
 )
-from agent_memory.sources import save_source_material, save_source_with_memories
+from agent_memory.sources import lookup_source, save_source_material, save_source_with_memories
 from agent_memory.ux import inspect_memory
 from agent_memory.vault import placeholder_result, remember_memory
 
@@ -160,6 +160,31 @@ def save_source_with_memories_tool(
             code="save_source_with_memories_failed",
             tool="save_source_with_memories",
         )
+
+
+def lookup_source_tool(
+    source_id: str,
+    query: Optional[str] = None,
+    budget: int = 800,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Return compact read-only evidence for a saved source directory."""
+
+    try:
+        config = load_config(vault)
+        return lookup_source(config, source_id, query=query, budget=budget)
+    except Exception as exc:
+        payload = _error_payload(
+            exc,
+            code="lookup_source_failed",
+            tool="lookup_source",
+            source_id=source_id,
+            query=query,
+            budget=budget,
+        )
+        payload.update({"implemented": True, "chunks": []})
+        return payload
 
 
 def ingest_url_tool(
@@ -811,6 +836,16 @@ def create_server() -> Any:
         return save_source_with_memories_tool(source, memories, author_name=author_name)
 
     @server.tool()
+    def lookup_source(
+        source_id: str,
+        query: Optional[str] = None,
+        budget: int = 800,
+    ) -> JsonPayload:
+        """Return compact evidence from Sources/<source_id>/extract.md or source.md."""
+
+        return lookup_source_tool(source_id, query=query, budget=budget)
+
+    @server.tool()
     def ingest_url(
         url: str,
         title: Optional[str] = None,
@@ -1351,6 +1386,7 @@ __all__ = [
     "import_source_inbox_tool",
     "import_source_tool",
     "inspect_tool",
+    "lookup_source_tool",
     "main",
     "mark_superseded_tool",
     "mark_status_tool",

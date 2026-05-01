@@ -14,6 +14,7 @@ from agent_memory.mcp_server import (
     import_source_inbox_tool,
     import_source_tool,
     inspect_tool,
+    lookup_source_tool,
     mark_superseded_tool,
     mark_status_tool,
     recall_tool,
@@ -26,6 +27,7 @@ from agent_memory.mcp_server import (
     should_recall_tool,
 )
 from agent_memory.schema import validate_markdown_file
+from agent_memory.sources import lookup_source
 from agent_memory.vault import init_vault
 
 
@@ -166,6 +168,136 @@ def test_mcp_save_source_creates_raw_source_and_extract(tmp_path):
     assert "remember(memory)" in payload["next_steps"][1]
 
 
+def test_lookup_source_prefers_extract_and_does_not_mutate_files(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_dir = vault / "Sources" / "2026-05-01_lookup"
+    source_dir.mkdir()
+    source_path = source_dir / "source.md"
+    extract_path = source_dir / "extract.md"
+    source_path.write_text("Raw source content should stay behind the extract.", encoding="utf-8")
+    extract_path.write_text(
+        "Markdown was chosen because it is easy to diff.\n\nSQLite remains a rebuildable cache.",
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(vault).as_posix(): path.read_text(encoding="utf-8")
+        for path in (source_path, extract_path)
+    }
+
+    payload = lookup_source(load_config(vault), "2026-05-01_lookup", budget=12)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "lookup_source"
+    assert payload["source_path"] == "Sources/2026-05-01_lookup/extract.md"
+    assert payload["chunks"]
+    assert all(chunk["path"] == "Sources/2026-05-01_lookup/extract.md" for chunk in payload["chunks"])
+    assert "Raw source content" not in " ".join(chunk["text"] for chunk in payload["chunks"])
+    assert sum(chunk["tokens_estimate"] for chunk in payload["chunks"]) <= 12
+    assert payload["citations"] == [
+        {
+            "id": "2026-05-01_lookup",
+            "path": "Sources/2026-05-01_lookup/extract.md",
+            "kind": "source_extract",
+        }
+    ]
+    after = {
+        path.relative_to(vault).as_posix(): path.read_text(encoding="utf-8")
+        for path in (source_path, extract_path)
+    }
+    assert after == before
+
+
+def test_mcp_lookup_source_query_picks_relevant_paragraph(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_dir = vault / "Sources" / "2026-05-01_query"
+    source_dir.mkdir()
+    (source_dir / "extract.md").write_text(
+        "Markdown stores durable decisions in plain files.\n\n"
+        "SQLite is only a rebuildable local cache for retrieval indexes.\n\n"
+        "Review queues keep inferred memories pending.",
+        encoding="utf-8",
+    )
+
+    payload = lookup_source_tool("2026-05-01_query", query="sqlite cache indexes", budget=20, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["chunks"][0]["text"].startswith("SQLite is only")
+    assert payload["chunks"][0]["tokens_estimate"] <= 20
+    assert payload["fallback"] is False
+    assert payload["empty_reason"] is None
+
+
+def test_mcp_lookup_source_falls_back_to_source_when_no_extract(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_dir = vault / "Sources" / "2026-05-01_source_only"
+    source_dir.mkdir()
+    (source_dir / "source.md").write_text(
+        "Only raw source exists here.\n\nThe lookup path should use source.md.",
+        encoding="utf-8",
+    )
+
+    payload = lookup_source_tool("2026-05-01_source_only", budget=30, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["source_path"] == "Sources/2026-05-01_source_only/source.md"
+    assert payload["chunks"][0]["path"] == "Sources/2026-05-01_source_only/source.md"
+    assert payload["citations"] == [
+        {
+            "id": "2026-05-01_source_only",
+            "path": "Sources/2026-05-01_source_only/source.md",
+            "kind": "source",
+        }
+    ]
+
+
+def test_mcp_lookup_source_returns_prefix_chunks_when_query_has_no_overlap(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_dir = vault / "Sources" / "2026-05-01_no_overlap"
+    source_dir.mkdir()
+    (source_dir / "extract.md").write_text("First extract paragraph.\n\nSecond extract paragraph.", encoding="utf-8")
+
+    payload = lookup_source_tool("2026-05-01_no_overlap", query="unrelated tokens", budget=20, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["fallback"] is True
+    assert payload["empty_reason"] == "no_query_overlap"
+    assert payload["chunks"][0]["text"] == "First extract paragraph."
+
+
+def test_mcp_lookup_source_missing_source_returns_stable_error(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = lookup_source_tool("missing-source", vault=vault)
+
+    assert payload["ok"] is False
+    assert payload["implemented"] is True
+    assert payload["tool"] == "lookup_source"
+    assert payload["source_id"] == "missing-source"
+    assert payload["chunks"] == []
+    assert payload["citations"] == []
+    assert payload["error"]["code"] == "source_not_found"
+
+
+def test_mcp_lookup_source_invalid_budget_returns_stable_error(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = lookup_source_tool("anything", budget=0, vault=vault)
+
+    assert payload["ok"] is False
+    assert payload["implemented"] is True
+    assert payload["tool"] == "lookup_source"
+    assert payload["budget"] == 0
+    assert payload["chunks"] == []
+    assert payload["citations"] == []
+    assert payload["error"]["code"] == "invalid_budget"
+
+
 def test_mcp_ingest_url_saves_url_stub_without_fetching(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -208,7 +340,7 @@ def test_mcp_create_server_registers_import_tools(monkeypatch):
     server = mcp_server.create_server()
 
     assert server.name == "Agent Memory"
-    assert {"curate", "import_source", "import_source_inbox", "import_session"} <= set(server.tools)
+    assert {"curate", "import_source", "import_source_inbox", "import_session", "lookup_source"} <= set(server.tools)
 
 
 def test_mcp_import_source_saves_file_source_with_metadata(tmp_path):

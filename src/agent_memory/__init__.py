@@ -99,6 +99,8 @@ from agent_memory.schema import (
 )
 from agent_memory.sources import (
     SourceCaptureResult,
+    SourceLookupChunk,
+    lookup_source,
     save_source_material,
 )
 from agent_memory.synthesis import (
@@ -179,6 +181,7 @@ __all__ = [
     "SearchResult",
     "SemanticConfig",
     "SourceCaptureResult",
+    "SourceLookupChunk",
     "SourceRef",
     "SynthesisItem",
     "SynthesisResult",
@@ -216,6 +219,7 @@ __all__ = [
     "review_queue",
     "run_evaluation",
     "search_memory",
+    "lookup_source",
     "save_source_material",
     "should_recall",
     "split_document_chunks",

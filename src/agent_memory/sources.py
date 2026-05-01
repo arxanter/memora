@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping, Optional, Union
 import yaml
 
 from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
+from agent_memory.indexer import estimate_tokens
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType, SourceRef
 from agent_memory.sync import atomic_write_many, vault_lock
 from agent_memory.vault import RememberResult, remember_memory
@@ -168,6 +169,34 @@ class SourcePromotionResult:
 
 
 @dataclass(frozen=True)
+class SourceLookupChunk:
+    """Compact source evidence returned by a lookup request."""
+
+    path: Path
+    relative_path: Path
+    text: str
+    tokens_estimate: int
+    kind: str
+    source_id: str
+
+    @property
+    def citation(self) -> dict[str, str]:
+        return {
+            "id": self.source_id,
+            "path": self.relative_path.as_posix(),
+            "kind": self.kind,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.relative_path.as_posix(),
+            "text": self.text,
+            "tokens_estimate": self.tokens_estimate,
+            "citation": self.citation,
+        }
+
+
+@dataclass(frozen=True)
 class _PlannedMemory:
     memory_type: MemoryType
     text: str
@@ -185,6 +214,101 @@ _PROMOTABLE_MEMORY_TYPES = {
     MemoryType.TASK,
     MemoryType.PROJECT_CONTEXT,
 }
+
+
+def lookup_source(
+    config: MemoryConfig,
+    source_id: str,
+    query: Optional[str] = None,
+    budget: int = 800,
+) -> dict[str, Any]:
+    """Return compact, read-only source evidence for an exact Sources/<id> directory."""
+
+    try:
+        selected_budget = _lookup_budget(budget)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "implemented": True,
+            "tool": "lookup_source",
+            "command": "lookup_source",
+            "source_id": str(source_id).strip(),
+            "query": _optional_string(query),
+            "budget": budget,
+            "chunks": [],
+            "citations": [],
+            "error": {
+                "code": "invalid_budget",
+                "message": str(exc),
+            },
+        }
+    selected_source_id = str(source_id).strip()
+    base_payload: dict[str, Any] = {
+        "ok": True,
+        "implemented": True,
+        "tool": "lookup_source",
+        "command": "lookup_source",
+        "source_id": selected_source_id,
+        "query": _optional_string(query),
+        "budget": selected_budget,
+        "chunks": [],
+        "citations": [],
+    }
+    if (
+        not selected_source_id
+        or selected_source_id in {".", ".."}
+        or Path(selected_source_id).name != selected_source_id
+    ):
+        return _lookup_error_payload(
+            base_payload,
+            code="source_not_found",
+            message=f"source not found: {selected_source_id}",
+        )
+
+    source_dir = config.vault_path / config.sources_dir / selected_source_id
+    if not source_dir.is_dir():
+        return _lookup_error_payload(
+            base_payload,
+            code="source_not_found",
+            message=f"source not found: {selected_source_id}",
+        )
+
+    evidence_path = source_dir / "extract.md"
+    kind = "source_extract"
+    if not evidence_path.is_file():
+        evidence_path = source_dir / "source.md"
+        kind = "source"
+    if not evidence_path.is_file():
+        return _lookup_error_payload(
+            base_payload,
+            code="source_not_found",
+            message=f"source has no extract.md or source.md: {selected_source_id}",
+        )
+
+    relative_path = evidence_path.relative_to(config.vault_path)
+    text = _strip_frontmatter(evidence_path.read_text(encoding="utf-8"))
+    raw_chunks = _source_text_chunks(text)
+    query_tokens = _lookup_tokens(query)
+    ranked_chunks, matched = _rank_source_chunks(raw_chunks, query_tokens)
+    packed_chunks = _pack_source_chunks(
+        ranked_chunks,
+        budget=selected_budget,
+        evidence_path=evidence_path,
+        relative_path=relative_path,
+        kind=kind,
+        source_id=selected_source_id,
+    )
+    citations = _unique_citations(chunk.citation for chunk in packed_chunks)
+    base_payload.update(
+        {
+            "chunks": [chunk.to_dict() for chunk in packed_chunks],
+            "citations": citations,
+            "source_path": relative_path.as_posix(),
+            "fallback": bool(query_tokens and not matched),
+            "empty_reason": _source_lookup_empty_reason(raw_chunks, packed_chunks, query_tokens, matched),
+        }
+    )
+    return base_payload
 
 
 def save_source_material(
@@ -342,6 +466,151 @@ def save_source_with_memories(
         )
 
     return SourcePromotionResult(source=saved_source, memories=tuple(promoted))
+
+
+def _lookup_budget(value: int) -> int:
+    budget = int(value)
+    if budget < 1:
+        raise ValueError("budget must be at least 1")
+    return budget
+
+
+def _lookup_error_payload(payload: Mapping[str, Any], *, code: str, message: str) -> dict[str, Any]:
+    result = dict(payload)
+    result.update(
+        {
+            "ok": False,
+            "chunks": [],
+            "citations": [],
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        }
+    )
+    return result
+
+
+def _strip_frontmatter(text: str) -> str:
+    normalized = text.replace("\r\n", "\n")
+    if normalized.startswith("---\n"):
+        parts = normalized.split("\n---\n", 1)
+        if len(parts) == 2:
+            normalized = parts[1]
+    lines = normalized.strip().splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    if lines and not lines[0].strip():
+        lines = lines[1:]
+    if lines and lines[0].startswith("Source URL: "):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def _source_text_chunks(text: str) -> list[str]:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    chunks: list[str] = []
+    for paragraph in paragraphs:
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+        if len(lines) > 1:
+            chunks.extend(lines)
+        else:
+            chunks.append(paragraph)
+    return chunks
+
+
+def _lookup_tokens(text: Optional[str]) -> set[str]:
+    if not text:
+        return set()
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _rank_source_chunks(chunks: list[str], query_tokens: set[str]) -> tuple[list[str], bool]:
+    if not query_tokens:
+        return chunks, False
+    scored: list[tuple[int, int, str]] = []
+    for index, chunk in enumerate(chunks):
+        overlap = len(query_tokens & _lookup_tokens(chunk))
+        scored.append((overlap, index, chunk))
+    matches = [item for item in scored if item[0] > 0]
+    if not matches:
+        return chunks, False
+    matches.sort(key=lambda item: (-item[0], item[1]))
+    return [chunk for _, _, chunk in matches], True
+
+
+def _pack_source_chunks(
+    chunks: list[str],
+    *,
+    budget: int,
+    evidence_path: Path,
+    relative_path: Path,
+    kind: str,
+    source_id: str,
+) -> list[SourceLookupChunk]:
+    remaining = budget
+    packed: list[SourceLookupChunk] = []
+    for chunk in chunks:
+        if remaining < 1:
+            break
+        text = _trim_chunk_to_budget(chunk, remaining)
+        if not text:
+            break
+        token_estimate = estimate_tokens(text)
+        if token_estimate > remaining:
+            break
+        packed.append(
+            SourceLookupChunk(
+                path=evidence_path,
+                relative_path=relative_path,
+                text=text,
+                tokens_estimate=token_estimate,
+                kind=kind,
+                source_id=source_id,
+            )
+        )
+        remaining -= token_estimate
+    return packed
+
+
+def _trim_chunk_to_budget(text: str, budget: int) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned or estimate_tokens(cleaned) <= budget:
+        return cleaned
+    words = cleaned.split()
+    max_words = max(1, int(budget * 0.75))
+    candidate = " ".join(words[:max_words]).strip()
+    while candidate and estimate_tokens(candidate) > budget:
+        words = candidate.split()[:-1]
+        candidate = " ".join(words).strip()
+    return candidate
+
+
+def _unique_citations(citations: Iterable[Mapping[str, str]]) -> list[dict[str, str]]:
+    unique: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for citation in citations:
+        key = (citation["id"], citation["path"], citation["kind"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(dict(citation))
+    return unique
+
+
+def _source_lookup_empty_reason(
+    raw_chunks: list[str],
+    packed_chunks: list[SourceLookupChunk],
+    query_tokens: set[str],
+    matched: bool,
+) -> Optional[str]:
+    if not raw_chunks:
+        return "source_empty"
+    if query_tokens and not matched:
+        return "no_query_overlap"
+    if not packed_chunks:
+        return "budget_exhausted"
+    return None
 
 
 def _render_source_markdown(
@@ -628,7 +897,9 @@ def _source_ref_for_promotion(source: SourceCaptureResult) -> SourceRef:
 __all__ = [
     "PromotedMemoryResult",
     "SourceCaptureResult",
+    "SourceLookupChunk",
     "SourcePromotionResult",
+    "lookup_source",
     "save_source_material",
     "save_source_with_memories",
 ]
