@@ -97,6 +97,10 @@ def save_source_tool(source: Mapping[str, Any], *, vault: Optional[PathLike] = N
             extract=_optional_string(source.get("extract") or source.get("summary")),
             project=_optional_string(source.get("project")),
             tags=_string_list(source.get("tags", ())),
+            channel=_optional_string(source.get("channel")),
+            source_quality=_optional_string(source.get("source_quality")),
+            sensitivity=_optional_string(source.get("sensitivity")),
+            origin=source.get("origin") if isinstance(source.get("origin"), Mapping) else None,
             slug=_optional_string(source.get("slug")),
         ).to_dict()
         payload.update(
@@ -174,6 +178,9 @@ def ingest_url_tool(
             "extract": extract,
             "project": project,
             "tags": tags or [],
+            "channel": "url",
+            "source_quality": "agent_fetched" if _optional_string(content) else "unknown",
+            "origin": {"provider": "web", "url": url},
         },
         vault=vault,
     ) | {"tool": "ingest_url"}

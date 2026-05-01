@@ -16,6 +16,17 @@ from agent_memory.sync import atomic_write_many, vault_lock
 from agent_memory.vault import RememberResult, remember_memory
 
 PathLike = Union[Path, str]
+SOURCE_CHANNELS = {"manual", "url", "file", "ai_session", "web_clipper", "zoom", "slack"}
+SOURCE_QUALITIES = {
+    "explicit_user",
+    "user_provided",
+    "agent_fetched",
+    "meeting_summary",
+    "chat_thread",
+    "imported_export",
+    "unknown",
+}
+SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +44,10 @@ class SourceCaptureResult:
     title: str
     project: Optional[str]
     tags: tuple[str, ...]
+    channel: str
+    source_quality: str
+    sensitivity: str
+    origin: dict[str, str]
 
     @property
     def citations(self) -> list[dict[str, str]]:
@@ -70,6 +85,10 @@ class SourceCaptureResult:
             "title": self.title,
             "project": self.project,
             "tags": list(self.tags),
+            "channel": self.channel,
+            "source_quality": self.source_quality,
+            "sensitivity": self.sensitivity,
+            "origin": dict(self.origin),
             "citations": self.citations,
         }
 
@@ -177,6 +196,10 @@ def save_source_material(
     extract: Optional[str] = None,
     project: Optional[str] = None,
     tags: Iterable[str] = (),
+    channel: Optional[str] = None,
+    source_quality: Optional[str] = None,
+    sensitivity: Optional[str] = None,
+    origin: Optional[Mapping[str, Any]] = None,
     slug: Optional[str] = None,
     captured_at: Optional[datetime] = None,
 ) -> SourceCaptureResult:
@@ -185,6 +208,10 @@ def save_source_material(
     selected_at = captured_at or datetime.now(timezone.utc).astimezone()
     selected_title = _clean_title(title) or _title_from_url(url) or "Untitled source"
     selected_tags = tuple(_clean_list(tags))
+    selected_channel = _normalized_choice(channel, SOURCE_CHANNELS, default="url" if _optional_string(url) else "manual")
+    selected_quality = _normalized_choice(source_quality, SOURCE_QUALITIES, default="user_provided")
+    selected_sensitivity = _normalized_choice(sensitivity, SOURCE_SENSITIVITIES, default="normal")
+    selected_origin = _clean_mapping(origin)
     selected_slug = _slugify(slug or selected_title or url or "source")
     source_id = f"{selected_at:%Y-%m-%d}_{selected_slug}"
     sources_root = config.vault_path / config.sources_dir
@@ -198,6 +225,10 @@ def save_source_material(
         content=_optional_string(content),
         project=_optional_string(project),
         tags=selected_tags,
+        channel=selected_channel,
+        source_quality=selected_quality,
+        sensitivity=selected_sensitivity,
+        origin=selected_origin,
         captured_at=selected_at,
     )
     files: list[tuple[PathLike, str]] = [(source_dir / "source.md", source_markdown)]
@@ -215,6 +246,10 @@ def save_source_material(
                     extract=str(extract).strip(),
                     project=_optional_string(project),
                     tags=selected_tags,
+                    channel=selected_channel,
+                    source_quality=selected_quality,
+                    sensitivity=selected_sensitivity,
+                    origin=selected_origin,
                     captured_at=selected_at,
                 ),
             )
@@ -235,6 +270,10 @@ def save_source_material(
         title=selected_title,
         project=_optional_string(project),
         tags=selected_tags,
+        channel=selected_channel,
+        source_quality=selected_quality,
+        sensitivity=selected_sensitivity,
+        origin=selected_origin,
     )
 
 
@@ -271,6 +310,10 @@ def save_source_with_memories(
         extract=_optional_string(source_payload.get("extract") or source_payload.get("summary")),
         project=_optional_string(source_payload.get("project")),
         tags=_clean_list(source_payload.get("tags", ())),
+        channel=_optional_string(source_payload.get("channel")),
+        source_quality=_optional_string(source_payload.get("source_quality")),
+        sensitivity=_optional_string(source_payload.get("sensitivity")),
+        origin=_mapping_or_none(source_payload.get("origin")),
         slug=_optional_string(source_payload.get("slug")),
     )
     source_ref = _source_ref_for_promotion(saved_source)
@@ -309,6 +352,10 @@ def _render_source_markdown(
     content: Optional[str],
     project: Optional[str],
     tags: tuple[str, ...],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    origin: Mapping[str, str],
     captured_at: datetime,
 ) -> str:
     frontmatter = _frontmatter(
@@ -317,6 +364,10 @@ def _render_source_markdown(
         url=url,
         project=project,
         tags=tags,
+        channel=channel,
+        source_quality=source_quality,
+        sensitivity=sensitivity,
+        origin=origin,
         captured_at=captured_at,
         kind="source",
     )
@@ -335,6 +386,10 @@ def _render_extract_markdown(
     extract: str,
     project: Optional[str],
     tags: tuple[str, ...],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    origin: Mapping[str, str],
     captured_at: datetime,
 ) -> str:
     frontmatter = _frontmatter(
@@ -343,6 +398,10 @@ def _render_extract_markdown(
         url=url,
         project=project,
         tags=tags,
+        channel=channel,
+        source_quality=source_quality,
+        sensitivity=sensitivity,
+        origin=origin,
         captured_at=captured_at,
         kind="extract",
     )
@@ -356,18 +415,28 @@ def _frontmatter(
     url: Optional[str],
     project: Optional[str],
     tags: tuple[str, ...],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    origin: Mapping[str, str],
     captured_at: datetime,
     kind: str,
 ) -> str:
     data = {
         "source_id": source_id,
         "kind": kind,
+        "schema_version": 1,
         "title": title,
         "url": url,
         "project": project,
         "tags": list(tags),
         "captured_at": captured_at.isoformat(),
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
     }
+    if origin:
+        data["origin"] = dict(origin)
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=False).strip()
 
 
@@ -434,6 +503,29 @@ def _clean_list(values: Optional[Iterable[str]]) -> list[str]:
         if item:
             cleaned.append(item)
     return cleaned
+
+
+def _mapping_or_none(value: Any) -> Optional[Mapping[str, Any]]:
+    return value if isinstance(value, Mapping) else None
+
+
+def _clean_mapping(value: Optional[Mapping[str, Any]]) -> dict[str, str]:
+    if not value:
+        return {}
+    cleaned: dict[str, str] = {}
+    for key, item in value.items():
+        cleaned_key = _optional_string(str(key))
+        cleaned_value = _optional_string(item)
+        if cleaned_key and cleaned_value:
+            cleaned[cleaned_key] = cleaned_value
+    return cleaned
+
+
+def _normalized_choice(value: Optional[str], allowed: set[str], *, default: str) -> str:
+    selected = (_optional_string(value) or default).strip().lower()
+    if selected not in allowed:
+        raise ValueError(f"value must be one of: {', '.join(sorted(allowed))}")
+    return selected
 
 
 def _plan_promoted_memory(

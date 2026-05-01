@@ -1,3 +1,5 @@
+import yaml
+
 from agent_memory.config import load_config
 from agent_memory.indexer import reindex_vault
 from agent_memory.mcp_server import (
@@ -111,12 +113,23 @@ def test_mcp_save_source_creates_raw_source_and_extract(tmp_path):
             "extract": "Summary: Durable facts should be promoted with remember().",
             "project": "agent-memory",
             "tags": ["article", "memory"],
+            "channel": "url",
+            "source_quality": "agent_fetched",
+            "sensitivity": "private",
+            "origin": {
+                "provider": "web",
+                "external_id": "article-123",
+            },
         },
         vault=vault,
     )
 
     assert payload["ok"] is True
     assert payload["tool"] == "save_source"
+    assert payload["channel"] == "url"
+    assert payload["source_quality"] == "agent_fetched"
+    assert payload["sensitivity"] == "private"
+    assert payload["origin"] == {"provider": "web", "external_id": "article-123"}
     assert payload["relative_source_path"].endswith("/source.md")
     assert payload["relative_extract_path"].endswith("/extract.md")
     assert payload["citations"] == [
@@ -133,6 +146,15 @@ def test_mcp_save_source_creates_raw_source_and_extract(tmp_path):
     ]
     source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
     extract_text = (vault / payload["relative_extract_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    extract_frontmatter = yaml.safe_load(extract_text.split("---", 2)[1])
+    assert source_frontmatter["schema_version"] == 1
+    assert source_frontmatter["channel"] == "url"
+    assert source_frontmatter["source_quality"] == "agent_fetched"
+    assert source_frontmatter["sensitivity"] == "private"
+    assert source_frontmatter["origin"] == {"provider": "web", "external_id": "article-123"}
+    assert extract_frontmatter["channel"] == "url"
+    assert extract_frontmatter["source_quality"] == "agent_fetched"
     assert "Source URL: https://example.com/agent-memory" in source_text
     assert "Raw article content about durable memory." in source_text
     assert "Summary: Durable facts should be promoted with remember()." in extract_text
@@ -154,6 +176,9 @@ def test_mcp_ingest_url_saves_url_stub_without_fetching(tmp_path):
     assert payload["ok"] is True
     assert payload["tool"] == "ingest_url"
     assert payload["url"] == "https://example.com/no-content-yet"
+    assert payload["channel"] == "url"
+    assert payload["source_quality"] == "unknown"
+    assert payload["sensitivity"] == "normal"
     assert payload["relative_extract_path"] is None
     source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
     assert "No raw content was provided to Agent Memory" in source_text
