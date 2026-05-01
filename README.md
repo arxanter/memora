@@ -369,6 +369,8 @@ Write and review commands:
   extract under `Sources/` without promoting canonical memory.
 - `memory import-source-inbox` imports Markdown/text files from a source inbox
   directory, with `--dry-run` for safe preview.
+- `memory import-session` saves AI-agent transcripts under `Sources/` and can
+  create a pending `conversation_summary` from a supplied summary file.
 - `memory review` lists pending agent-generated memories.
 - `memory mark` changes lifecycle status.
 - `memory reject` rejects a memory.

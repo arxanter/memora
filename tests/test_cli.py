@@ -94,6 +94,7 @@ def test_help_command_lists_grouped_commands():
         "remember",
         "import-source <path>",
         "import-source-inbox <path>",
+        "import-session <path>",
         "brief",
         "eval <fixture-or-file>",
     } <= command_usages
@@ -277,6 +278,81 @@ def test_import_source_inbox_imports_matching_files(tmp_path):
     assert source_frontmatter["tags"] == ["clip"]
     assert source_frontmatter["channel"] == "web_clipper"
     assert source_frontmatter["origin"]["provider"] == "file"
+
+
+def test_import_session_command_saves_transcript_source(tmp_path):
+    vault = tmp_path / "memory-vault"
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text('{"role":"user","content":"Discuss memory"}\n', encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "import-session",
+            str(transcript),
+            "--vault",
+            str(vault),
+            "--format",
+            "cursor-jsonl",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "import-session"
+    assert payload["memory"] is None
+    assert payload["source"]["channel"] == "ai_session"
+    assert payload["source"]["source_quality"] == "imported_export"
+    assert payload["source"]["origin"]["format"] == "cursor-jsonl"
+
+    source_text = (vault / payload["source"]["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["channel"] == "ai_session"
+    assert source_frontmatter["origin"]["file_name"] == "session.jsonl"
+
+
+def test_import_session_command_can_create_pending_summary_memory(tmp_path):
+    vault = tmp_path / "memory-vault"
+    transcript = tmp_path / "session.md"
+    summary = tmp_path / "summary.md"
+    transcript.write_text("# Session\n\nRaw transcript.", encoding="utf-8")
+    summary.write_text("We decided to import AI sessions as source material.", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "import-session",
+            str(transcript),
+            "--vault",
+            str(vault),
+            "--summary-file",
+            str(summary),
+            "--remember-summary",
+            "--project",
+            "agent-memory",
+            "--tag",
+            "session",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["review_required"] is True
+    assert payload["source"]["relative_extract_path"].endswith("/extract.md")
+    assert payload["memory"]["type"] == "conversation_summary"
+    assert payload["memory"]["status"] == "pending"
+
+    document = validate_markdown_file(vault / payload["memory"]["relative_path"])
+    assert document.frontmatter.type == "conversation_summary"
+    assert document.frontmatter.status == "pending"
+    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
 
 
 def test_brief_command_generates_markdown_and_json(tmp_path):

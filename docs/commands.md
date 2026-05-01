@@ -34,6 +34,7 @@ memory review
 memory reject <id>
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
+memory import-session <path> --summary-file <path> --remember-summary
 memory import <path>
 memory export --format markdown
 ```
@@ -622,6 +623,27 @@ memory import-source-inbox ./Sources/Inbox \
   --project agent-memory \
   --tag web-clip \
   --dry-run \
+  --json
+```
+
+### `memory import-session`
+
+Implemented in Stage 14.
+
+Saves an AI-agent transcript/session file under `Sources/` with
+`channel: ai_session`. Pass `--summary-file` to store a concise session extract.
+Pass `--remember-summary` when that summary should also become a pending
+canonical `conversation_summary` memory for review.
+
+Example:
+
+```bash
+memory import-session ./cursor-session.jsonl \
+  --vault ./memory-vault \
+  --format cursor-jsonl \
+  --summary-file ./cursor-session-summary.md \
+  --remember-summary \
+  --project agent-memory \
   --json
 ```
 

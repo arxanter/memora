@@ -27,7 +27,7 @@ from agent_memory.lifecycle import (
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
-from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
+from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.sources import save_source_material
 from agent_memory.sync import detect_sync_conflicts
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
@@ -71,6 +71,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("decay", "Mark expired active memories stale."),
             ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
             ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
+            ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
         ),
     ),
     (
@@ -339,6 +340,84 @@ def import_source_inbox_command(
     console.print(f"[green]Imported sources:[/green] {payload['source_count']}")
     for source in payload["sources"]:
         console.print(f"- {source['relative_source_path']}")
+
+
+@app.command("import-session")
+def import_session_command(
+    path: Path = typer.Argument(..., help="AI-agent transcript/session file."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    summary_file: Optional[Path] = typer.Option(None, "--summary-file", help="Optional concise session summary file."),
+    remember_summary: bool = typer.Option(False, "--remember-summary", help="Create a pending conversation_summary memory."),
+    session_format: str = typer.Option("text", "--format", help="Transcript format metadata, e.g. cursor-jsonl."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the session."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Confidence for summary memory."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Save an AI-agent session transcript and optional pending summary memory."""
+
+    try:
+        if remember_summary and summary_file is None:
+            raise ValueError("--remember-summary requires --summary-file")
+        config = load_config(vault)
+        transcript = path.expanduser().read_text(encoding="utf-8")
+        summary = summary_file.expanduser().read_text(encoding="utf-8") if summary_file else None
+        saved_source = save_source_material(
+            config,
+            title=path.stem,
+            content=transcript,
+            extract=summary,
+            project=project,
+            tags=[*tag, "ai-session"],
+            channel="ai_session",
+            source_quality="imported_export",
+            sensitivity=sensitivity,
+            origin={
+                "provider": "file",
+                "file_name": path.name,
+                "path": str(path.expanduser()),
+                "format": session_format,
+            },
+        )
+        payload: dict[str, Any] = {
+            "ok": True,
+            "implemented": True,
+            "command": "import-session",
+            "source": saved_source.to_dict(),
+            "memory": None,
+        }
+        if remember_summary:
+            source_path = saved_source.relative_extract_path or saved_source.relative_source_path
+            memory = remember_memory(
+                config,
+                memory_type=MemoryType.CONVERSATION_SUMMARY,
+                text=summary or "",
+                scope=MemoryScope.PROJECT if project else None,
+                project=project,
+                status=LifecycleStatus.PENDING,
+                tags=[*tag, "ai-session"],
+                author_kind=AuthorKind.AGENT,
+                author_name="session import",
+                source={
+                    "path": source_path.as_posix(),
+                    "title": saved_source.title,
+                    "source_id": saved_source.source_id,
+                },
+                confidence=confidence,
+            )
+            payload["memory"] = memory.to_dict()
+            payload["review_required"] = memory.status == LifecycleStatus.PENDING
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_session_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Imported session source:[/green] {payload['source']['relative_source_path']}")
+    if payload.get("memory"):
+        console.print(f"Pending summary memory: {payload['memory']['relative_path']}")
 
 
 @app.command()
