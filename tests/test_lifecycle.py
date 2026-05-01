@@ -259,7 +259,9 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
     assert payload["pending_count"] == 1
     assert payload["items"][0]["id"] == "mem_20260430_agent_pending"
     assert payload["items"][0]["duplicate_candidates"] == []
+    assert payload["items"][0]["contradiction_candidates"] == []
     assert "possible_duplicate" not in payload["items"][0]["risk_flags"]
+    assert "has_contradictions" not in payload["items"][0]["risk_flags"]
     assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_lifecycle/source.md"
     assert payload["source_groups"][0]["memory_ids"] == ["mem_20260430_agent_pending"]
 
@@ -313,7 +315,120 @@ def test_review_queue_surfaces_duplicate_candidates_without_mutating_memories(tm
         "pending": ["body", "observation"],
         "candidate": ["body", "observation"],
     }
+    assert item["contradiction_candidates"] == []
     assert payload["source_groups"][0]["items"][0]["duplicate_candidates"] == item["duplicate_candidates"]
+    assert payload["source_groups"][0]["items"][0]["contradiction_candidates"] == []
+
+
+def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active.md",
+        memory_id="mem_20260430_active_truth",
+        memory_type="fact",
+        status="active",
+        body="Lifecycle review active memory says Markdown is durable.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/relation-target.md",
+        memory_id="mem_20260430_relation_target",
+        memory_type="fact",
+        status="active",
+        body="Lifecycle review relation target says SQLite is durable.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-contradicts.md",
+        memory_id="mem_20260430_pending_contradicts",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle review pending memory explicitly contradicts active memory.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_contradictions/extract.md",
+        confidence=0.95,
+        contradicts=["mem_20260430_active_truth"],
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-relation.md",
+        memory_id="mem_20260430_pending_relation",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle review pending memory uses a relation-list contradiction.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_contradictions/extract.md",
+        confidence=0.95,
+        relations=[
+            {
+                "type": "contradicts",
+                "target": "mem_20260430_relation_target",
+            }
+        ],
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-normal.md",
+        memory_id="mem_20260430_pending_normal",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle review pending memory has no explicit contradictions.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_contradictions/extract.md",
+        confidence=0.95,
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    items = {item["id"]: item for item in payload["items"]}
+    frontmatter_item = items["mem_20260430_pending_contradicts"]
+    assert frontmatter_item["risk_flags"] == ["has_contradictions"]
+    assert frontmatter_item["recommended_action"] == "inspect"
+    assert frontmatter_item["contradiction_candidates"] == [
+        {
+            "id": "mem_20260430_active_truth",
+            "relation_direction": "outgoing",
+            "match_reason": "explicit_contradicts_relation",
+            "relative_path": "Memories/facts/active.md",
+            "type": "fact",
+            "status": "active",
+        }
+    ]
+
+    relation_item = items["mem_20260430_pending_relation"]
+    assert relation_item["risk_flags"] == ["has_contradictions"]
+    assert relation_item["recommended_action"] == "inspect"
+    assert relation_item["contradiction_candidates"] == [
+        {
+            "id": "mem_20260430_relation_target",
+            "relation_direction": "outgoing",
+            "match_reason": "explicit_contradicts_relation",
+            "relative_path": "Memories/facts/relation-target.md",
+            "type": "fact",
+            "status": "active",
+        }
+    ]
+
+    normal_item = items["mem_20260430_pending_normal"]
+    assert normal_item["contradiction_candidates"] == []
+    assert "has_contradictions" not in normal_item["risk_flags"]
+    assert normal_item["recommended_action"] == "approve"
+    source_items = {
+        item["id"]: item
+        for group in payload["source_groups"]
+        for item in group["items"]
+    }
+    assert source_items["mem_20260430_pending_contradicts"]["contradiction_candidates"] == frontmatter_item[
+        "contradiction_candidates"
+    ]
 
 
 def test_review_queue_groups_pending_memories_by_source(tmp_path):
@@ -371,6 +486,7 @@ def _write_memory(
     source_path=None,
     supersedes=None,
     contradicts=None,
+    relations=None,
 ):
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -397,7 +513,7 @@ valid_to: {valid_to}
   name: test
 supersedes: {supersedes}
 contradicts: {contradicts}
-relations: []
+{relations_block}
 observations:
   - category: {memory_type}
     text: {body}
@@ -420,6 +536,7 @@ observations:
             author_kind=author_kind,
             supersedes=_inline_list(supersedes or []),
             contradicts=_inline_list(contradicts or []),
+            relations_block=_relations_block(relations or []),
             body=body,
         ),
         encoding="utf-8",
@@ -430,3 +547,15 @@ def _inline_list(values):
     if not values:
         return "[]"
     return "[" + ", ".join(values) + "]"
+
+
+def _relations_block(relations):
+    if not relations:
+        return "relations: []"
+    lines = ["relations:"]
+    for relation in relations:
+        lines.append("  - type: {0}".format(relation["type"]))
+        lines.append("    target: {0}".format(relation["target"]))
+        if relation.get("confidence") is not None:
+            lines.append("    confidence: {0}".format(relation["confidence"]))
+    return "\n".join(lines)

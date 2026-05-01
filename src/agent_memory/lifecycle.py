@@ -66,6 +66,32 @@ class DuplicateCandidate:
 
 
 @dataclass(frozen=True)
+class ContradictionCandidate:
+    """Memory explicitly connected to a review item by a contradiction signal."""
+
+    memory_id: str
+    relative_path: Optional[Path]
+    memory_type: Optional[str]
+    status: Optional[str]
+    relation_direction: str
+    match_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "id": self.memory_id,
+            "relation_direction": self.relation_direction,
+            "match_reason": self.match_reason,
+        }
+        if self.relative_path is not None:
+            payload["relative_path"] = self.relative_path.as_posix()
+        if self.memory_type is not None:
+            payload["type"] = self.memory_type
+        if self.status is not None:
+            payload["status"] = self.status
+        return payload
+
+
+@dataclass(frozen=True)
 class LifecycleMutation:
     """One durable memory file mutation."""
 
@@ -145,6 +171,7 @@ class ReviewItem:
     recommended_action: str = "inspect"
     proposed_actions: tuple[str, ...] = ("approve", "reject", "defer", "inspect")
     duplicate_candidates: tuple[DuplicateCandidate, ...] = ()
+    contradiction_candidates: tuple[ContradictionCandidate, ...] = ()
 
     @property
     def citation(self) -> dict[str, str]:
@@ -170,6 +197,7 @@ class ReviewItem:
             "recommended_action": self.recommended_action,
             "proposed_actions": list(self.proposed_actions),
             "duplicate_candidates": [candidate.to_dict() for candidate in self.duplicate_candidates],
+            "contradiction_candidates": [candidate.to_dict() for candidate in self.contradiction_candidates],
             "citation": self.citation,
         }
 
@@ -472,6 +500,7 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
 
     items: list[ReviewItem] = []
     records = _iter_memory_records(config)
+    record_index = {record.document.frontmatter.id: record for record in records}
     signature_index = _duplicate_signature_index(records)
     for record in records:
         frontmatter = record.document.frontmatter
@@ -481,6 +510,7 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
         if author is None or author.kind != AuthorKind.AGENT:
             continue
         duplicate_candidates = _duplicate_candidates(config, record, signature_index)
+        contradiction_candidates = _contradiction_candidates(config, record, records, record_index)
         items.append(
             ReviewItem(
                 memory_id=frontmatter.id,
@@ -493,13 +523,20 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
                 source=frontmatter.source.model_dump(mode="json") if frontmatter.source else None,
                 body=record.body,
                 updated_at=frontmatter.updated_at.isoformat(),
-                risk_flags=_review_risk_flags(config, frontmatter, has_duplicate_candidates=bool(duplicate_candidates)),
+                risk_flags=_review_risk_flags(
+                    config,
+                    frontmatter,
+                    has_duplicate_candidates=bool(duplicate_candidates),
+                    has_contradiction_candidates=bool(contradiction_candidates),
+                ),
                 recommended_action=_review_recommended_action(
                     config,
                     frontmatter,
                     has_duplicate_candidates=bool(duplicate_candidates),
+                    has_contradiction_candidates=bool(contradiction_candidates),
                 ),
                 duplicate_candidates=duplicate_candidates,
+                contradiction_candidates=contradiction_candidates,
             )
         )
     items.sort(key=lambda item: (item.updated_at, item.relative_path.as_posix()))
@@ -531,6 +568,7 @@ def _review_risk_flags(
     frontmatter: MemoryFrontmatter,
     *,
     has_duplicate_candidates: bool = False,
+    has_contradiction_candidates: bool = False,
 ) -> tuple[str, ...]:
     flags: list[str] = []
     confidence = frontmatter.confidence
@@ -542,7 +580,7 @@ def _review_risk_flags(
         flags.append("needs_human_judgment")
     if frontmatter.source is None:
         flags.append("missing_source")
-    if frontmatter.contradicts:
+    if frontmatter.contradicts or has_contradiction_candidates:
         flags.append("has_contradictions")
     if has_duplicate_candidates:
         flags.append("possible_duplicate")
@@ -554,18 +592,92 @@ def _review_recommended_action(
     frontmatter: MemoryFrontmatter,
     *,
     has_duplicate_candidates: bool = False,
+    has_contradiction_candidates: bool = False,
 ) -> str:
-    flags = _review_risk_flags(config, frontmatter, has_duplicate_candidates=has_duplicate_candidates)
+    flags = _review_risk_flags(
+        config,
+        frontmatter,
+        has_duplicate_candidates=has_duplicate_candidates,
+        has_contradiction_candidates=has_contradiction_candidates,
+    )
     if (
         "low_confidence" in flags
         or "missing_source" in flags
         or "missing_confidence" in flags
         or "possible_duplicate" in flags
+        or "has_contradictions" in flags
     ):
         return "inspect"
     if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
         return "approve"
     return "defer"
+
+
+def _contradiction_candidates(
+    config: MemoryConfig,
+    record: _MemoryRecord,
+    records: Sequence[_MemoryRecord],
+    record_index: dict[str, _MemoryRecord],
+) -> tuple[ContradictionCandidate, ...]:
+    frontmatter = record.document.frontmatter
+    candidates: dict[tuple[str, str], ContradictionCandidate] = {}
+    for target_id in _outgoing_contradiction_targets(frontmatter):
+        _add_contradiction_candidate(
+            config,
+            candidates,
+            memory_id=target_id,
+            target_record=record_index.get(target_id),
+            relation_direction="outgoing",
+        )
+
+    for candidate_record in records:
+        candidate_frontmatter = candidate_record.document.frontmatter
+        if candidate_frontmatter.id == frontmatter.id:
+            continue
+        if candidate_frontmatter.status.value not in _DUPLICATE_CANDIDATE_STATUSES:
+            continue
+        if frontmatter.id not in _outgoing_contradiction_targets(candidate_frontmatter):
+            continue
+        _add_contradiction_candidate(
+            config,
+            candidates,
+            memory_id=candidate_frontmatter.id,
+            target_record=candidate_record,
+            relation_direction="incoming",
+        )
+    return tuple(candidates.values())
+
+
+def _add_contradiction_candidate(
+    config: MemoryConfig,
+    candidates: dict[tuple[str, str], ContradictionCandidate],
+    *,
+    memory_id: str,
+    target_record: Optional[_MemoryRecord],
+    relation_direction: str,
+) -> None:
+    candidate_key = (memory_id, relation_direction)
+    if candidate_key in candidates:
+        return
+    target_frontmatter = target_record.document.frontmatter if target_record else None
+    candidates[candidate_key] = ContradictionCandidate(
+        memory_id=memory_id,
+        relative_path=target_record.path.relative_to(config.vault_path) if target_record else None,
+        memory_type=target_frontmatter.type.value if target_frontmatter else None,
+        status=target_frontmatter.status.value if target_frontmatter else None,
+        relation_direction=relation_direction,
+        match_reason="explicit_contradicts_relation",
+    )
+
+
+def _outgoing_contradiction_targets(frontmatter: MemoryFrontmatter) -> tuple[str, ...]:
+    targets = list(frontmatter.contradicts)
+    targets.extend(
+        relation.target
+        for relation in frontmatter.relations
+        if relation.type == RelationType.CONTRADICTS
+    )
+    return tuple(dict.fromkeys(targets))
 
 
 def _duplicate_candidates(
