@@ -4,7 +4,9 @@ import yaml
 from typer.testing import CliRunner
 
 from agent_memory.cli import app
+from agent_memory.config import load_config
 from agent_memory.schema import validate_markdown_file
+from agent_memory.sources import lookup_source
 
 
 runner = CliRunner()
@@ -96,6 +98,7 @@ def test_help_command_lists_grouped_commands():
         "import-source <path>",
         "import-source-inbox <path>",
         "import-session <path>",
+        "lookup-source <source_id>",
         "brief",
         "eval <fixture-or-file>",
     } <= command_usages
@@ -354,6 +357,88 @@ def test_import_session_command_can_create_pending_summary_memory(tmp_path):
     assert document.frontmatter.status == "pending"
     assert document.frontmatter.project == "agent-memory"
     assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+
+
+def test_lookup_source_command_emits_service_json_without_mutating_sources(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    source_dir = vault / "Sources" / "2026-05-01_cli_lookup"
+    source_dir.mkdir()
+    source_path = source_dir / "source.md"
+    extract_path = source_dir / "extract.md"
+    source_path.write_text("Raw source content should not appear while an extract exists.", encoding="utf-8")
+    extract_path.write_text(
+        "Markdown stores durable decisions in plain files.\n\n"
+        "SQLite is only a rebuildable local cache for retrieval indexes.\n\n"
+        "Review queues keep inferred memories pending.",
+        encoding="utf-8",
+    )
+    before = _snapshot_source_files(source_path, extract_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "lookup-source",
+            "2026-05-01_cli_lookup",
+            "--query",
+            "sqlite cache indexes",
+            "--budget",
+            "20",
+            "--vault",
+            str(vault),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == lookup_source(
+        load_config(vault),
+        "2026-05-01_cli_lookup",
+        query="sqlite cache indexes",
+        budget=20,
+    )
+    assert payload["ok"] is True
+    assert payload["chunks"][0]["text"].startswith("SQLite is only")
+    assert payload["chunks"][0]["citation"] == {
+        "id": "2026-05-01_cli_lookup",
+        "path": "Sources/2026-05-01_cli_lookup/extract.md",
+        "kind": "source_extract",
+    }
+    assert _snapshot_source_files(source_path, extract_path) == before
+
+
+def test_lookup_source_command_human_output_lists_compact_chunks(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    source_dir = vault / "Sources" / "2026-05-01_cli_human"
+    source_dir.mkdir()
+    (source_dir / "source.md").write_text("Raw source content should stay behind the extract.", encoding="utf-8")
+    (source_dir / "extract.md").write_text(
+        "Markdown stores durable decisions in plain files.\n\n"
+        "SQLite is only a rebuildable local cache for retrieval indexes.",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "lookup-source",
+            "2026-05-01_cli_human",
+            "--query",
+            "sqlite cache",
+            "--budget",
+            "20",
+            "--vault",
+            str(vault),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Source chunks: 2026-05-01_cli_human" in result.output
+    assert "Sources/2026-05-01_cli_human/extract.md" in result.output
+    assert "kind=source_extract" in result.output
+    assert "SQLite is only" in result.output
 
 
 def test_brief_command_generates_markdown_and_json(tmp_path):
@@ -748,3 +833,10 @@ def _inline_list(values):
     if not values:
         return "[]"
     return "[" + ", ".join(values) + "]"
+
+
+def _snapshot_source_files(*paths):
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in paths
+    }

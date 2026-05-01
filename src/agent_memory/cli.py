@@ -29,7 +29,7 @@ from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
-from agent_memory.sources import save_source_material
+from agent_memory.sources import lookup_source, save_source_material
 from agent_memory.synthesis import write_synthesis
 from agent_memory.sync import detect_sync_conflicts
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
@@ -83,6 +83,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("search", "Return ranked memory results with snippets and citations."),
             ("recall", "Pack ranked chunks under a strict token budget."),
             ("explain-recall", "Explain selected and skipped recall candidates."),
+            ("lookup-source <source_id>", "Return compact evidence from a saved source."),
             ("brief", "Render a citation-preserving Memory Brief."),
             ("synthesize", "Write a deterministic generated synthesis under Synthesis/."),
             ("should-recall", "Decide whether a user request should use memory."),
@@ -705,6 +706,51 @@ def explain_recall_command(
         console.print("[bold]Skipped[/bold]")
         for item in payload["skipped"][:8]:
             console.print(f"- {item['explanation']} [dim]{item['path']}[/dim]")
+
+
+@app.command("lookup-source")
+def lookup_source_command(
+    source_id: str = typer.Argument(..., help="Source directory id under Sources/."),
+    query: Optional[str] = typer.Option(None, "--query", help="Optional query used to rank source chunks."),
+    budget: int = typer.Option(800, "--budget", min=1, help="Token budget."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Return compact read-only evidence for a saved source directory."""
+
+    try:
+        config = load_config(vault)
+        payload = lookup_source(config, source_id, query=query, budget=budget)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="lookup_source_failed")
+
+    if json_output:
+        _print_json(payload)
+        if not payload.get("ok", False):
+            raise typer.Exit(1)
+        return
+
+    if not payload.get("ok", False):
+        error = payload.get("error") or {}
+        code = str(error.get("code") or "lookup_source_failed")
+        message = str(error.get("message") or "lookup source failed")
+        console.print(f"[red]{code}:[/red] {message}")
+        raise typer.Exit(1)
+
+    if not payload["chunks"]:
+        reason = payload.get("empty_reason") or "no_chunks"
+        console.print(f"[yellow]No source chunks found.[/yellow] reason={reason}")
+        return
+
+    source_path = payload.get("source_path") or "-"
+    console.print(f"[green]Source chunks:[/green] {payload['source_id']} [dim]{source_path}[/dim]")
+    for position, chunk in enumerate(payload["chunks"], start=1):
+        citation = chunk["citation"]
+        console.print(
+            f"[bold]{position}.[/bold] {citation['path']} "
+            f"[dim]kind={citation['kind']} tokens={chunk['tokens_estimate']}[/dim]"
+        )
+        console.print(f"   {chunk['text']}", markup=False, soft_wrap=True)
 
 
 @app.command()
