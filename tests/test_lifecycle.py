@@ -7,6 +7,7 @@ from agent_memory.config import load_config
 from agent_memory.indexer import reindex_vault
 from agent_memory.lifecycle import (
     contradict_memories,
+    curation_plan,
     decay_memories,
     reject_memory,
     review_queue,
@@ -498,6 +499,213 @@ def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutatin
     }
     assert source_items["mem_20260430_pending_contradicts"]["contradiction_candidates"] == frontmatter_item[
         "contradiction_candidates"
+    ]
+
+
+def test_curation_plan_proposes_conservative_actions_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active-duplicate.md",
+        memory_id="mem_20260430_active_duplicate",
+        memory_type="fact",
+        status="active",
+        body="Lifecycle curation detects duplicate review text.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/active-truth.md",
+        memory_id="mem_20260430_active_truth",
+        memory_type="fact",
+        status="active",
+        body="Lifecycle curation active memory says Markdown is durable.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-duplicate.md",
+        memory_id="mem_20260430_pending_duplicate",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle curation detects duplicate review text.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_curate_duplicates/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-contradiction.md",
+        memory_id="mem_20260430_pending_contradiction",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle curation pending memory contradicts active truth.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_curate_contradictions/extract.md",
+        confidence=0.95,
+        contradicts=["mem_20260430_active_truth"],
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    payload = curation_plan(config)
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    assert payload["command"] == "curate"
+    assert payload["tool"] == "curate"
+    assert payload["implemented"] is True
+    assert payload["pending_count"] == 2
+    assert payload["proposal_count"] == 2
+    assert payload["counts"]["actions"] == {
+        "inspect_contradiction": 1,
+        "merge_or_reject_duplicate": 1,
+    }
+    items = {item["id"]: item for item in payload["items"]}
+    duplicate_item = items["mem_20260430_pending_duplicate"]
+    assert duplicate_item["recommended_action"] == "merge_or_reject_duplicate"
+    assert duplicate_item["review_recommended_action"] == "inspect"
+    assert duplicate_item["candidate_summaries"] == [
+        {
+            "kind": "duplicate",
+            "id": "mem_20260430_active_duplicate",
+            "relative_path": "Memories/facts/active-duplicate.md",
+            "type": "fact",
+            "status": "active",
+            "reason": "normalized_content_exact_match",
+        }
+    ]
+    contradiction_item = items["mem_20260430_pending_contradiction"]
+    assert contradiction_item["recommended_action"] == "inspect_contradiction"
+    assert contradiction_item["candidate_summaries"] == [
+        {
+            "kind": "contradiction",
+            "id": "mem_20260430_active_truth",
+            "relation_direction": "outgoing",
+            "reason": "explicit_contradicts_relation",
+            "relative_path": "Memories/facts/active-truth.md",
+            "type": "fact",
+            "status": "active",
+        }
+    ]
+
+
+def test_curate_cli_json_and_human_output_do_not_mutate_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active-duplicate.md",
+        memory_id="mem_20260430_active_duplicate",
+        memory_type="fact",
+        status="active",
+        body="CLI curation detects duplicate review text.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/active-truth.md",
+        memory_id="mem_20260430_active_truth",
+        memory_type="fact",
+        status="active",
+        body="CLI curation active memory says Markdown is durable.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-duplicate.md",
+        memory_id="mem_20260430_pending_duplicate",
+        memory_type="fact",
+        status="pending",
+        body="CLI curation detects duplicate review text.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_cli_duplicates/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-contradiction.md",
+        memory_id="mem_20260430_pending_contradiction",
+        memory_type="fact",
+        status="pending",
+        body="CLI curation pending memory contradicts active truth.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_cli_contradictions/extract.md",
+        confidence=0.95,
+        contradicts=["mem_20260430_active_truth"],
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+
+    json_result = runner.invoke(app, ["curate", "--vault", str(vault), "--json"])
+    human_result = runner.invoke(app, ["curate", "--vault", str(vault)])
+
+    assert json_result.exit_code == 0, json_result.output
+    assert human_result.exit_code == 0, human_result.output
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    payload = json.loads(json_result.output)
+    items = {item["id"]: item for item in payload["items"]}
+    assert items["mem_20260430_pending_duplicate"]["recommended_action"] == "merge_or_reject_duplicate"
+    assert items["mem_20260430_pending_contradiction"]["recommended_action"] == "inspect_contradiction"
+    assert "Curation proposals" in human_result.output
+    assert "merge_or_reject_duplicate" in human_result.output
+    assert "inspect_contradiction" in human_result.output
+
+
+def test_curate_cli_filters_by_project_and_source(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/project.md",
+        memory_id="mem_20260430_project_pending",
+        memory_type="fact",
+        status="pending",
+        scope="project",
+        project="agent-memory",
+        body="Project curation memory should match project and source filters.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_project/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/other.md",
+        memory_id="mem_20260430_other_pending",
+        memory_type="fact",
+        status="pending",
+        scope="project",
+        project="other-project",
+        body="Other curation memory should be filtered out.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_other/extract.md",
+        confidence=0.95,
+    )
+
+    project_result = runner.invoke(
+        app,
+        ["curate", "--vault", str(vault), "--project", "agent-memory", "--json"],
+    )
+    source_result = runner.invoke(
+        app,
+        [
+            "curate",
+            "--vault",
+            str(vault),
+            "--source",
+            "Sources/2026-04-30_project/extract.md",
+            "--json",
+        ],
+    )
+
+    assert project_result.exit_code == 0, project_result.output
+    assert source_result.exit_code == 0, source_result.output
+    assert [item["id"] for item in json.loads(project_result.output)["items"]] == [
+        "mem_20260430_project_pending"
+    ]
+    assert [item["id"] for item in json.loads(source_result.output)["items"]] == [
+        "mem_20260430_project_pending"
     ]
 
 

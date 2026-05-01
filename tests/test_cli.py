@@ -92,6 +92,7 @@ def test_help_command_lists_grouped_commands():
         "init <vault>",
         "mcp-config",
         "remember",
+        "curate",
         "import-source <path>",
         "import-source-inbox <path>",
         "import-session <path>",

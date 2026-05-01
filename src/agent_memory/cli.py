@@ -18,6 +18,7 @@ from agent_memory.freshness import refresh_index_if_needed
 from agent_memory.indexer import reindex_vault
 from agent_memory.lifecycle import (
     contradict_memories,
+    curation_plan,
     decay_memories,
     mark_status,
     reject_memory,
@@ -64,6 +65,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("remember", "Create a validated Markdown memory."),
             ("review", "List pending agent-generated memories with a diff-style preview."),
+            ("curate", "Propose conservative review actions without mutating memories."),
             ("mark", "Set a memory lifecycle status."),
             ("reject", "Reject a memory so default retrieval excludes it."),
             ("supersede", "Mark an old memory replaced by a newer one."),
@@ -1115,6 +1117,36 @@ def review(
         _print_review_diff(item)
 
 
+@app.command()
+def curate(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    source: Optional[str] = typer.Option(None, "--source", help="Source path, URL, or source_id filter."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Propose conservative review actions without changing memory files."""
+
+    try:
+        config = load_config(vault)
+        payload = curation_plan(config, project=project, source=source)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="curate_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["items"]:
+        console.print("[green]No pending agent memories to curate.[/green]")
+        return
+    console.print(
+        f"[yellow]Curation proposals:[/yellow] "
+        f"{payload['proposal_count']} of {payload['pending_count']} pending item(s)"
+    )
+    for item in payload["items"]:
+        _print_curation_proposal(item)
+
+
 @app.command("eval")
 def eval_command(
     fixture_or_file: Path = typer.Argument(..., help="Evaluation fixture directory or YAML spec."),
@@ -1214,6 +1246,23 @@ def _print_review_diff(item: dict[str, Any]) -> None:
     body = item.get("body") or ""
     for line in body.splitlines() or [""]:
         console.print(f"+ {line}", markup=False)
+
+
+def _print_curation_proposal(item: dict[str, Any]) -> None:
+    console.print(
+        f"- [bold]{item['id']}[/bold]: {item['recommended_action']} "
+        f"[dim]{item['type']}/{item['status']} {item['relative_path']}[/dim]"
+    )
+    risk_flags = item.get("risk_flags") or []
+    if risk_flags:
+        console.print(f"  risks: {', '.join(risk_flags)}")
+    summaries = item.get("candidate_summaries") or []
+    if summaries:
+        formatted = [
+            f"{summary['kind']}:{summary['id']}"
+            for summary in summaries
+        ]
+        console.print(f"  candidates: {', '.join(formatted)}")
 
 
 def _format_source(source: Any) -> str:

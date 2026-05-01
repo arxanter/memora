@@ -247,6 +247,49 @@ class ReviewQueue:
         }
 
 
+def curation_plan(
+    config: MemoryConfig,
+    *,
+    project: Optional[str] = None,
+    source: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return conservative, read-only review proposals without mutating memories."""
+
+    queue = review_queue(config)
+    records_by_id = _records_by_id(config)
+    items = [
+        _curation_item(item)
+        for item in queue.items
+        if _matches_project(item, records_by_id, project)
+        and _matches_source(item.source, source)
+    ]
+    action_counts = _count_by_key(items, "recommended_action")
+    duplicate_candidate_count = sum(len(item["duplicate_candidates"]) for item in items)
+    contradiction_candidate_count = sum(len(item["contradiction_candidates"]) for item in items)
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "curate",
+        "tool": "curate",
+        "vault_path": str(config.vault_path),
+        "filters": {
+            "project": project,
+            "source": source,
+        },
+        "pending_count": len(queue.items),
+        "proposal_count": len(items),
+        "counts": {
+            "pending": len(queue.items),
+            "proposals": len(items),
+            "duplicate_candidates": duplicate_candidate_count,
+            "contradiction_candidates": contradiction_candidate_count,
+            "actions": action_counts,
+        },
+        "items": items,
+        "citations": [item["citation"] for item in items],
+    }
+
+
 def mark_status(
     config: MemoryConfig,
     memory_id: str,
@@ -589,6 +632,112 @@ def _source_groups(items: Sequence[ReviewItem]) -> list[dict[str, Any]]:
         group["memory_ids"].append(item.memory_id)
         group["items"].append(item.to_dict())
     return sorted(groups.values(), key=lambda group: str(group["source"] or ""))
+
+
+def _curation_item(item: ReviewItem) -> dict[str, Any]:
+    recommended_action = _curation_recommended_action(item)
+    duplicate_candidates = [candidate.to_dict() for candidate in item.duplicate_candidates]
+    contradiction_candidates = [candidate.to_dict() for candidate in item.contradiction_candidates]
+    return {
+        "id": item.memory_id,
+        "path": str(item.path),
+        "relative_path": item.relative_path.as_posix(),
+        "type": item.memory_type,
+        "status": item.status,
+        "confidence": item.confidence,
+        "source": item.source,
+        "risk_flags": list(item.risk_flags),
+        "recommended_action": recommended_action,
+        "review_recommended_action": item.recommended_action,
+        "importance": item.importance.to_dict(),
+        "duplicate_candidates": duplicate_candidates,
+        "contradiction_candidates": contradiction_candidates,
+        "candidate_summaries": _candidate_summaries(item),
+        "citation": item.citation,
+    }
+
+
+def _curation_recommended_action(item: ReviewItem) -> str:
+    flags = set(item.risk_flags)
+    if item.contradiction_candidates:
+        return "inspect_contradiction"
+    if item.duplicate_candidates:
+        if any(candidate.status == LifecycleStatus.ACTIVE.value for candidate in item.duplicate_candidates):
+            return "merge_or_reject_duplicate"
+        return "inspect_duplicate"
+    if flags & {"low_confidence", "missing_confidence", "missing_source"}:
+        return "inspect"
+    if not flags and item.recommended_action == "approve":
+        return "approve"
+    return "defer"
+
+
+def _candidate_summaries(item: ReviewItem) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for candidate in item.duplicate_candidates:
+        summaries.append(
+            {
+                "kind": "duplicate",
+                "id": candidate.memory_id,
+                "relative_path": candidate.relative_path.as_posix(),
+                "type": candidate.memory_type,
+                "status": candidate.status,
+                "reason": candidate.match_reason,
+            }
+        )
+    for candidate in item.contradiction_candidates:
+        summary = {
+            "kind": "contradiction",
+            "id": candidate.memory_id,
+            "relation_direction": candidate.relation_direction,
+            "reason": candidate.match_reason,
+        }
+        if candidate.relative_path is not None:
+            summary["relative_path"] = candidate.relative_path.as_posix()
+        if candidate.memory_type is not None:
+            summary["type"] = candidate.memory_type
+        if candidate.status is not None:
+            summary["status"] = candidate.status
+        summaries.append(summary)
+    return summaries
+
+
+def _records_by_id(config: MemoryConfig) -> dict[str, _MemoryRecord]:
+    return {
+        record.document.frontmatter.id: record
+        for record in _iter_memory_records(config)
+    }
+
+
+def _matches_project(
+    item: ReviewItem,
+    records_by_id: dict[str, _MemoryRecord],
+    project: Optional[str],
+) -> bool:
+    if project is None:
+        return True
+    record = records_by_id.get(item.memory_id)
+    return record is not None and record.document.frontmatter.project == project
+
+
+def _matches_source(source: Optional[dict[str, Any]], selected_source: Optional[str]) -> bool:
+    if selected_source is None:
+        return True
+    if not source:
+        return False
+    return selected_source in {
+        str(value)
+        for key, value in source.items()
+        if key in {"path", "url", "source_id"} and value not in (None, "")
+    }
+
+
+def _count_by_key(items: Sequence[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _review_risk_flags(
@@ -1066,6 +1215,7 @@ def _now() -> datetime:
 
 
 __all__ = [
+    "curation_plan",
     "LifecycleMutation",
     "LifecycleResult",
     "ReviewImportance",
