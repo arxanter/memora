@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover
 
 JsonPayload = dict[str, Any]
 PathLike = Union[Path, str]
+SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 
 
 def remember_tool(memory: Mapping[str, Any], *, vault: Optional[PathLike] = None) -> JsonPayload:
@@ -184,6 +185,166 @@ def ingest_url_tool(
         },
         vault=vault,
     ) | {"tool": "ingest_url"}
+
+
+def import_source_tool(
+    path: PathLike,
+    title: Optional[str] = None,
+    extract_file: Optional[PathLike] = None,
+    project: Optional[str] = None,
+    channel: str = "file",
+    source_quality: str = "imported_export",
+    sensitivity: str = "normal",
+    tags: Optional[list[str]] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Save a Markdown/text file as source material under Sources/."""
+
+    try:
+        config = load_config(vault)
+        source_path = _expanded_path(path)
+        extract = _read_optional_text_file(extract_file)
+        payload = _save_file_source(
+            config,
+            source_path,
+            title=title,
+            extract=extract,
+            project=project,
+            tags=tags or [],
+            channel=channel,
+            source_quality=source_quality,
+            sensitivity=sensitivity,
+        )
+        payload.update({"tool": "import_source", "command": "import-source"})
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="import_source_failed", tool="import_source")
+
+
+def import_source_inbox_tool(
+    path: PathLike,
+    project: Optional[str] = None,
+    channel: str = "web_clipper",
+    source_quality: str = "imported_export",
+    sensitivity: str = "normal",
+    tags: Optional[list[str]] = None,
+    dry_run: bool = False,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Import Markdown/text files from a source inbox directory."""
+
+    try:
+        config = load_config(vault)
+        inbox = _expanded_path(path)
+        if not inbox.is_dir():
+            raise ValueError(f"source inbox is not a directory: {inbox}")
+        candidates = _source_inbox_files(inbox)
+        if dry_run:
+            payload = _source_inbox_plan_payload(inbox, candidates, dry_run=True)
+        else:
+            sources = [
+                _save_file_source(
+                    config,
+                    candidate,
+                    title=candidate.stem,
+                    project=project,
+                    tags=tags or [],
+                    channel=channel,
+                    source_quality=source_quality,
+                    sensitivity=sensitivity,
+                )
+                for candidate in candidates
+            ]
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "tool": "import_source_inbox",
+                "command": "import-source-inbox",
+                "dry_run": False,
+                "inbox_path": str(inbox),
+                "source_count": len(sources),
+                "sources": sources,
+            }
+        payload.update({"tool": "import_source_inbox"})
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="import_source_inbox_failed", tool="import_source_inbox")
+
+
+def import_session_tool(
+    path: PathLike,
+    summary: Optional[str] = None,
+    summary_file: Optional[PathLike] = None,
+    remember_summary: bool = False,
+    session_format: str = "text",
+    project: Optional[str] = None,
+    sensitivity: str = "normal",
+    tags: Optional[list[str]] = None,
+    confidence: float = 0.75,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Save an AI-agent session transcript and optional pending summary memory."""
+
+    try:
+        if remember_summary and not (_optional_string(summary) or summary_file is not None):
+            raise ValueError("remember_summary requires summary or summary_file")
+        config = load_config(vault)
+        transcript_path = _expanded_path(path)
+        transcript = transcript_path.read_text(encoding="utf-8")
+        summary_text = _optional_string(summary) or _read_optional_text_file(summary_file)
+        selected_tags = [*(tags or []), "ai-session"]
+        saved_source = save_source_material(
+            config,
+            title=transcript_path.stem,
+            content=transcript,
+            extract=summary_text,
+            project=project,
+            tags=selected_tags,
+            channel="ai_session",
+            source_quality="imported_export",
+            sensitivity=sensitivity,
+            origin={
+                "provider": "file",
+                "file_name": transcript_path.name,
+                "path": str(transcript_path),
+                "format": session_format,
+            },
+        )
+        payload: dict[str, Any] = {
+            "ok": True,
+            "implemented": True,
+            "tool": "import_session",
+            "command": "import-session",
+            "source": saved_source.to_dict(),
+            "memory": None,
+        }
+        if remember_summary:
+            source_path = saved_source.relative_extract_path or saved_source.relative_source_path
+            memory = remember_memory(
+                config,
+                memory_type=MemoryType.CONVERSATION_SUMMARY,
+                text=summary_text or "",
+                scope=MemoryScope.PROJECT if project else None,
+                project=project,
+                status=LifecycleStatus.PENDING,
+                tags=selected_tags,
+                author_kind=AuthorKind.AGENT,
+                author_name="session import",
+                source={
+                    "path": source_path.as_posix(),
+                    "title": saved_source.title,
+                    "source_id": saved_source.source_id,
+                },
+                confidence=confidence,
+            )
+            payload["memory"] = memory.to_dict()
+            payload["review_required"] = memory.status == LifecycleStatus.PENDING
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="import_session_failed", tool="import_session")
 
 
 def search_tool(
@@ -640,6 +801,78 @@ def create_server() -> Any:
         return ingest_url_tool(url, title, content, extract, project, tags)
 
     @server.tool()
+    def import_source(
+        path: str,
+        title: Optional[str] = None,
+        extract_file: Optional[str] = None,
+        project: Optional[str] = None,
+        channel: str = "file",
+        source_quality: str = "imported_export",
+        sensitivity: str = "normal",
+        tags: Optional[list[str]] = None,
+    ) -> JsonPayload:
+        """Save a Markdown/text file as source material under Sources/."""
+
+        return import_source_tool(
+            path,
+            title=title,
+            extract_file=extract_file,
+            project=project,
+            channel=channel,
+            source_quality=source_quality,
+            sensitivity=sensitivity,
+            tags=tags,
+        )
+
+    @server.tool()
+    def import_source_inbox(
+        path: str,
+        project: Optional[str] = None,
+        channel: str = "web_clipper",
+        source_quality: str = "imported_export",
+        sensitivity: str = "normal",
+        tags: Optional[list[str]] = None,
+        dry_run: bool = False,
+    ) -> JsonPayload:
+        """Import Markdown/text files from a source inbox directory."""
+
+        return import_source_inbox_tool(
+            path,
+            project=project,
+            channel=channel,
+            source_quality=source_quality,
+            sensitivity=sensitivity,
+            tags=tags,
+            dry_run=dry_run,
+        )
+
+    @server.tool()
+    def import_session(
+        path: str,
+        summary: Optional[str] = None,
+        summary_file: Optional[str] = None,
+        remember_summary: bool = False,
+        session_format: str = "text",
+        project: Optional[str] = None,
+        sensitivity: str = "normal",
+        tags: Optional[list[str]] = None,
+        confidence: float = 0.75,
+    ) -> JsonPayload:
+        """Save an AI-agent session transcript and optional pending summary memory."""
+
+        return import_session_tool(
+            path,
+            summary=summary,
+            summary_file=summary_file,
+            remember_summary=remember_summary,
+            session_format=session_format,
+            project=project,
+            sensitivity=sensitivity,
+            tags=tags,
+            confidence=confidence,
+        )
+
+    @server.tool()
     def search(query: str, filters: Optional[dict[str, Any]] = None) -> JsonPayload:
         """Search memory using keyword, metadata, and graph signals."""
 
@@ -751,6 +984,75 @@ def _optional_config(vault: Optional[PathLike]) -> Optional[MemoryConfig]:
         return load_config(vault)
     except ConfigError:
         return None
+
+
+def _save_file_source(
+    config: MemoryConfig,
+    path: Path,
+    *,
+    title: Optional[str] = None,
+    extract: Optional[str] = None,
+    project: Optional[str] = None,
+    tags: list[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+) -> dict[str, Any]:
+    result = save_source_material(
+        config,
+        title=title or path.stem,
+        content=path.read_text(encoding="utf-8"),
+        extract=extract,
+        project=project,
+        tags=tags,
+        channel=channel,
+        source_quality=source_quality,
+        sensitivity=sensitivity,
+        origin={
+            "provider": "file",
+            "file_name": path.name,
+            "path": str(path),
+        },
+    )
+    return result.to_dict()
+
+
+def _source_inbox_files(path: Path) -> list[Path]:
+    return sorted(
+        item
+        for item in path.rglob("*")
+        if item.is_file() and item.suffix.lower() in SOURCE_INBOX_SUFFIXES
+    )
+
+
+def _source_inbox_plan_payload(path: Path, candidates: list[Path], *, dry_run: bool) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "implemented": True,
+        "tool": "import_source_inbox",
+        "command": "import-source-inbox",
+        "dry_run": dry_run,
+        "inbox_path": str(path),
+        "source_count": len(candidates),
+        "sources": [
+            {
+                "path": str(candidate),
+                "title": candidate.stem,
+                "suffix": candidate.suffix.lower(),
+            }
+            for candidate in candidates
+        ],
+    }
+
+
+def _expanded_path(path: PathLike) -> Path:
+    return Path(path).expanduser()
+
+
+def _read_optional_text_file(path: Optional[PathLike]) -> Optional[str]:
+    if path is None:
+        return None
+    return _expanded_path(path).read_text(encoding="utf-8")
 
 
 def _agent_memory_status(
@@ -1015,6 +1317,9 @@ __all__ = [
     "build_context_tool",
     "create_server",
     "explain_recall_tool",
+    "import_session_tool",
+    "import_source_inbox_tool",
+    "import_source_tool",
     "inspect_tool",
     "main",
     "mark_superseded_tool",

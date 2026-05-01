@@ -1,5 +1,6 @@
 import yaml
 
+import agent_memory.mcp_server as mcp_server
 from agent_memory.config import load_config
 from agent_memory.indexer import reindex_vault
 from agent_memory.mcp_server import (
@@ -8,6 +9,9 @@ from agent_memory.mcp_server import (
     build_context_tool,
     explain_recall_tool,
     ingest_url_tool,
+    import_session_tool,
+    import_source_inbox_tool,
+    import_source_tool,
     inspect_tool,
     mark_superseded_tool,
     mark_status_tool,
@@ -183,6 +187,151 @@ def test_mcp_ingest_url_saves_url_stub_without_fetching(tmp_path):
     source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
     assert "No raw content was provided to Agent Memory" in source_text
     assert "https://example.com/no-content-yet" in source_text
+
+
+def test_mcp_create_server_registers_import_tools(monkeypatch):
+    class FakeFastMCP:
+        def __init__(self, name):
+            self.name = name
+            self.tools = {}
+
+        def tool(self):
+            def register(func):
+                self.tools[func.__name__] = func
+                return func
+
+            return register
+
+    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
+
+    server = mcp_server.create_server()
+
+    assert server.name == "Agent Memory"
+    assert {"import_source", "import_source_inbox", "import_session"} <= set(server.tools)
+
+
+def test_mcp_import_source_saves_file_source_with_metadata(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_file = tmp_path / "article.md"
+    source_file.write_text("# Imported Article\n\nDurable source content.", encoding="utf-8")
+
+    payload = import_source_tool(
+        source_file,
+        project="agent-memory",
+        tags=["imported"],
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "import_source"
+    assert payload["command"] == "import-source"
+    assert payload["title"] == "article"
+    assert payload["channel"] == "file"
+    assert payload["source_quality"] == "imported_export"
+    assert payload["origin"] == {
+        "provider": "file",
+        "file_name": "article.md",
+        "path": str(source_file),
+    }
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["origin"] == payload["origin"]
+    assert "# Imported Article" in source_text
+
+
+def test_mcp_import_source_inbox_dry_run_lists_files_without_writing_sources(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    (inbox / "first.md").write_text("First source", encoding="utf-8")
+    (inbox / "second.txt").write_text("Second source", encoding="utf-8")
+    (inbox / "skip.json").write_text("{}", encoding="utf-8")
+
+    payload = import_source_inbox_tool(inbox, dry_run=True, vault=vault)
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "import_source_inbox"
+    assert payload["dry_run"] is True
+    assert payload["source_count"] == 2
+    assert [source["title"] for source in payload["sources"]] == ["first", "second"]
+    assert [source["suffix"] for source in payload["sources"]] == [".md", ".txt"]
+    assert not any((vault / "Sources").iterdir())
+
+
+def test_mcp_import_source_inbox_imports_matching_files(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    inbox = tmp_path / "inbox"
+    nested = inbox / "nested"
+    nested.mkdir(parents=True)
+    (inbox / "first.md").write_text("First source", encoding="utf-8")
+    (nested / "second.markdown").write_text("Second source", encoding="utf-8")
+    (inbox / "skip.json").write_text("{}", encoding="utf-8")
+
+    payload = import_source_inbox_tool(
+        inbox,
+        project="agent-memory",
+        tags=["inbox"],
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "import_source_inbox"
+    assert payload["dry_run"] is False
+    assert payload["source_count"] == 2
+    assert [source["title"] for source in payload["sources"]] == ["first", "second"]
+    for source in payload["sources"]:
+        assert source["project"] == "agent-memory"
+        assert source["tags"] == ["inbox"]
+        assert source["channel"] == "web_clipper"
+        assert (vault / source["relative_source_path"]).exists()
+
+
+def test_mcp_import_session_saves_transcript_and_pending_summary_memory(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    transcript_file = tmp_path / "session.jsonl"
+    transcript_file.write_text('{"role":"user","content":"What changed?"}\n', encoding="utf-8")
+    summary = "We added MCP import wrappers for source ingestion."
+
+    payload = import_session_tool(
+        transcript_file,
+        summary=summary,
+        remember_summary=True,
+        session_format="cursor-jsonl",
+        project="agent-memory",
+        tags=["mcp"],
+        confidence=0.8,
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["tool"] == "import_session"
+    assert payload["source"]["channel"] == "ai_session"
+    assert payload["source"]["tags"] == ["mcp", "ai-session"]
+    assert payload["source"]["origin"] == {
+        "provider": "file",
+        "file_name": "session.jsonl",
+        "path": str(transcript_file),
+        "format": "cursor-jsonl",
+    }
+    assert payload["source"]["relative_extract_path"].endswith("/extract.md")
+    assert payload["memory"]["type"] == "conversation_summary"
+    assert payload["memory"]["status"] == "pending"
+    assert payload["review_required"] is True
+    source_text = (vault / payload["source"]["relative_source_path"]).read_text(encoding="utf-8")
+    extract_text = (vault / payload["source"]["relative_extract_path"]).read_text(encoding="utf-8")
+    document = validate_markdown_file(vault / payload["memory"]["relative_path"])
+    assert "What changed?" in source_text
+    assert summary in extract_text
+    assert document.frontmatter.status == "pending"
+    assert document.frontmatter.type == "conversation_summary"
+    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.confidence == 0.8
+    assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+    assert document.body.strip() == summary
 
 
 def test_mcp_save_source_with_memories_creates_pending_atomic_memories(tmp_path):
