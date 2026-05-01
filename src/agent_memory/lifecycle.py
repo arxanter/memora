@@ -159,6 +159,7 @@ class ReviewQueue:
             "vault_path": str(self.config.vault_path),
             "pending_count": len(self.items),
             "items": [item.to_dict() for item in self.items],
+            "source_groups": _source_groups(self.items),
             "citations": self.citations,
         }
 
@@ -461,6 +462,26 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
         )
     items.sort(key=lambda item: (item.updated_at, item.relative_path.as_posix()))
     return ReviewQueue(config=config, items=tuple(items))
+
+
+def _source_groups(items: Sequence[ReviewItem]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for item in items:
+        source = item.source or {}
+        source_key = str(source.get("path") or source.get("url") or "missing_source")
+        group = groups.setdefault(
+            source_key,
+            {
+                "source": source or None,
+                "item_count": 0,
+                "memory_ids": [],
+                "items": [],
+            },
+        )
+        group["item_count"] += 1
+        group["memory_ids"].append(item.memory_id)
+        group["items"].append(item.to_dict())
+    return sorted(groups.values(), key=lambda group: str(group["source"] or ""))
 
 
 def _review_risk_flags(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> tuple[str, ...]:

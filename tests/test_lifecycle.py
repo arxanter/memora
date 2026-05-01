@@ -258,6 +258,44 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
 
     assert payload["pending_count"] == 1
     assert payload["items"][0]["id"] == "mem_20260430_agent_pending"
+    assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_lifecycle/source.md"
+    assert payload["source_groups"][0]["memory_ids"] == ["mem_20260430_agent_pending"]
+
+
+def test_review_queue_groups_pending_memories_by_source(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/first.md",
+        memory_id="mem_20260430_first",
+        memory_type="fact",
+        status="pending",
+        body="First pending memory from same source.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_shared/extract.md",
+        confidence=0.7,
+    )
+    _write_memory(
+        vault,
+        "Memories/tasks/second.md",
+        memory_id="mem_20260430_second",
+        memory_type="task",
+        status="pending",
+        body="Second pending memory from same source.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_shared/extract.md",
+        confidence=0.8,
+    )
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert payload["pending_count"] == 2
+    assert len(payload["source_groups"]) == 1
+    assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_shared/extract.md"
+    assert payload["source_groups"][0]["item_count"] == 2
+    assert set(payload["source_groups"][0]["memory_ids"]) == {"mem_20260430_first", "mem_20260430_second"}
 
 
 def _write_memory(

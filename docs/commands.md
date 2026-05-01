@@ -757,7 +757,9 @@ It rejects `source_extract` memory promotion so raw summaries remain in
 the same structured explanation payload as `memory explain-recall --json`.
 `review()` lists pending agent-generated memories for review. `approve(id,
 reason)` marks a pending memory active, and `reject(id, reason)` marks it
-rejected. These tools allow agents to process review queues entirely through MCP.
+rejected. Review payloads include both flat `items` and `source_groups` so
+agents can present pending memories grouped by their originating source. These
+tools allow agents to process review queues entirely through MCP.
 `mark_status(id, status)` is implemented in Stage 9 and mutates Markdown
 frontmatter through the lifecycle service. `mark_superseded(old_id, by_id,
 reason)` is a Stage 10 MCP wrapper around the Stage 9 supersede lifecycle
