@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 from agent_memory.brief import brief_memory
-from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, ConfigError, MemoryConfig, load_config
+from agent_memory.config import (
+    AgentPolicyConfig,
+    AgentTrustLevel,
+    ConfigError,
+    MemoryConfig,
+    TaskRecallPolicyConfig,
+    load_config,
+)
 from agent_memory.freshness import refresh_index_if_needed
 from agent_memory.lifecycle import mark_status, reject_memory, review_queue, supersede_memory
 from agent_memory.recall import explain_recall, recall_memory
@@ -314,9 +321,13 @@ def build_context_tool(
 
     config = _optional_config(vault)
     agent_policy = config.agent_policy if config else AgentPolicyConfig()
+    raw_filters = _filters(filters)
+    task_class, task_policy = _resolve_task_recall_policy(config, raw_filters.pop("task_class", None))
+    if task_policy.include_related and "include_related" not in raw_filters:
+        raw_filters["include_related"] = True
     policy = should_recall(task, aliases=agent_policy.aliases).to_dict()
     try:
-        selected_budget = _budget(budget or agent_policy.default_recall_budget)
+        selected_budget = _build_context_budget(budget, task_policy, agent_policy)
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="build_context", task=task, policy=policy)
 
@@ -329,13 +340,19 @@ def build_context_tool(
             "budget": selected_budget,
             "memory_needed": False,
             "policy": policy,
-            "trace": _build_context_trace(policy, empty_reason="policy_skipped"),
+            "task_class": task_class,
+            "trace": _build_context_trace(
+                policy,
+                task_class=task_class,
+                task_policy=task_policy,
+                empty_reason="policy_skipped",
+            ),
             "markdown": "",
             "brief": None,
             "citations": [],
         }
 
-    brief_payload = brief_tool(str(policy["query"]), selected_budget, filters, vault=vault)
+    brief_payload = brief_tool(str(policy["query"]), selected_budget, raw_filters, vault=vault)
     if not brief_payload.get("ok"):
         brief_payload.update(
             {
@@ -343,7 +360,13 @@ def build_context_tool(
                 "task": task,
                 "memory_needed": True,
                 "policy": policy,
-                "trace": _build_context_trace(policy, empty_reason="brief_failed"),
+                "task_class": task_class,
+                "trace": _build_context_trace(
+                    policy,
+                    task_class=task_class,
+                    task_policy=task_policy,
+                    empty_reason="brief_failed",
+                ),
             }
         )
         return brief_payload
@@ -364,8 +387,11 @@ def build_context_tool(
         "budget": selected_budget,
         "memory_needed": True,
         "policy": policy,
+        "task_class": task_class,
         "trace": _build_context_trace(
             policy,
+            task_class=task_class,
+            task_policy=task_policy,
             retrieval=retrieval_trace,
             freshness=brief_payload.get("freshness"),
             selected_count=chunk_count,
@@ -853,6 +879,8 @@ def _bool(value: Any) -> bool:
 def _build_context_trace(
     policy: Mapping[str, Any],
     *,
+    task_class: str = "default",
+    task_policy: Optional[TaskRecallPolicyConfig] = None,
     retrieval: Optional[Any] = None,
     freshness: Optional[Any] = None,
     selected_count: int = 0,
@@ -876,6 +904,8 @@ def _build_context_trace(
         attempts = []
     freshness_trace = dict(freshness) if isinstance(freshness, Mapping) else None
     return {
+        "task_class": task_class,
+        "recall_policy": task_policy.model_dump(mode="json") if task_policy is not None else None,
         "policy_query": policy_query,
         "planned_query_variants": planned,
         "mode": retrieval_trace.get("mode"),
@@ -908,6 +938,27 @@ def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[d
     payload = refresh_index_if_needed(config, debounce_seconds=0).to_dict()
     payload.update({"trigger": f"before_{before}", "skipped": False})
     return payload
+
+
+def _resolve_task_recall_policy(
+    config: Optional[MemoryConfig],
+    task_class: Any,
+) -> tuple[str, TaskRecallPolicyConfig]:
+    selected = _optional_string(task_class)
+    key = (selected or "default").strip().lower()
+    policies = config.recall_policies if config is not None else {}
+    policy = policies.get(key) or policies.get("default") or TaskRecallPolicyConfig()
+    return key if key in policies else "default", policy
+
+
+def _build_context_budget(
+    budget: int,
+    task_policy: TaskRecallPolicyConfig,
+    agent_policy: AgentPolicyConfig,
+) -> int:
+    if int(budget or 0) == agent_policy.default_recall_budget:
+        return _budget(task_policy.budget)
+    return _budget(budget or agent_policy.default_recall_budget)
 
 
 def _optional_string(value: Any) -> Optional[str]:

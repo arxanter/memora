@@ -571,6 +571,37 @@ def test_mcp_build_context_returns_brief_when_policy_recommends_recall(tmp_path)
     assert payload["trace"]["selected_count"] == 1
 
 
+def test_mcp_build_context_applies_task_class_recall_policy(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    remembered = remember_tool(
+        {
+            "type": "decision",
+            "text": "Planning tasks should use the planning recall policy budget.",
+            "source": "Sources/2026-05-01_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = build_context_tool(
+        "What did we decide about planning tasks?",
+        filters={"status": "pending", "task_class": "planning"},
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["memory_needed"] is True
+    assert payload["task_class"] == "planning"
+    assert payload["budget"] == 2000
+    assert payload["brief"]["budget"] == 2000
+    assert payload["citations"][0]["id"] == remembered["id"]
+    assert payload["trace"]["task_class"] == "planning"
+    assert payload["trace"]["recall_policy"]["budget"] == 2000
+    assert payload["trace"]["recall_policy"]["include_related"] is True
+
+
 def test_mcp_mark_superseded_wraps_lifecycle_service(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)

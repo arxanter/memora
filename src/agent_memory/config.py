@@ -118,6 +118,60 @@ class RecallConfig(BaseModel):
         return cleaned
 
 
+class TaskRecallPolicyConfig(BaseModel):
+    """Task-class-specific defaults for automatic context building."""
+
+    budget: int = Field(default=1200, ge=1)
+    include_related: bool = False
+    include_pending: bool = False
+    types: list[str] = Field(default_factory=list)
+
+    @field_validator("types")
+    @classmethod
+    def validate_types(cls, value: list[str]) -> list[str]:
+        valid_types = {memory_type.value for memory_type in MemoryType}
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            memory_type = MemoryType(str(item)).value if str(item) in valid_types else str(item)
+            if memory_type not in valid_types:
+                raise ValueError(f"unknown recall policy memory type: {item}")
+            if memory_type in seen:
+                continue
+            seen.add(memory_type)
+            cleaned.append(memory_type)
+        return cleaned
+
+
+def _default_recall_policies() -> dict[str, TaskRecallPolicyConfig]:
+    return {
+        "default": TaskRecallPolicyConfig(),
+        "coding": TaskRecallPolicyConfig(
+            budget=900,
+            types=[
+                MemoryType.DECISION.value,
+                MemoryType.PREFERENCE.value,
+                MemoryType.PROJECT_CONTEXT.value,
+                MemoryType.TASK.value,
+            ],
+        ),
+        "planning": TaskRecallPolicyConfig(
+            budget=2000,
+            include_related=True,
+            types=[
+                MemoryType.DECISION.value,
+                MemoryType.PROJECT_CONTEXT.value,
+                MemoryType.SOURCE_EXTRACT.value,
+                MemoryType.CONVERSATION_SUMMARY.value,
+            ],
+        ),
+        "review": TaskRecallPolicyConfig(
+            budget=2400,
+            include_pending=True,
+        ),
+    }
+
+
 class AgentPolicyConfig(BaseModel):
     """User-configurable rules for AI agent memory behavior."""
 
@@ -189,6 +243,7 @@ class MemoryConfig(BaseModel):
     default_author_name: str = "memory CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
+    recall_policies: dict[str, TaskRecallPolicyConfig] = Field(default_factory=_default_recall_policies)
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
 
