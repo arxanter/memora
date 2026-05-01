@@ -195,8 +195,10 @@ Primary MCP tools include `remember`, `search`, `recall`, `brief`,
 recommended entry point for agents: it avoids spending context when memory is not
 relevant, and otherwise returns a citation-preserving Memory Brief.
 
-`save_source` and `ingest_url` preserve raw material under `Sources/`; the AI
-agent still fetches, reads, and extracts durable facts before calling `remember`.
+`save_source` and `ingest_url` preserve raw material and the agent-written
+extract under `Sources/`; the AI agent still fetches, reads, and calls
+`remember` only for separate durable atomic facts, decisions, preferences,
+project context, or tasks.
 See `docs/agent-instructions.md` for Claude/Cursor/Codex instruction templates.
 
 To print the MCP client snippet again:

@@ -23,6 +23,10 @@ Agent Memory:
   preserve citations and lifecycle state
 ```
 
+Default source capture stores the raw material and structured summary under
+`Sources/`; canonical `Memories/` should receive only separate atomic
+promotions.
+
 ## Startup Recall
 
 Do not spend memory context on every user message. Recall is recommended when the
@@ -111,7 +115,9 @@ material into memory:
 2. Produce a concise extract.
 3. Call `ingest_url` for URL-centered material or `save_source` for arbitrary
    source material.
-4. Call `remember` for each durable atomic memory extracted from the source.
+4. Call `remember` for each durable atomic memory extracted from the source. Do
+   not duplicate the saved `Sources/.../extract.md` summary as a default
+   canonical `source_extract`.
 5. Apply `agent_policy`: inferred agent-created memories remain `pending`;
    explicit user saves may become `active` only when the configured trust level
    and confidence threshold allow it.

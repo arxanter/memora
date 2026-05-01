@@ -118,7 +118,8 @@ material into memory, agents should follow this workflow:
    extract.
 3. Promote only durable atomic items with `remember(memory)`, or call
    `save_source_with_memories` when the source and atomic items are already
-   structured.
+   structured. The extract from step 2 already lives under `Sources/`; do not
+   duplicate it as a default canonical `source_extract` in `Memories/`.
 4. Leave agent-created memories `pending` for review.
 5. Tell the user which source paths and pending memories were created.
 
