@@ -44,6 +44,14 @@ from agent_memory.indexer import (
     split_document_chunks,
     validate_graph,
 )
+from agent_memory.profile import (
+    DEFAULT_PROFILE_BUDGET,
+    ProfileCandidate,
+    ProfileItem,
+    ProfileResult,
+    build_profile,
+    render_profile_markdown,
+)
 from agent_memory.lifecycle import (
     LifecycleMutation,
     LifecycleResult,
@@ -141,6 +149,7 @@ __all__ = [
     "ConfigError",
     "ConflictIssue",
     "ConflictReport",
+    "DEFAULT_PROFILE_BUDGET",
     "DeterministicEmbeddingProvider",
     "EmbeddingProviderError",
     "EvaluationCaseResult",
@@ -163,6 +172,9 @@ __all__ = [
     "MigrationInfo",
     "Observation",
     "PackedChunk",
+    "ProfileCandidate",
+    "ProfileItem",
+    "ProfileResult",
     "RecallCandidate",
     "RecallConfig",
     "RecallDecision",
@@ -195,6 +207,7 @@ __all__ = [
     "content_hash",
     "create_default_config",
     "brief_memory",
+    "build_profile",
     "decay_memories",
     "detect_sync_conflicts",
     "doctor_report",
@@ -213,6 +226,7 @@ __all__ = [
     "reject_memory",
     "remember_memory",
     "render_brief_markdown",
+    "render_profile_markdown",
     "render_synthesis_markdown",
     "recall_memory",
     "render_memory_markdown",

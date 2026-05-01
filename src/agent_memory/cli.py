@@ -25,6 +25,7 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
+from agent_memory.profile import build_profile
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -85,6 +86,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("explain-recall", "Explain selected and skipped recall candidates."),
             ("lookup-source <source_id>", "Return compact evidence from a saved source."),
             ("brief", "Render a citation-preserving Memory Brief."),
+            ("build-profile", "Write a generated user or project profile under Profiles/."),
             ("synthesize", "Write a deterministic generated synthesis under Synthesis/."),
             ("should-recall", "Decide whether a user request should use memory."),
         ),
@@ -831,6 +833,36 @@ def synthesize_command(
 
     console.print(f"[green]Wrote synthesis:[/green] {payload['relative_path']}")
     console.print(f"Memories: {payload['memory_count']}")
+
+
+@app.command("build-profile")
+def build_profile_command(
+    profile_type: str = typer.Option("user", "--type", help="Profile type: user or project."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project name for project profiles."),
+    budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Strict token budget."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Write a deterministic generated profile Markdown file."""
+
+    try:
+        config = load_config(vault)
+        payload = build_profile(
+            config,
+            profile_type=profile_type,
+            project=project,
+            budget=budget,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="build_profile_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Wrote profile:[/green] {payload['relative_path']}")
+    console.print(f"Memories: {payload['memory_count']}")
+    console.print("[dim]Generated context; not canonical memory.[/dim]")
 
 
 @app.command("should-recall")

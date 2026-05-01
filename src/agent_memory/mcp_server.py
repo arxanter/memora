@@ -22,6 +22,7 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
+from agent_memory.profile import build_profile as build_profile_service
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -501,6 +502,34 @@ def brief_tool(
         )
 
 
+def build_profile_tool(
+    profile_type: str = "user",
+    project: Optional[str] = None,
+    budget: Optional[int] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Write a deterministic generated profile under Profiles/."""
+
+    try:
+        config = load_config(vault)
+        return build_profile_service(
+            config,
+            profile_type=profile_type,
+            project=project,
+            budget=budget,
+        ).to_dict()
+    except Exception as exc:
+        return _error_payload(
+            exc,
+            code="build_profile_failed",
+            tool="build_profile",
+            profile_type=profile_type,
+            project=project,
+            budget=budget,
+        )
+
+
 def should_recall_tool(message: str) -> JsonPayload:
     """Classify whether a user request should be enriched with memory."""
 
@@ -957,6 +986,16 @@ def create_server() -> Any:
         return brief_tool(query, budget, filters)
 
     @server.tool()
+    def build_profile(
+        profile_type: str = "user",
+        project: Optional[str] = None,
+        budget: Optional[int] = None,
+    ) -> JsonPayload:
+        """Write generated user or project profile context under Profiles/."""
+
+        return build_profile_tool(profile_type, project, budget)
+
+    @server.tool()
     def should_recall(message: str) -> JsonPayload:
         """Classify whether a user request should be enriched with memory."""
 
@@ -1378,6 +1417,7 @@ def _error_payload(exc: Exception, *, code: str, **details: Any) -> JsonPayload:
 __all__ = [
     "approve_tool",
     "brief_tool",
+    "build_profile_tool",
     "build_context_tool",
     "create_server",
     "curate_tool",
