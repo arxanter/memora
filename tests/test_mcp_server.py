@@ -7,6 +7,7 @@ from agent_memory.mcp_server import (
     approve_tool,
     brief_tool,
     build_context_tool,
+    curate_tool,
     explain_recall_tool,
     ingest_url_tool,
     import_session_tool,
@@ -207,7 +208,7 @@ def test_mcp_create_server_registers_import_tools(monkeypatch):
     server = mcp_server.create_server()
 
     assert server.name == "Agent Memory"
-    assert {"import_source", "import_source_inbox", "import_session"} <= set(server.tools)
+    assert {"curate", "import_source", "import_source_inbox", "import_session"} <= set(server.tools)
 
 
 def test_mcp_import_source_saves_file_source_with_metadata(tmp_path):
@@ -524,6 +525,63 @@ def test_mcp_review_approve_and_reject_pending_memories(tmp_path):
     assert validate_markdown_file(vault / second["relative_path"]).frontmatter.status == "rejected"
 
 
+def test_mcp_curate_returns_proposals_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active-duplicate.md",
+        memory_id="mem_20260430_active_duplicate",
+        memory_type="fact",
+        status="active",
+        body="MCP curate detects duplicate review text.",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/active-truth.md",
+        memory_id="mem_20260430_active_truth",
+        memory_type="fact",
+        status="active",
+        body="MCP curate active memory says Markdown is durable.",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-duplicate.md",
+        memory_id="mem_20260430_pending_duplicate",
+        memory_type="fact",
+        status="pending",
+        body="MCP curate detects duplicate review text.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_curate_duplicates/extract.md",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending-contradiction.md",
+        memory_id="mem_20260430_pending_contradiction",
+        memory_type="fact",
+        status="pending",
+        body="MCP curate pending memory contradicts active truth.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_curate_contradictions/extract.md",
+        contradicts=["mem_20260430_active_truth"],
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+
+    payload = curate_tool(vault=vault)
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    assert payload["ok"] is True
+    assert payload["tool"] == "curate"
+    assert payload["pending_count"] == 2
+    assert payload["proposal_count"] == 2
+    items = {item["id"]: item for item in payload["items"]}
+    assert items["mem_20260430_pending_duplicate"]["recommended_action"] == "merge_or_reject_duplicate"
+    assert items["mem_20260430_pending_duplicate"]["candidate_summaries"][0]["kind"] == "duplicate"
+    assert items["mem_20260430_pending_contradiction"]["recommended_action"] == "inspect_contradiction"
+    assert items["mem_20260430_pending_contradiction"]["candidate_summaries"][0]["kind"] == "contradiction"
+
+
 def test_mcp_search_uses_retrieval_service(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -827,4 +885,64 @@ def test_mcp_missing_inspect_has_stable_error_payload(tmp_path):
         },
         "citations": [],
     }
+
+
+def _write_memory(
+    vault,
+    relative_path,
+    *,
+    memory_id,
+    memory_type,
+    body,
+    status,
+    author_kind="user",
+    source_path=None,
+    contradicts=None,
+):
+    path = vault / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    source_block = "source:\n  path: {0}\n".format(source_path) if source_path else "source:\n"
+    path.write_text(
+        """---
+schema_version: 1
+id: {memory_id}
+type: {memory_type}
+scope: user
+project:
+status: {status}
+confidence: 0.95
+created_at: 2026-04-30T12:00:00+02:00
+updated_at: 2026-04-30T12:00:00+02:00
+valid_from: 2026-04-30
+valid_to:
+{source_block}author:
+  kind: {author_kind}
+  name: test
+supersedes: []
+contradicts: {contradicts}
+relations: []
+observations:
+  - category: {memory_type}
+    text: {body}
+    confidence: 0.95
+---
+
+{body}
+""".format(
+            memory_id=memory_id,
+            memory_type=memory_type,
+            status=status,
+            source_block=source_block,
+            author_kind=author_kind,
+            contradicts=_inline_list(contradicts or []),
+            body=body,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _inline_list(values):
+    if not values:
+        return "[]"
+    return "[" + ", ".join(values) + "]"
 

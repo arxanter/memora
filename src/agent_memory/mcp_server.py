@@ -15,7 +15,13 @@ from agent_memory.config import (
     load_config,
 )
 from agent_memory.freshness import refresh_index_if_needed
-from agent_memory.lifecycle import mark_status, reject_memory, review_queue, supersede_memory
+from agent_memory.lifecycle import (
+    curation_plan,
+    mark_status,
+    reject_memory,
+    review_queue,
+    supersede_memory,
+)
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -683,6 +689,23 @@ def review_tool(*, vault: Optional[PathLike] = None) -> JsonPayload:
         return _error_payload(exc, code="review_failed", tool="review")
 
 
+def curate_tool(
+    project: Optional[str] = None,
+    source: Optional[str] = None,
+    *,
+    vault: Optional[PathLike] = None,
+) -> JsonPayload:
+    """Return read-only curation proposals for pending agent memories."""
+
+    try:
+        config = load_config(vault)
+        payload = curation_plan(config, project=project, source=source)
+        payload.setdefault("tool", "curate")
+        return payload
+    except Exception as exc:
+        return _error_payload(exc, code="curate_failed", tool="curate")
+
+
 def approve_tool(memory_id: str, reason: Optional[str] = None, *, vault: Optional[PathLike] = None) -> JsonPayload:
     """Approve a pending memory by marking it active."""
 
@@ -941,6 +964,12 @@ def create_server() -> Any:
         """List pending agent-generated memories awaiting review."""
 
         return review_tool()
+
+    @server.tool()
+    def curate(project: Optional[str] = None, source: Optional[str] = None) -> JsonPayload:
+        """Propose conservative review actions without mutating memory files."""
+
+        return curate_tool(project=project, source=source)
 
     @server.tool()
     def approve(id: str, reason: Optional[str] = None) -> JsonPayload:
@@ -1316,6 +1345,7 @@ __all__ = [
     "brief_tool",
     "build_context_tool",
     "create_server",
+    "curate_tool",
     "explain_recall_tool",
     "import_session_tool",
     "import_source_inbox_tool",
