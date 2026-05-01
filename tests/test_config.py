@@ -86,8 +86,60 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
     assert config.agent_policy.default_recall_budget == 1800
     assert config.agent_policy.min_active_confidence == 0.85
     assert config.recall_policies["default"].budget == 1200
+    assert config.recall_policies["default"].include_profile is True
+    assert config.recall_policies["coding"].include_profile is True
     assert config.recall_policies["planning"].budget == 2000
     assert config.recall_policies["planning"].include_related is True
+    assert config.recall_policies["planning"].include_profile is True
+    assert config.recall_policies["review"].include_profile is False
+
+
+def test_load_config_applies_recall_policy_include_profile_yaml_overrides(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        """
+schema_version: 1
+recall_policies:
+  default:
+    budget: 1200
+    include_profile: false
+  review:
+    budget: 2400
+    include_pending: true
+    include_profile: true
+  custom:
+    budget: 700
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(vault)
+
+    assert config.recall_policies["default"].include_profile is False
+    assert config.recall_policies["review"].include_profile is True
+    assert config.recall_policies["custom"].include_profile is True
+
+
+def test_load_config_preserves_review_include_profile_default_for_old_yaml(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        """
+schema_version: 1
+recall_policies:
+  review:
+    budget: 2400
+    include_pending: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(vault)
+
+    assert config.recall_policies["review"].include_profile is False
 
 
 def test_load_config_includes_freshness_defaults_and_overrides(tmp_path, monkeypatch):

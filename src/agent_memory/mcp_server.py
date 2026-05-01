@@ -551,6 +551,7 @@ def build_context_tool(
     agent_policy = config.agent_policy if config else AgentPolicyConfig()
     raw_filters = _filters(filters)
     task_class, task_policy = _resolve_task_recall_policy(config, raw_filters.pop("task_class", None))
+    profile_trace = _build_context_profile_trace(task_policy)
     if task_policy.include_related and "include_related" not in raw_filters:
         raw_filters["include_related"] = True
     policy = should_recall(task, aliases=agent_policy.aliases).to_dict()
@@ -569,6 +570,7 @@ def build_context_tool(
             "memory_needed": False,
             "policy": policy,
             "task_class": task_class,
+            "profile": profile_trace,
             "trace": _build_context_trace(
                 policy,
                 task_class=task_class,
@@ -589,6 +591,7 @@ def build_context_tool(
                 "memory_needed": True,
                 "policy": policy,
                 "task_class": task_class,
+                "profile": profile_trace,
                 "trace": _build_context_trace(
                     policy,
                     task_class=task_class,
@@ -616,6 +619,7 @@ def build_context_tool(
         "memory_needed": True,
         "policy": policy,
         "task_class": task_class,
+        "profile": profile_trace,
         "trace": _build_context_trace(
             policy,
             task_class=task_class,
@@ -1318,6 +1322,7 @@ def _build_context_trace(
     return {
         "task_class": task_class,
         "recall_policy": task_policy.model_dump(mode="json") if task_policy is not None else None,
+        "profile": _build_context_profile_trace(task_policy),
         "policy_query": policy_query,
         "planned_query_variants": planned,
         "mode": retrieval_trace.get("mode"),
@@ -1350,6 +1355,15 @@ def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[d
     payload = refresh_index_if_needed(config, debounce_seconds=0).to_dict()
     payload.update({"trigger": f"before_{before}", "skipped": False})
     return payload
+
+
+def _build_context_profile_trace(task_policy: Optional[TaskRecallPolicyConfig]) -> dict[str, Any]:
+    requested = bool(task_policy.include_profile) if task_policy is not None else True
+    return {
+        "included": False,
+        "requested": requested,
+        "reason": "not_implemented" if requested else "profile_injection_disabled",
+    }
 
 
 def _resolve_task_recall_policy(

@@ -129,6 +129,7 @@ class TaskRecallPolicyConfig(BaseModel):
     budget: int = Field(default=1200, ge=1)
     include_related: bool = False
     include_pending: bool = False
+    include_profile: bool = True
     types: list[str] = Field(default_factory=list)
 
     @field_validator("types")
@@ -173,6 +174,7 @@ def _default_recall_policies() -> dict[str, TaskRecallPolicyConfig]:
         "review": TaskRecallPolicyConfig(
             budget=2400,
             include_pending=True,
+            include_profile=False,
         ),
     }
 
@@ -262,6 +264,20 @@ class MemoryConfig(BaseModel):
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_recall_policy_defaults(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        policies = data.get("recall_policies")
+        if not isinstance(policies, dict):
+            return data
+        review_policy = policies.get("review")
+        if isinstance(review_policy, dict) and "include_profile" not in review_policy:
+            policies = {**policies, "review": {**review_policy, "include_profile": False}}
+            return {**data, "recall_policies": policies}
+        return data
 
     @field_validator("schema_version")
     @classmethod
