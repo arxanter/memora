@@ -258,8 +258,62 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
 
     assert payload["pending_count"] == 1
     assert payload["items"][0]["id"] == "mem_20260430_agent_pending"
+    assert payload["items"][0]["duplicate_candidates"] == []
+    assert "possible_duplicate" not in payload["items"][0]["risk_flags"]
     assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_lifecycle/source.md"
     assert payload["source_groups"][0]["memory_ids"] == ["mem_20260430_agent_pending"]
+
+
+def test_review_queue_surfaces_duplicate_candidates_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active.md",
+        memory_id="mem_20260430_active_duplicate",
+        memory_type="fact",
+        status="active",
+        body="Lifecycle duplicate detection uses normalized memory text.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending.md",
+        memory_id="mem_20260430_pending_duplicate",
+        memory_type="fact",
+        status="pending",
+        body="Lifecycle duplicate detection uses normalized memory text.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_duplicates/extract.md",
+        confidence=0.95,
+    )
+    active_path = vault / "Memories/facts/active.md"
+    pending_path = vault / "Memories/facts/pending.md"
+    before_active = active_path.read_text(encoding="utf-8")
+    before_pending = pending_path.read_text(encoding="utf-8")
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert active_path.read_text(encoding="utf-8") == before_active
+    assert pending_path.read_text(encoding="utf-8") == before_pending
+    item = payload["items"][0]
+    assert item["id"] == "mem_20260430_pending_duplicate"
+    assert item["risk_flags"] == ["possible_duplicate"]
+    assert item["recommended_action"] == "inspect"
+    assert len(item["duplicate_candidates"]) == 1
+    candidate = item["duplicate_candidates"][0]
+    assert candidate["id"] == "mem_20260430_active_duplicate"
+    assert candidate["relative_path"] == "Memories/facts/active.md"
+    assert candidate["type"] == "fact"
+    assert candidate["status"] == "active"
+    assert candidate["match_reason"] == "normalized_content_exact_match"
+    assert candidate["signature"].startswith("sha256:")
+    assert candidate["matched_fields"] == {
+        "pending": ["body", "observation"],
+        "candidate": ["body", "observation"],
+    }
+    assert payload["source_groups"][0]["items"][0]["duplicate_candidates"] == item["duplicate_candidates"]
 
 
 def test_review_queue_groups_pending_memories_by_source(tmp_path):

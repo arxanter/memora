@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,6 +32,37 @@ _TERMINAL_STATUSES = {
     LifecycleStatus.SUPERSEDED.value,
     LifecycleStatus.REJECTED.value,
 }
+_DUPLICATE_CANDIDATE_STATUSES = {
+    LifecycleStatus.ACTIVE.value,
+    LifecycleStatus.PENDING.value,
+}
+
+
+@dataclass(frozen=True)
+class DuplicateCandidate:
+    """Existing memory with exact normalized content matching a review item."""
+
+    memory_id: str
+    relative_path: Path
+    memory_type: str
+    status: str
+    match_reason: str
+    signature: str
+    matched_fields: dict[str, tuple[str, ...]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.memory_id,
+            "relative_path": self.relative_path.as_posix(),
+            "type": self.memory_type,
+            "status": self.status,
+            "match_reason": self.match_reason,
+            "signature": self.signature,
+            "matched_fields": {
+                side: list(fields)
+                for side, fields in self.matched_fields.items()
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -112,6 +144,7 @@ class ReviewItem:
     risk_flags: tuple[str, ...] = ()
     recommended_action: str = "inspect"
     proposed_actions: tuple[str, ...] = ("approve", "reject", "defer", "inspect")
+    duplicate_candidates: tuple[DuplicateCandidate, ...] = ()
 
     @property
     def citation(self) -> dict[str, str]:
@@ -136,6 +169,7 @@ class ReviewItem:
             "risk_flags": list(self.risk_flags),
             "recommended_action": self.recommended_action,
             "proposed_actions": list(self.proposed_actions),
+            "duplicate_candidates": [candidate.to_dict() for candidate in self.duplicate_candidates],
             "citation": self.citation,
         }
 
@@ -437,13 +471,16 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
     """Return pending agent-generated memories for explicit review."""
 
     items: list[ReviewItem] = []
-    for record in _iter_memory_records(config):
+    records = _iter_memory_records(config)
+    signature_index = _duplicate_signature_index(records)
+    for record in records:
         frontmatter = record.document.frontmatter
         author = frontmatter.author
         if frontmatter.status != LifecycleStatus.PENDING:
             continue
         if author is None or author.kind != AuthorKind.AGENT:
             continue
+        duplicate_candidates = _duplicate_candidates(config, record, signature_index)
         items.append(
             ReviewItem(
                 memory_id=frontmatter.id,
@@ -456,8 +493,13 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
                 source=frontmatter.source.model_dump(mode="json") if frontmatter.source else None,
                 body=record.body,
                 updated_at=frontmatter.updated_at.isoformat(),
-                risk_flags=_review_risk_flags(config, frontmatter),
-                recommended_action=_review_recommended_action(config, frontmatter),
+                risk_flags=_review_risk_flags(config, frontmatter, has_duplicate_candidates=bool(duplicate_candidates)),
+                recommended_action=_review_recommended_action(
+                    config,
+                    frontmatter,
+                    has_duplicate_candidates=bool(duplicate_candidates),
+                ),
+                duplicate_candidates=duplicate_candidates,
             )
         )
     items.sort(key=lambda item: (item.updated_at, item.relative_path.as_posix()))
@@ -484,7 +526,12 @@ def _source_groups(items: Sequence[ReviewItem]) -> list[dict[str, Any]]:
     return sorted(groups.values(), key=lambda group: str(group["source"] or ""))
 
 
-def _review_risk_flags(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> tuple[str, ...]:
+def _review_risk_flags(
+    config: MemoryConfig,
+    frontmatter: MemoryFrontmatter,
+    *,
+    has_duplicate_candidates: bool = False,
+) -> tuple[str, ...]:
     flags: list[str] = []
     confidence = frontmatter.confidence
     if confidence is None:
@@ -497,16 +544,115 @@ def _review_risk_flags(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> 
         flags.append("missing_source")
     if frontmatter.contradicts:
         flags.append("has_contradictions")
+    if has_duplicate_candidates:
+        flags.append("possible_duplicate")
     return tuple(flags)
 
 
-def _review_recommended_action(config: MemoryConfig, frontmatter: MemoryFrontmatter) -> str:
-    flags = _review_risk_flags(config, frontmatter)
-    if "low_confidence" in flags or "missing_source" in flags or "missing_confidence" in flags:
+def _review_recommended_action(
+    config: MemoryConfig,
+    frontmatter: MemoryFrontmatter,
+    *,
+    has_duplicate_candidates: bool = False,
+) -> str:
+    flags = _review_risk_flags(config, frontmatter, has_duplicate_candidates=has_duplicate_candidates)
+    if (
+        "low_confidence" in flags
+        or "missing_source" in flags
+        or "missing_confidence" in flags
+        or "possible_duplicate" in flags
+    ):
         return "inspect"
     if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
         return "approve"
     return "defer"
+
+
+def _duplicate_candidates(
+    config: MemoryConfig,
+    record: _MemoryRecord,
+    signature_index: dict[str, list[tuple[_MemoryRecord, str]]],
+) -> tuple[DuplicateCandidate, ...]:
+    frontmatter = record.document.frontmatter
+    candidates: dict[str, DuplicateCandidate] = {}
+    for signature, pending_field in _duplicate_text_signatures(record):
+        for candidate_record, candidate_field in signature_index.get(signature, []):
+            candidate_frontmatter = candidate_record.document.frontmatter
+            if candidate_frontmatter.id == frontmatter.id:
+                continue
+            if candidate_frontmatter.status.value not in _DUPLICATE_CANDIDATE_STATUSES:
+                continue
+            existing = candidates.get(candidate_frontmatter.id)
+            if existing is None:
+                candidates[candidate_frontmatter.id] = DuplicateCandidate(
+                    memory_id=candidate_frontmatter.id,
+                    relative_path=candidate_record.path.relative_to(config.vault_path),
+                    memory_type=candidate_frontmatter.type.value,
+                    status=candidate_frontmatter.status.value,
+                    match_reason="normalized_content_exact_match",
+                    signature=signature,
+                    matched_fields={
+                        "pending": (pending_field,),
+                        "candidate": (candidate_field,),
+                    },
+                )
+                continue
+            if existing.signature != signature:
+                continue
+            candidates[candidate_frontmatter.id] = DuplicateCandidate(
+                memory_id=existing.memory_id,
+                relative_path=existing.relative_path,
+                memory_type=existing.memory_type,
+                status=existing.status,
+                match_reason=existing.match_reason,
+                signature=existing.signature,
+                matched_fields={
+                    "pending": _sorted_tuple((*existing.matched_fields["pending"], pending_field)),
+                    "candidate": _sorted_tuple((*existing.matched_fields["candidate"], candidate_field)),
+                },
+            )
+    return tuple(
+        sorted(
+            candidates.values(),
+            key=lambda candidate: (
+                candidate.status != LifecycleStatus.ACTIVE.value,
+                candidate.relative_path.as_posix(),
+                candidate.memory_id,
+            ),
+        )
+    )
+
+
+def _duplicate_signature_index(records: Sequence[_MemoryRecord]) -> dict[str, list[tuple[_MemoryRecord, str]]]:
+    index: dict[str, list[tuple[_MemoryRecord, str]]] = {}
+    for record in records:
+        for signature, field in _duplicate_text_signatures(record):
+            index.setdefault(signature, []).append((record, field))
+    return index
+
+
+def _duplicate_text_signatures(record: _MemoryRecord) -> tuple[tuple[str, str], ...]:
+    signatures: list[tuple[str, str]] = []
+    body_signature = _duplicate_text_signature(record.body)
+    if body_signature is not None:
+        signatures.append((body_signature, "body"))
+    for observation in record.document.frontmatter.observations:
+        observation_signature = _duplicate_text_signature(observation.text)
+        if observation_signature is not None:
+            signatures.append((observation_signature, "observation"))
+    return tuple(dict.fromkeys(signatures))
+
+
+def _duplicate_text_signature(text: str) -> Optional[str]:
+    normalized = " ".join(text.casefold().split())
+    if not normalized:
+        return None
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _sorted_tuple(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(set(values)))
 
 
 def touch_last_used(config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None) -> None:
