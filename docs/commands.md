@@ -32,6 +32,7 @@ memory mark <id> --status stale
 memory decay
 memory review
 memory reject <id>
+memory import-source <path>
 memory import <path>
 memory export --format markdown
 ```
@@ -581,6 +582,27 @@ pending memory remains excluded from default recall/search/brief behavior unless
 requested with `--status pending`. Human output now includes a diff-style preview
 of pending metadata, source, status, and body text while JSON output keeps the
 stable Stage 9 review payload.
+
+### `memory import-source`
+
+Implemented in Stage 14.
+
+Saves a Markdown/text file as raw source material under
+`Sources/YYYY-MM-DD_slug/source.md` without promoting anything into canonical
+`Memories/`. Use `--extract-file` when you already have a concise structured
+extract. The command records source metadata such as `channel`, `source_quality`,
+`sensitivity`, tags, project, and file origin.
+
+Example:
+
+```bash
+memory import-source ./article.md \
+  --vault ./memory-vault \
+  --extract-file ./article-extract.md \
+  --project agent-memory \
+  --tag article \
+  --json
+```
 
 ### `memory import`
 

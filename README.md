@@ -365,6 +365,8 @@ Core setup and health commands:
 Write and review commands:
 
 - `memory remember` creates a validated Markdown memory.
+- `memory import-source` saves Markdown/text source material and an optional
+  extract under `Sources/` without promoting canonical memory.
 - `memory review` lists pending agent-generated memories.
 - `memory mark` changes lifecycle status.
 - `memory reject` rejects a memory.
