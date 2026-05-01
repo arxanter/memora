@@ -1,5 +1,6 @@
 import json
 
+import yaml
 from typer.testing import CliRunner
 
 from agent_memory.cli import app
@@ -87,7 +88,14 @@ def test_help_command_lists_grouped_commands():
         for group in payload["groups"]
         for command in group["commands"]
     }
-    assert {"init <vault>", "mcp-config", "remember", "brief", "eval <fixture-or-file>"} <= command_usages
+    assert {
+        "init <vault>",
+        "mcp-config",
+        "remember",
+        "import-source <path>",
+        "brief",
+        "eval <fixture-or-file>",
+    } <= command_usages
 
 
 def test_mcp_config_command_prints_client_config(tmp_path):
@@ -150,6 +158,53 @@ def test_placeholder_commands_have_stable_json_signatures(tmp_path):
         payload = json.loads(result.output)
         assert payload["ok"] is True
         assert payload["implemented"] is False
+
+
+def test_import_source_command_saves_file_and_extract(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "article.md"
+    extract = tmp_path / "extract.md"
+    source.write_text("# Article\n\nRaw source content.", encoding="utf-8")
+    extract.write_text("## Summary\n\nUseful extracted summary.", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "import-source",
+            str(source),
+            "--vault",
+            str(vault),
+            "--extract-file",
+            str(extract),
+            "--project",
+            "agent-memory",
+            "--tag",
+            "article",
+            "--sensitivity",
+            "private",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "import-source"
+    assert payload["channel"] == "file"
+    assert payload["source_quality"] == "imported_export"
+    assert payload["sensitivity"] == "private"
+    assert payload["origin"]["file_name"] == "article.md"
+    assert payload["relative_source_path"].endswith("/source.md")
+    assert payload["relative_extract_path"].endswith("/extract.md")
+
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["channel"] == "file"
+    assert source_frontmatter["source_quality"] == "imported_export"
+    assert source_frontmatter["sensitivity"] == "private"
+    assert source_frontmatter["origin"]["file_name"] == "article.md"
+    assert "Raw source content." in source_text
 
 
 def test_brief_command_generates_markdown_and_json(tmp_path):

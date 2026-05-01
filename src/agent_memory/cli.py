@@ -28,6 +28,7 @@ from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType
+from agent_memory.sources import save_source_material
 from agent_memory.sync import detect_sync_conflicts
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
 from agent_memory.vault import (
@@ -67,6 +68,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("supersede", "Mark an old memory replaced by a newer one."),
             ("contradict", "Record a contradiction relation between memories."),
             ("decay", "Mark expired active memories stale."),
+            ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
         ),
     ),
     (
@@ -218,6 +220,55 @@ def remember(
         return
 
     console.print(f"[green]Created memory:[/green] {payload['relative_path']}")
+
+
+@app.command("import-source")
+def import_source_command(
+    path: Path = typer.Argument(..., help="Markdown or text file to save under Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to file stem."),
+    extract_file: Optional[Path] = typer.Option(None, "--extract-file", help="Optional Markdown/text extract file."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    channel: str = typer.Option("file", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("imported_export", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Save a Markdown/text file as source material without promoting memory."""
+
+    try:
+        config = load_config(vault)
+        content = path.expanduser().read_text(encoding="utf-8")
+        extract = extract_file.expanduser().read_text(encoding="utf-8") if extract_file else None
+        result = save_source_material(
+            config,
+            title=title or path.stem,
+            content=content,
+            extract=extract,
+            project=project,
+            tags=tag,
+            channel=channel,
+            source_quality=source_quality,
+            sensitivity=sensitivity,
+            origin={
+                "provider": "file",
+                "file_name": path.name,
+                "path": str(path.expanduser()),
+            },
+        )
+        payload = result.to_dict()
+        payload.update({"command": "import-source"})
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_source_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Imported source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
 
 
 @app.command()
