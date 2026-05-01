@@ -30,6 +30,7 @@ from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.sources import save_source_material
+from agent_memory.synthesis import write_synthesis
 from agent_memory.sync import detect_sync_conflicts
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
 from agent_memory.vault import (
@@ -83,6 +84,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("recall", "Pack ranked chunks under a strict token budget."),
             ("explain-recall", "Explain selected and skipped recall candidates."),
             ("brief", "Render a citation-preserving Memory Brief."),
+            ("synthesize", "Write a deterministic generated synthesis under Synthesis/."),
             ("should-recall", "Decide whether a user request should use memory."),
         ),
     ),
@@ -754,6 +756,35 @@ def brief(
         return
 
     console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
+
+
+@app.command("synthesize")
+def synthesize_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    title: Optional[str] = typer.Option(None, "--title", help="Synthesis title."),
+    limit: int = typer.Option(20, "--limit", min=1, help="Maximum active memories to include."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Write a deterministic generated synthesis Markdown file."""
+
+    try:
+        config = load_config(vault)
+        payload = write_synthesis(
+            config,
+            project=project,
+            title=title,
+            limit=limit,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="synthesize_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Wrote synthesis:[/green] {payload['relative_path']}")
+    console.print(f"Memories: {payload['memory_count']}")
 
 
 @app.command("should-recall")

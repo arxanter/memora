@@ -101,6 +101,12 @@ from agent_memory.sources import (
     SourceCaptureResult,
     save_source_material,
 )
+from agent_memory.synthesis import (
+    SynthesisItem,
+    SynthesisResult,
+    render_synthesis_markdown,
+    write_synthesis,
+)
 from agent_memory.sync import (
     ConflictIssue,
     ConflictReport,
@@ -174,6 +180,8 @@ __all__ = [
     "SemanticConfig",
     "SourceCaptureResult",
     "SourceRef",
+    "SynthesisItem",
+    "SynthesisResult",
     "ValidationIssue",
     "VaultValidationReport",
     "VaultLock",
@@ -202,6 +210,7 @@ __all__ = [
     "reject_memory",
     "remember_memory",
     "render_brief_markdown",
+    "render_synthesis_markdown",
     "recall_memory",
     "render_memory_markdown",
     "review_queue",
@@ -217,5 +226,6 @@ __all__ = [
     "validate_markdown_file",
     "validate_vault",
     "vault_lock",
+    "write_synthesis",
     "write_config",
 ]
