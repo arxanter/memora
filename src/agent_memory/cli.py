@@ -45,6 +45,7 @@ app = typer.Typer(
 )
 console = Console()
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
+SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Setup and health",
@@ -69,6 +70,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("contradict", "Record a contradiction relation between memories."),
             ("decay", "Mark expired active memories stale."),
             ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
+            ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
         ),
     ),
     (
@@ -269,6 +271,74 @@ def import_source_command(
     console.print(f"[green]Imported source:[/green] {payload['relative_source_path']}")
     if payload.get("relative_extract_path"):
         console.print(f"Extract: {payload['relative_extract_path']}")
+
+
+@app.command("import-source-inbox")
+def import_source_inbox_command(
+    path: Path = typer.Argument(..., help="Directory containing Markdown/text source files."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for imported sources."),
+    channel: str = typer.Option("web_clipper", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("imported_export", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show matching files without writing to the vault."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Import Markdown/text files from a source inbox directory."""
+
+    try:
+        config = load_config(vault)
+        inbox = path.expanduser()
+        if not inbox.is_dir():
+            raise ValueError(f"source inbox is not a directory: {inbox}")
+        candidates = _source_inbox_files(inbox)
+        if dry_run:
+            payload = _source_inbox_plan_payload(inbox, candidates, dry_run=True)
+        else:
+            sources = []
+            for candidate in candidates:
+                result = save_source_material(
+                    config,
+                    title=candidate.stem,
+                    content=candidate.read_text(encoding="utf-8"),
+                    project=project,
+                    tags=tag,
+                    channel=channel,
+                    source_quality=source_quality,
+                    sensitivity=sensitivity,
+                    origin={
+                        "provider": "file",
+                        "file_name": candidate.name,
+                        "path": str(candidate),
+                    },
+                )
+                sources.append(result.to_dict())
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "command": "import-source-inbox",
+                "dry_run": False,
+                "inbox_path": str(inbox),
+                "source_count": len(sources),
+                "sources": sources,
+            }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_source_inbox_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] {payload['source_count']} file(s) would be imported.")
+        for source in payload["sources"]:
+            console.print(f"- {source['path']}")
+        return
+
+    console.print(f"[green]Imported sources:[/green] {payload['source_count']}")
+    for source in payload["sources"]:
+        console.print(f"- {source['relative_source_path']}")
 
 
 @app.command()
@@ -1096,6 +1166,33 @@ def _placeholder_command(
         return
 
     console.print(f"[yellow]{payload['message']}[/yellow]")
+
+
+def _source_inbox_files(path: Path) -> list[Path]:
+    return sorted(
+        item
+        for item in path.rglob("*")
+        if item.is_file() and item.suffix.lower() in SOURCE_INBOX_SUFFIXES
+    )
+
+
+def _source_inbox_plan_payload(path: Path, candidates: list[Path], *, dry_run: bool) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "import-source-inbox",
+        "dry_run": dry_run,
+        "inbox_path": str(path),
+        "source_count": len(candidates),
+        "sources": [
+            {
+                "path": str(candidate),
+                "title": candidate.stem,
+                "suffix": candidate.suffix.lower(),
+            }
+            for candidate in candidates
+        ],
+    }
 
 
 def _print_json(payload: dict[str, Any]) -> None:

@@ -33,6 +33,7 @@ memory decay
 memory review
 memory reject <id>
 memory import-source <path>
+memory import-source-inbox <path> --dry-run
 memory import <path>
 memory export --format markdown
 ```
@@ -601,6 +602,26 @@ memory import-source ./article.md \
   --extract-file ./article-extract.md \
   --project agent-memory \
   --tag article \
+  --json
+```
+
+### `memory import-source-inbox`
+
+Implemented in Stage 14.
+
+Scans a directory recursively for `.md`, `.markdown`, and `.txt` files and saves
+each matching file as source material under `Sources/`. It never deletes, moves,
+or edits the inbox files. Use `--dry-run` first to preview which files will be
+imported.
+
+Example:
+
+```bash
+memory import-source-inbox ./Sources/Inbox \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --tag web-clip \
+  --dry-run \
   --json
 ```
 

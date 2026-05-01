@@ -93,6 +93,7 @@ def test_help_command_lists_grouped_commands():
         "mcp-config",
         "remember",
         "import-source <path>",
+        "import-source-inbox <path>",
         "brief",
         "eval <fixture-or-file>",
     } <= command_usages
@@ -205,6 +206,77 @@ def test_import_source_command_saves_file_and_extract(tmp_path):
     assert source_frontmatter["sensitivity"] == "private"
     assert source_frontmatter["origin"]["file_name"] == "article.md"
     assert "Raw source content." in source_text
+
+
+def test_import_source_inbox_dry_run_lists_matching_files(tmp_path):
+    vault = tmp_path / "memory-vault"
+    inbox = tmp_path / "Inbox"
+    nested = inbox / "nested"
+    nested.mkdir(parents=True)
+    (inbox / "clip.md").write_text("# Clip\n", encoding="utf-8")
+    (nested / "note.txt").write_text("Nested note", encoding="utf-8")
+    (inbox / "ignore.pdf").write_text("ignored", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "import-source-inbox",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["source_count"] == 2
+    assert [source["title"] for source in payload["sources"]] == ["clip", "note"]
+    assert not list((vault / "Sources").glob("*"))
+
+
+def test_import_source_inbox_imports_matching_files(tmp_path):
+    vault = tmp_path / "memory-vault"
+    inbox = tmp_path / "Inbox"
+    inbox.mkdir()
+    (inbox / "clip.md").write_text("# Clip\n\nCaptured web clip.", encoding="utf-8")
+    (inbox / "note.markdown").write_text("# Note\n\nCaptured note.", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "import-source-inbox",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--tag",
+            "clip",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is False
+    assert payload["source_count"] == 2
+    assert {source["channel"] for source in payload["sources"]} == {"web_clipper"}
+    assert {source["source_quality"] for source in payload["sources"]} == {"imported_export"}
+
+    first_source = payload["sources"][0]
+    source_text = (vault / first_source["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["project"] == "agent-memory"
+    assert source_frontmatter["tags"] == ["clip"]
+    assert source_frontmatter["channel"] == "web_clipper"
+    assert source_frontmatter["origin"]["provider"] == "file"
 
 
 def test_brief_command_generates_markdown_and_json(tmp_path):
