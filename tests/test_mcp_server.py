@@ -963,21 +963,20 @@ def test_mcp_build_context_traces_profile_policy_for_task_classes(tmp_path):
     assert planning_payload["brief"] is None
     assert planning_payload["citations"] == []
     assert planning_payload["trace"]["recall_policy"]["include_profile"] is True
-    assert planning_payload["profile"] == {
-        "included": False,
-        "requested": True,
-        "reason": "not_implemented",
-    }
+    assert planning_payload["profile"]["included"] is False
+    assert planning_payload["profile"]["requested"] is True
+    assert planning_payload["profile"]["reason"] == "policy_skipped"
+    assert planning_payload["profile"]["request_sources"] == ["task_policy"]
     assert planning_payload["trace"]["profile"] == planning_payload["profile"]
+    assert planning_payload["trace"]["policy"]["should_recall"] is False
+    assert planning_payload["trace"]["task_budget"]["selected"] == 2000
 
     assert review_payload["ok"] is True
     assert review_payload["memory_needed"] is False
     assert review_payload["trace"]["recall_policy"]["include_profile"] is False
-    assert review_payload["profile"] == {
-        "included": False,
-        "requested": False,
-        "reason": "profile_injection_disabled",
-    }
+    assert review_payload["profile"]["included"] is False
+    assert review_payload["profile"]["requested"] is False
+    assert review_payload["profile"]["reason"] == "profile_injection_disabled"
     assert review_payload["trace"]["profile"] == review_payload["profile"]
 
 
@@ -1050,6 +1049,7 @@ def test_mcp_build_context_applies_task_class_recall_policy(tmp_path):
     assert payload["trace"]["recall_policy"]["include_profile"] is True
     assert payload["profile"]["requested"] is True
     assert payload["profile"]["included"] is False
+    assert payload["profile"]["reason"] == "no_profile_data"
 
 
 def test_mcp_mark_superseded_wraps_lifecycle_service(tmp_path):

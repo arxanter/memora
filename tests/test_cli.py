@@ -606,6 +606,133 @@ def test_should_recall_command_emits_human_and_json_output():
     assert payload["triggers"] == []
 
 
+def test_build_context_command_json_preserves_legacy_fields(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Build-context JSON keeps the legacy markdown, citations, memory_needed, and brief fields.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "What did we decide about build-context JSON?",
+            "--vault",
+            str(vault),
+            "--no-include-profile",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["implemented"] is True
+    assert payload["command"] == "build-context"
+    assert payload["memory_needed"] is True
+    assert payload["markdown"] == payload["brief"]["markdown"]
+    assert payload["citations"] == payload["brief"]["citations"]
+    assert payload["task_class"] == "default"
+    assert payload["budget"] == 1200
+    assert payload["profile"]["included"] is False
+    assert payload["profile"]["requested"] is False
+    assert payload["trace"]["policy"]["should_recall"] is True
+    assert payload["trace"]["freshness"]["trigger"] == "before_recall"
+    assert payload["trace"]["task_budget"]["selected"] == 1200
+
+
+def test_build_context_command_include_profile_adds_bounded_profile_context(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/preferences/profile-context.md",
+        memory_id="mem_20260502_profile_context",
+        memory_type="preference",
+        body="Include bounded generated profile context when build-context explicitly requests profiles.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "What did we decide about generated profile context?",
+            "--vault",
+            str(vault),
+            "--include-profile",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["memory_needed"] is True
+    assert payload["profile"]["requested"] is True
+    assert payload["profile"]["included"] is True
+    assert payload["profile"]["reason"] == "included"
+    assert payload["profile"]["profile_type"] == "user"
+    assert payload["profile"]["memory_count"] == 1
+    assert payload["profile"]["used_tokens_estimate"] <= payload["profile"]["budget"]
+    assert payload["profile"]["citations"][0]["key"] == "P1"
+    assert "# User Profile" in payload["profile"]["markdown"]
+    assert "[P1]" in payload["profile"]["markdown"]
+    assert payload["markdown"].startswith("---\nkind: profile")
+    assert "## Memory Brief" in payload["markdown"]
+    assert payload["citations"][0]["key"] == "P1"
+    assert payload["trace"]["profile"]["included"] is True
+    assert payload["trace"]["task_budget"]["profile_used"] == payload["profile"]["used_tokens_estimate"]
+    assert not (vault / "Profiles" / "user.md").exists()
+
+
+def test_build_context_command_no_include_profile_suppresses_profile_context(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/preferences/no-profile-context.md",
+        memory_id="mem_20260502_no_profile_context",
+        memory_type="preference",
+        body="Do not include generated profile context when build-context disables profiles.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "What did we decide about generated profile context?",
+            "--vault",
+            str(vault),
+            "--no-include-profile",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["memory_needed"] is True
+    assert payload["profile"]["requested"] is False
+    assert payload["profile"]["included"] is False
+    assert payload["profile"]["reason"] == "profile_injection_disabled"
+    assert "User Profile" not in payload["markdown"]
+    assert all(citation.get("key") != "P1" for citation in payload["citations"])
+
+
 def test_recall_command_packs_indexed_chunks_under_budget(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])

@@ -42,6 +42,7 @@ NEXT_STEPS = (
     "Regenerate it with `memory build-profile` after canonical memories change.",
     "Promote durable updates with `memory remember`; profile generation does not mutate memories.",
 )
+PROFILE_INJECTION_CITATION_PREFIX = "P"
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,125 @@ def build_profile(
 ) -> ProfileResult:
     """Write a deterministic generated profile under Profiles/."""
 
+    return _build_profile_result(
+        config,
+        profile_type=profile_type,
+        project=project,
+        budget=budget,
+        now=now,
+        write=True,
+    )
+
+
+def generate_profile_context(
+    config: MemoryConfig,
+    profile_type: str = "user",
+    project: Optional[str] = None,
+    budget: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> ProfileResult:
+    """Render deterministic generated profile context without writing Profiles/."""
+
+    return _build_profile_result(
+        config,
+        profile_type=profile_type,
+        project=project,
+        budget=budget,
+        now=now,
+        write=False,
+    )
+
+
+def build_context_profile_payload(
+    config: MemoryConfig,
+    *,
+    requested: bool,
+    request_sources: Sequence[str] = (),
+    project: Optional[str] = None,
+    task_budget: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Return bounded generated profile context metadata for build-context payloads."""
+
+    selected_project = _clean_optional(project)
+    profile_type = "project" if selected_project else "user"
+    profile_budget = _context_profile_budget(config, profile_type=profile_type, task_budget=task_budget)
+    payload: dict[str, Any] = {
+        "included": False,
+        "requested": bool(requested),
+        "request_sources": list(request_sources),
+        "reason": "profile_injection_disabled",
+        "profile_type": profile_type,
+        "project": selected_project,
+        "budget": profile_budget,
+        "used_tokens_estimate": 0,
+        "memory_count": 0,
+        "citations": [],
+    }
+
+    if not requested:
+        return payload
+    if not config.profile.enabled:
+        payload["reason"] = "profile_disabled"
+        return payload
+
+    try:
+        profile = generate_profile_context(
+            config,
+            profile_type=profile_type,
+            project=selected_project,
+            budget=profile_budget,
+            now=now,
+        )
+    except Exception as exc:
+        payload.update(
+            {
+                "reason": "profile_unavailable",
+                "error": str(exc),
+            }
+        )
+        return payload
+
+    payload.update(
+        {
+            "profile_type": profile.profile_type,
+            "project": profile.project,
+            "budget": profile.budget,
+            "used_tokens_estimate": profile.used_tokens_estimate,
+            "memory_count": len(profile.items),
+            "source_memory_ids": [item.memory_id for item in profile.items],
+            "relative_path": profile.relative_path.as_posix(),
+            "generated_at": profile.generated_at.isoformat(),
+            "truncated": profile.truncated,
+        }
+    )
+    if not profile.items:
+        payload["reason"] = "no_profile_data"
+        return payload
+
+    markdown, citations = _namespace_profile_citations(profile.markdown, profile.citations)
+    payload.update(
+        {
+            "included": True,
+            "reason": "included",
+            "markdown": markdown,
+            "citations": citations,
+        }
+    )
+    return payload
+
+
+def _build_profile_result(
+    config: MemoryConfig,
+    *,
+    profile_type: str,
+    project: Optional[str],
+    budget: Optional[int],
+    now: Optional[datetime],
+    write: bool,
+) -> ProfileResult:
+    """Build a profile result, optionally persisting it under Profiles/."""
+
     selected_profile_type = _validate_profile_type(profile_type)
     selected_project = _clean_optional(project)
     if selected_profile_type == "project" and selected_project is None:
@@ -173,10 +293,12 @@ def build_profile(
     if estimate_tokens(markdown) > selected_budget:
         raise ValueError("budget is too small to write required profile frontmatter")
 
-    with vault_lock(config, name="profile"):
-        target_path = _profile_path(config, profile_type=selected_profile_type, project=selected_project)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(target_path, markdown)
+    target_path = _profile_path(config, profile_type=selected_profile_type, project=selected_project)
+    if write:
+        with vault_lock(config, name="profile"):
+            target_path = _profile_path(config, profile_type=selected_profile_type, project=selected_project)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(target_path, markdown)
 
     return ProfileResult(
         config=config,
@@ -436,6 +558,18 @@ def _configured_budget(config: MemoryConfig, profile_type: str) -> int:
     return config.profile.user_budget
 
 
+def _context_profile_budget(
+    config: MemoryConfig,
+    *,
+    profile_type: str,
+    task_budget: Optional[int],
+) -> int:
+    configured = _configured_budget(config, profile_type)
+    if task_budget is None:
+        return configured
+    return max(1, min(configured, int(task_budget)))
+
+
 def _normalize_now(value: Optional[datetime]) -> datetime:
     current = value or datetime.now(timezone.utc)
     if current.tzinfo is None or current.tzinfo.utcoffset(current) is None:
@@ -455,14 +589,37 @@ def _slugify(text: str) -> str:
     return slug[:96].strip(".-") or "project"
 
 
+def _namespace_profile_citations(
+    markdown: str,
+    citations: Sequence[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    key_map: dict[str, str] = {}
+    namespaced_citations: list[dict[str, Any]] = []
+    for position, citation in enumerate(citations, start=1):
+        original_key = str(citation.get("key") or f"C{position}")
+        namespaced_key = f"{PROFILE_INJECTION_CITATION_PREFIX}{position}"
+        key_map[original_key] = namespaced_key
+        updated = dict(citation)
+        updated["key"] = namespaced_key
+        namespaced_citations.append(updated)
+
+    namespaced_markdown = markdown
+    for original_key, namespaced_key in key_map.items():
+        namespaced_markdown = namespaced_markdown.replace(f"[{original_key}]", f"[{namespaced_key}]")
+    return namespaced_markdown, namespaced_citations
+
+
 __all__ = [
     "DEFAULT_PROFILE_BUDGET",
     "NEXT_STEPS",
+    "PROFILE_INJECTION_CITATION_PREFIX",
     "PROFILE_SCHEMA_VERSION",
     "PROFILE_TYPES",
     "ProfileCandidate",
     "ProfileItem",
     "ProfileResult",
     "build_profile",
+    "build_context_profile_payload",
+    "generate_profile_context",
     "render_profile_markdown",
 ]

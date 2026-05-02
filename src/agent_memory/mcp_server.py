@@ -22,7 +22,7 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
-from agent_memory.profile import build_profile as build_profile_service
+from agent_memory.profile import build_context_profile_payload, build_profile as build_profile_service
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
@@ -550,8 +550,8 @@ def build_context_tool(
     config = _optional_config(vault)
     agent_policy = config.agent_policy if config else AgentPolicyConfig()
     raw_filters = _filters(filters)
+    include_profile_override = raw_filters.pop("include_profile", None)
     task_class, task_policy = _resolve_task_recall_policy(config, raw_filters.pop("task_class", None))
-    profile_trace = _build_context_profile_trace(task_policy)
     if task_policy.include_related and "include_related" not in raw_filters:
         raw_filters["include_related"] = True
     policy = should_recall(task, aliases=agent_policy.aliases).to_dict()
@@ -560,7 +560,22 @@ def build_context_tool(
     except Exception as exc:
         return _error_payload(exc, code="invalid_budget", tool="build_context", task=task, policy=policy)
 
+    profile_requested, profile_request_sources = _resolve_build_context_profile_request(
+        config,
+        task_policy,
+        include_profile_override,
+    )
+    profile_project = _optional_string(raw_filters.get("project"))
+
     if not policy["should_recall"]:
+        profile_trace = _policy_skipped_profile_payload(
+            config,
+            task_policy,
+            requested=profile_requested,
+            request_sources=profile_request_sources,
+            project=profile_project,
+            task_budget=selected_budget,
+        )
         return {
             "ok": True,
             "implemented": True,
@@ -575,6 +590,8 @@ def build_context_tool(
                 policy,
                 task_class=task_class,
                 task_policy=task_policy,
+                profile=profile_trace,
+                task_budget=selected_budget,
                 empty_reason="policy_skipped",
             ),
             "markdown": "",
@@ -582,6 +599,14 @@ def build_context_tool(
             "citations": [],
         }
 
+    profile_trace = _build_context_profile_trace(
+        config,
+        task_policy,
+        requested=profile_requested,
+        request_sources=profile_request_sources,
+        project=profile_project,
+        task_budget=selected_budget,
+    )
     brief_payload = brief_tool(str(policy["query"]), selected_budget, raw_filters, vault=vault)
     if not brief_payload.get("ok"):
         brief_payload.update(
@@ -596,6 +621,8 @@ def build_context_tool(
                     policy,
                     task_class=task_class,
                     task_policy=task_policy,
+                    profile=profile_trace,
+                    task_budget=selected_budget,
                     empty_reason="brief_failed",
                 ),
             }
@@ -624,14 +651,16 @@ def build_context_tool(
             policy,
             task_class=task_class,
             task_policy=task_policy,
+            profile=profile_trace,
+            task_budget=selected_budget,
             retrieval=retrieval_trace,
             freshness=brief_payload.get("freshness"),
             selected_count=chunk_count,
             empty_reason=empty_reason,
         ),
-        "markdown": brief_payload["markdown"],
+        "markdown": _compose_context_markdown(profile_trace, brief_payload["markdown"]),
         "brief": brief_payload,
-        "citations": brief_payload["citations"],
+        "citations": [*profile_trace.get("citations", []), *brief_payload["citations"]],
     }
 
 
@@ -1297,6 +1326,8 @@ def _build_context_trace(
     *,
     task_class: str = "default",
     task_policy: Optional[TaskRecallPolicyConfig] = None,
+    profile: Optional[Mapping[str, Any]] = None,
+    task_budget: Optional[int] = None,
     retrieval: Optional[Any] = None,
     freshness: Optional[Any] = None,
     selected_count: int = 0,
@@ -1319,10 +1350,26 @@ def _build_context_trace(
     if not isinstance(attempts, list):
         attempts = []
     freshness_trace = dict(freshness) if isinstance(freshness, Mapping) else None
+    profile_trace = dict(profile) if isinstance(profile, Mapping) else _build_context_profile_trace(
+        None,
+        task_policy,
+        requested=False,
+        request_sources=[],
+        project=None,
+        task_budget=task_budget,
+    )
+    selected_task_budget = int(task_budget or (task_policy.budget if task_policy is not None else 0))
     return {
+        "policy": dict(policy),
         "task_class": task_class,
         "recall_policy": task_policy.model_dump(mode="json") if task_policy is not None else None,
-        "profile": _build_context_profile_trace(task_policy),
+        "task_budget": {
+            "selected": selected_task_budget,
+            "brief": selected_task_budget,
+            "profile": int(profile_trace.get("budget") or 0),
+            "profile_used": int(profile_trace.get("used_tokens_estimate") or 0),
+        },
+        "profile": profile_trace,
         "policy_query": policy_query,
         "planned_query_variants": planned,
         "mode": retrieval_trace.get("mode"),
@@ -1332,6 +1379,22 @@ def _build_context_trace(
         "freshness": freshness_trace,
         "selected_count": selected_count,
         "empty_reason": empty_reason or retrieval_trace.get("empty_reason"),
+        "recall_ladder": [
+            {
+                "step": "policy",
+                "memory_needed": bool(policy.get("should_recall")),
+            },
+            {
+                "step": "profile",
+                "included": bool(profile_trace.get("included")),
+                "reason": profile_trace.get("reason"),
+            },
+            {
+                "step": "brief",
+                "selected_count": selected_count,
+                "empty_reason": empty_reason or retrieval_trace.get("empty_reason"),
+            },
+        ],
     }
 
 
@@ -1357,13 +1420,85 @@ def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[d
     return payload
 
 
-def _build_context_profile_trace(task_policy: Optional[TaskRecallPolicyConfig]) -> dict[str, Any]:
-    requested = bool(task_policy.include_profile) if task_policy is not None else True
-    return {
-        "included": False,
-        "requested": requested,
-        "reason": "not_implemented" if requested else "profile_injection_disabled",
-    }
+def _resolve_build_context_profile_request(
+    config: Optional[MemoryConfig],
+    task_policy: TaskRecallPolicyConfig,
+    override: Any,
+) -> tuple[bool, list[str]]:
+    if override is not None:
+        return _bool(override), ["filter"]
+    sources: list[str] = []
+    requested = False
+    if config is not None and config.profile.inject_by_default:
+        requested = True
+        sources.append("config")
+    if task_policy.include_profile:
+        requested = True
+        sources.append("task_policy")
+    return requested, sources
+
+
+def _build_context_profile_trace(
+    config: Optional[MemoryConfig],
+    task_policy: Optional[TaskRecallPolicyConfig],
+    *,
+    requested: bool,
+    request_sources: list[str],
+    project: Optional[str],
+    task_budget: Optional[int],
+) -> dict[str, Any]:
+    if config is None:
+        profile_type = "project" if project else "user"
+        return {
+            "included": False,
+            "requested": requested,
+            "request_sources": list(request_sources),
+            "reason": "config_unavailable" if requested else "profile_injection_disabled",
+            "profile_type": profile_type,
+            "project": project,
+            "budget": 0,
+            "used_tokens_estimate": 0,
+            "memory_count": 0,
+            "citations": [],
+        }
+    return build_context_profile_payload(
+        config,
+        requested=requested,
+        request_sources=request_sources,
+        project=project,
+        task_budget=task_budget,
+    )
+
+
+def _policy_skipped_profile_payload(
+    config: Optional[MemoryConfig],
+    task_policy: TaskRecallPolicyConfig,
+    *,
+    requested: bool,
+    request_sources: list[str],
+    project: Optional[str],
+    task_budget: int,
+) -> dict[str, Any]:
+    payload = _build_context_profile_trace(
+        config,
+        task_policy,
+        requested=False,
+        request_sources=request_sources,
+        project=project,
+        task_budget=task_budget,
+    )
+    payload["requested"] = requested
+    payload["reason"] = "policy_skipped" if requested else "profile_injection_disabled"
+    return payload
+
+
+def _compose_context_markdown(profile: Mapping[str, Any], brief_markdown: str) -> str:
+    profile_markdown = str(profile.get("markdown") or "") if profile.get("included") else ""
+    if not profile_markdown:
+        return brief_markdown
+    if not brief_markdown:
+        return profile_markdown
+    return f"{profile_markdown.rstrip()}\n\n{brief_markdown}"
 
 
 def _resolve_task_recall_policy(
