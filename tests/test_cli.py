@@ -553,6 +553,36 @@ def test_lookup_source_command_human_output_lists_compact_chunks(tmp_path):
     assert "SQLite is only" in result.output
 
 
+def test_lookup_source_command_omits_loaded_source_ids(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    source_dir = vault / "Sources" / "2026-05-02_cli_loaded_source"
+    source_dir.mkdir()
+    (source_dir / "extract.md").write_text("Already loaded source evidence.", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "lookup-source",
+            "2026-05-02_cli_loaded_source",
+            "--vault",
+            str(vault),
+            "--session-id",
+            "cli-source-session",
+            "--loaded-source-id",
+            "2026-05-02_cli_loaded_source",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["chunks"] == []
+    assert payload["citations"] == []
+    assert payload["empty_reason"] == "session_filtered"
+    assert payload["session"]["filtered_source_ids"] == ["2026-05-02_cli_loaded_source"]
+
+
 def test_brief_command_generates_markdown_and_json(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])
@@ -651,6 +681,55 @@ def test_build_context_command_json_preserves_legacy_fields(tmp_path):
     assert payload["trace"]["policy"]["should_recall"] is True
     assert payload["trace"]["freshness"]["trigger"] == "before_recall"
     assert payload["trace"]["task_budget"]["selected"] == 1200
+
+
+def test_build_context_command_omits_loaded_memory_ids(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/decisions/session-loaded.md",
+        memory_id="mem_20260502_cli_session_loaded",
+        memory_type="decision",
+        body="Build-context session dedupe should omit this already loaded memory.",
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/session-remaining.md",
+        memory_id="mem_20260502_cli_session_remaining",
+        memory_type="decision",
+        body="Build-context session dedupe should keep this remaining memory.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "What did we decide about build-context session dedupe?",
+            "--vault",
+            str(vault),
+            "--no-include-profile",
+            "--session-id",
+            "cli-session",
+            "--loaded-memory-id",
+            "mem_20260502_cli_session_loaded,mem_missing",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    cited_ids = {citation["id"] for citation in payload["citations"]}
+    assert "mem_20260502_cli_session_loaded" not in cited_ids
+    assert "mem_20260502_cli_session_remaining" in cited_ids
+    assert payload["session"]["session_id"] == "cli-session"
+    assert payload["session"]["loaded_memory_ids"] == [
+        "mem_20260502_cli_session_loaded",
+        "mem_missing",
+    ]
+    assert payload["session"]["filtered_memory_ids"] == ["mem_20260502_cli_session_loaded"]
+    assert payload["trace"]["session"] == payload["session"]
 
 
 def test_build_context_command_include_profile_adds_bounded_profile_context(tmp_path):
@@ -764,6 +843,48 @@ def test_recall_command_packs_indexed_chunks_under_budget(tmp_path):
     assert payload["used_tokens_estimate"] <= 12
     assert payload["chunk_count"] == 1
     assert payload["chunks"][0]["citation"] == payload["citations"][0]
+
+
+def test_recall_command_omits_loaded_memory_ids(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/decisions/recall-session-loaded.md",
+        memory_id="mem_20260502_cli_recall_loaded",
+        memory_type="decision",
+        body="Recall session dedupe should omit this already loaded memory.",
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/recall-session-remaining.md",
+        memory_id="mem_20260502_cli_recall_remaining",
+        memory_type="decision",
+        body="Recall session dedupe should keep this remaining memory.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "recall",
+            "recall session dedupe",
+            "--vault",
+            str(vault),
+            "--session-id",
+            "cli-recall-session",
+            "--loaded-memory-id",
+            "mem_20260502_cli_recall_loaded",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    chunk_ids = {chunk["id"] for chunk in payload["chunks"]}
+    assert "mem_20260502_cli_recall_loaded" not in chunk_ids
+    assert "mem_20260502_cli_recall_remaining" in chunk_ids
+    assert payload["session"]["filtered_memory_ids"] == ["mem_20260502_cli_recall_loaded"]
 
 
 def test_search_command_returns_ranked_json_results(tmp_path):

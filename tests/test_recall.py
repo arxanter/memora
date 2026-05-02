@@ -154,6 +154,82 @@ def test_recall_memory_never_exceeds_tiny_budget(tmp_path):
     assert payload["chunks"][0]["truncated"] is True
 
 
+def test_recall_memory_omits_loaded_memory_ids_and_reports_session(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/decisions/session-loaded.md",
+        memory_id="mem_20260502_session_loaded",
+        memory_type="decision",
+        body="Session dedupe should not return this loaded memory again.",
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/session-remaining.md",
+        memory_id="mem_20260502_session_remaining",
+        memory_type="decision",
+        body="Session dedupe should return this remaining memory instead.",
+    )
+    config = load_config(vault)
+    reindex_vault(config)
+
+    baseline = recall_memory(config, "session dedupe", budget=120).to_dict()
+    payload = recall_memory(
+        config,
+        "session dedupe",
+        budget=120,
+        session_id="agent-session-1",
+        loaded_memory_ids=("mem_20260502_session_loaded",),
+    ).to_dict()
+
+    assert "session" not in baseline
+    assert "mem_20260502_session_loaded" in {chunk["id"] for chunk in baseline["chunks"]}
+    assert "mem_20260502_session_loaded" not in {chunk["id"] for chunk in payload["chunks"]}
+    assert "mem_20260502_session_remaining" in {chunk["id"] for chunk in payload["chunks"]}
+    assert payload["session"]["session_id"] == "agent-session-1"
+    assert payload["session"]["loaded_memory_ids"] == ["mem_20260502_session_loaded"]
+    assert payload["session"]["filtered_memory_ids"] == ["mem_20260502_session_loaded"]
+    assert payload["session"]["filtered_memory_count"] == 1
+
+
+def test_recall_memory_omits_loaded_source_ids(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/source-loaded.md",
+        memory_id="mem_20260502_source_loaded",
+        memory_type="fact",
+        body="Source dedupe should skip memory backed by an already loaded source.",
+        source_path="Sources/2026-05-02_loaded/extract.md",
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/source-remaining.md",
+        memory_id="mem_20260502_source_remaining",
+        memory_type="fact",
+        body="Source dedupe should keep memory backed by a different source.",
+        source_path="Sources/2026-05-02_remaining/extract.md",
+    )
+    config = load_config(vault)
+    reindex_vault(config)
+
+    payload = recall_memory(
+        config,
+        "source dedupe",
+        budget=120,
+        session_id="agent-session-2",
+        loaded_source_ids=("2026-05-02_loaded",),
+    ).to_dict()
+
+    assert "mem_20260502_source_loaded" not in {chunk["id"] for chunk in payload["chunks"]}
+    assert "mem_20260502_source_remaining" in {chunk["id"] for chunk in payload["chunks"]}
+    assert payload["session"]["loaded_source_ids"] == ["2026-05-02_loaded"]
+    assert payload["session"]["filtered_memory_ids"] == ["mem_20260502_source_loaded"]
+    assert payload["session"]["filtered_source_ids"] == ["2026-05-02_loaded"]
+
+
 def _candidate(
     chunk_id,
     document_id,
@@ -201,6 +277,7 @@ def _write_memory(
     confidence=None,
     created_at="2026-04-30T12:00:00+02:00",
     updated_at="2026-04-30T12:00:00+02:00",
+    source_path=None,
     relations=None,
 ):
     path = vault / relative_path
@@ -215,6 +292,7 @@ def _write_memory(
         ]
     )
     relation_block = "relations:\n{0}".format(relation_yaml) if relation_yaml else "relations: []"
+    source_block = "source:\n  path: {0}\n".format(source_path) if source_path else "source:\n"
     path.write_text(
         """---
 schema_version: 1
@@ -228,6 +306,7 @@ created_at: {created_at}
 updated_at: {updated_at}
 valid_from: 2026-04-30
 valid_to:
+{source_block}
 {relations}
 observations:
   - category: {memory_type}
@@ -245,6 +324,7 @@ observations:
             confidence="" if confidence is None else confidence,
             created_at=created_at,
             updated_at=updated_at,
+            source_block=source_block,
             relations=relation_block,
             body=body,
         ),

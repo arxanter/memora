@@ -13,6 +13,7 @@ import yaml
 from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
 from agent_memory.indexer import estimate_tokens
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType, SourceRef
+from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sync import atomic_write_many, vault_lock
 from agent_memory.vault import RememberResult, remember_memory
 
@@ -222,6 +223,9 @@ def lookup_source(
     source_id: str,
     query: Optional[str] = None,
     budget: int = 800,
+    *,
+    session_id: Any = None,
+    loaded_source_ids: Any = None,
 ) -> dict[str, Any]:
     """Return compact, read-only source evidence for an exact Sources/<id> directory."""
 
@@ -244,6 +248,10 @@ def lookup_source(
             },
         }
     selected_source_id = str(source_id).strip()
+    session_state = normalize_session_recall_state(
+        session_id=session_id,
+        loaded_source_ids=loaded_source_ids,
+    )
     base_payload: dict[str, Any] = {
         "ok": True,
         "implemented": True,
@@ -255,6 +263,8 @@ def lookup_source(
         "chunks": [],
         "citations": [],
     }
+    if session_state.requested:
+        base_payload["session"] = session_trace(session_state)
     if (
         not selected_source_id
         or selected_source_id in {".", ".."}
@@ -265,6 +275,20 @@ def lookup_source(
             code="source_not_found",
             message=f"source not found: {selected_source_id}",
         )
+
+    if selected_source_id in session_state.loaded_source_id_set:
+        base_payload.update(
+            {
+                "source_path": None,
+                "fallback": False,
+                "empty_reason": "session_filtered",
+                "session": session_trace(
+                    session_state,
+                    filtered_source_ids=(selected_source_id,),
+                ),
+            }
+        )
+        return base_payload
 
     source_dir = config.vault_path / config.sources_dir / selected_source_id
     if not source_dir.is_dir():

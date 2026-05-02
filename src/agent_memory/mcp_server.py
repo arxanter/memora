@@ -33,6 +33,7 @@ from agent_memory.schema import (
     MemoryType,
     SourceRef,
 )
+from agent_memory.session import normalize_loaded_ids, normalize_session_recall_state, session_trace
 from agent_memory.sources import lookup_source, save_source_material, save_source_with_memories
 from agent_memory.ux import inspect_memory
 from agent_memory.vault import placeholder_result, remember_memory
@@ -167,6 +168,8 @@ def lookup_source_tool(
     source_id: str,
     query: Optional[str] = None,
     budget: int = 800,
+    session_id: Optional[str] = None,
+    loaded_source_ids: Optional[list[str]] = None,
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
@@ -174,7 +177,14 @@ def lookup_source_tool(
 
     try:
         config = load_config(vault)
-        return lookup_source(config, source_id, query=query, budget=budget)
+        return lookup_source(
+            config,
+            source_id,
+            query=query,
+            budget=budget,
+            session_id=session_id,
+            loaded_source_ids=loaded_source_ids,
+        )
     except Exception as exc:
         payload = _error_payload(
             exc,
@@ -420,6 +430,9 @@ def recall_tool(
     query: str,
     budget: int = 1200,
     filters: Optional[Mapping[str, Any]] = None,
+    session_id: Optional[str] = None,
+    loaded_memory_ids: Optional[list[str]] = None,
+    loaded_source_ids: Optional[list[str]] = None,
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
@@ -431,6 +444,12 @@ def recall_tool(
         return _error_payload(exc, code="invalid_budget", tool="recall")
 
     raw_filters = _filters(filters)
+    session_inputs = _session_inputs(
+        raw_filters,
+        session_id=session_id,
+        loaded_memory_ids=loaded_memory_ids,
+        loaded_source_ids=loaded_source_ids,
+    )
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
     mode = str(raw_filters.pop("mode", "auto"))
@@ -445,6 +464,7 @@ def recall_tool(
             include_related=include_related,
             semantic=None if semantic is None else _bool(semantic),
             mode=mode,
+            **session_inputs,
         ).to_dict()
         payload.update({"tool": "recall", "freshness": freshness})
         return payload
@@ -463,6 +483,9 @@ def brief_tool(
     query: str,
     budget: int = 1200,
     filters: Optional[Mapping[str, Any]] = None,
+    session_id: Optional[str] = None,
+    loaded_memory_ids: Optional[list[str]] = None,
+    loaded_source_ids: Optional[list[str]] = None,
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
@@ -474,6 +497,12 @@ def brief_tool(
         return _error_payload(exc, code="invalid_budget", tool="brief")
 
     raw_filters = _filters(filters)
+    session_inputs = _session_inputs(
+        raw_filters,
+        session_id=session_id,
+        loaded_memory_ids=loaded_memory_ids,
+        loaded_source_ids=loaded_source_ids,
+    )
     include_related = _bool(raw_filters.pop("include_related", False))
     semantic = raw_filters.pop("semantic", None)
     mode = str(raw_filters.pop("mode", "auto"))
@@ -488,6 +517,7 @@ def brief_tool(
             include_related=include_related,
             semantic=None if semantic is None else _bool(semantic),
             mode=mode,
+            **session_inputs,
         ).to_dict()
         payload.update({"tool": "brief", "freshness": freshness})
         return payload
@@ -542,6 +572,9 @@ def build_context_tool(
     task: str,
     budget: int = 1200,
     filters: Optional[Mapping[str, Any]] = None,
+    session_id: Optional[str] = None,
+    loaded_memory_ids: Optional[list[str]] = None,
+    loaded_source_ids: Optional[list[str]] = None,
     *,
     vault: Optional[PathLike] = None,
 ) -> JsonPayload:
@@ -550,6 +583,13 @@ def build_context_tool(
     config = _optional_config(vault)
     agent_policy = config.agent_policy if config else AgentPolicyConfig()
     raw_filters = _filters(filters)
+    session_inputs = _session_inputs(
+        raw_filters,
+        session_id=session_id,
+        loaded_memory_ids=loaded_memory_ids,
+        loaded_source_ids=loaded_source_ids,
+    )
+    session_state = normalize_session_recall_state(**session_inputs)
     include_profile_override = raw_filters.pop("include_profile", None)
     task_class, task_policy = _resolve_task_recall_policy(config, raw_filters.pop("task_class", None))
     if task_policy.include_related and "include_related" not in raw_filters:
@@ -568,6 +608,7 @@ def build_context_tool(
     profile_project = _optional_string(raw_filters.get("project"))
 
     if not policy["should_recall"]:
+        session_payload = session_trace(session_state)
         profile_trace = _policy_skipped_profile_payload(
             config,
             task_policy,
@@ -576,7 +617,7 @@ def build_context_tool(
             project=profile_project,
             task_budget=selected_budget,
         )
-        return {
+        payload = {
             "ok": True,
             "implemented": True,
             "tool": "build_context",
@@ -592,12 +633,16 @@ def build_context_tool(
                 task_policy=task_policy,
                 profile=profile_trace,
                 task_budget=selected_budget,
+                session=session_payload,
                 empty_reason="policy_skipped",
             ),
             "markdown": "",
             "brief": None,
             "citations": [],
         }
+        if session_payload:
+            payload["session"] = session_payload
+        return payload
 
     profile_trace = _build_context_profile_trace(
         config,
@@ -607,7 +652,13 @@ def build_context_tool(
         project=profile_project,
         task_budget=selected_budget,
     )
-    brief_payload = brief_tool(str(policy["query"]), selected_budget, raw_filters, vault=vault)
+    brief_payload = brief_tool(
+        str(policy["query"]),
+        selected_budget,
+        raw_filters,
+        **session_inputs,
+        vault=vault,
+    )
     if not brief_payload.get("ok"):
         brief_payload.update(
             {
@@ -623,6 +674,7 @@ def build_context_tool(
                     task_policy=task_policy,
                     profile=profile_trace,
                     task_budget=selected_budget,
+                    session=brief_payload.get("session") or session_trace(session_state),
                     empty_reason="brief_failed",
                 ),
             }
@@ -655,13 +707,14 @@ def build_context_tool(
             task_budget=selected_budget,
             retrieval=retrieval_trace,
             freshness=brief_payload.get("freshness"),
+            session=brief_payload.get("session"),
             selected_count=chunk_count,
             empty_reason=empty_reason,
         ),
         "markdown": _compose_context_markdown(profile_trace, brief_payload["markdown"]),
         "brief": brief_payload,
         "citations": [*profile_trace.get("citations", []), *brief_payload["citations"]],
-    }
+    } | ({"session": brief_payload["session"]} if brief_payload.get("session") else {})
 
 
 def inspect_tool(memory_id: str, *, vault: Optional[PathLike] = None) -> JsonPayload:
@@ -902,10 +955,18 @@ def create_server() -> Any:
         source_id: str,
         query: Optional[str] = None,
         budget: int = 800,
+        session_id: Optional[str] = None,
+        loaded_source_ids: Optional[list[str]] = None,
     ) -> JsonPayload:
         """Return compact evidence from Sources/<source_id>/extract.md or source.md."""
 
-        return lookup_source_tool(source_id, query=query, budget=budget)
+        return lookup_source_tool(
+            source_id,
+            query=query,
+            budget=budget,
+            session_id=session_id,
+            loaded_source_ids=loaded_source_ids,
+        )
 
     @server.tool()
     def ingest_url(
@@ -1003,20 +1064,40 @@ def create_server() -> Any:
         query: str,
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        loaded_memory_ids: Optional[list[str]] = None,
+        loaded_source_ids: Optional[list[str]] = None,
     ) -> JsonPayload:
         """Recall budgeted memory context from the indexed vault."""
 
-        return recall_tool(query, budget, filters)
+        return recall_tool(
+            query,
+            budget,
+            filters,
+            session_id=session_id,
+            loaded_memory_ids=loaded_memory_ids,
+            loaded_source_ids=loaded_source_ids,
+        )
 
     @server.tool()
     def brief(
         query: str,
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        loaded_memory_ids: Optional[list[str]] = None,
+        loaded_source_ids: Optional[list[str]] = None,
     ) -> JsonPayload:
         """Generate a citation-preserving memory brief under a strict budget."""
 
-        return brief_tool(query, budget, filters)
+        return brief_tool(
+            query,
+            budget,
+            filters,
+            session_id=session_id,
+            loaded_memory_ids=loaded_memory_ids,
+            loaded_source_ids=loaded_source_ids,
+        )
 
     @server.tool()
     def build_profile(
@@ -1039,10 +1120,20 @@ def create_server() -> Any:
         task: str,
         budget: int = 1200,
         filters: Optional[dict[str, Any]] = None,
+        session_id: Optional[str] = None,
+        loaded_memory_ids: Optional[list[str]] = None,
+        loaded_source_ids: Optional[list[str]] = None,
     ) -> JsonPayload:
         """Apply recall policy and return a memory brief only when useful."""
 
-        return build_context_tool(task, budget, filters)
+        return build_context_tool(
+            task,
+            budget,
+            filters,
+            session_id=session_id,
+            loaded_memory_ids=loaded_memory_ids,
+            loaded_source_ids=loaded_source_ids,
+        )
 
     @server.tool()
     def inspect(id: str) -> JsonPayload:
@@ -1306,6 +1397,48 @@ def _filters(filters: Optional[Mapping[str, Any]]) -> dict[str, Any]:
     return dict(filters or {})
 
 
+def _session_inputs(
+    filters: dict[str, Any],
+    *,
+    session_id: Any = None,
+    loaded_memory_ids: Any = None,
+    loaded_source_ids: Any = None,
+) -> dict[str, Any]:
+    filter_session_id = filters.pop("session_id", None)
+    filter_loaded_memory_ids = _combine_session_id_inputs(
+        filters.pop("loaded_memory_ids", None),
+        filters.pop("loaded_memory_id", None),
+    )
+    filter_loaded_source_ids = _combine_session_id_inputs(
+        filters.pop("loaded_source_ids", None),
+        filters.pop("loaded_source_id", None),
+    )
+    return {
+        "session_id": session_id if session_id is not None else filter_session_id,
+        "loaded_memory_ids": normalize_loaded_ids(
+            loaded_memory_ids if loaded_memory_ids is not None else filter_loaded_memory_ids
+        ),
+        "loaded_source_ids": normalize_loaded_ids(
+            loaded_source_ids if loaded_source_ids is not None else filter_loaded_source_ids
+        ),
+    }
+
+
+def _combine_session_id_inputs(*values: Any) -> list[Any]:
+    combined: list[Any] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            combined.append(value)
+            continue
+        try:
+            combined.extend(value)
+        except TypeError:
+            combined.append(value)
+    return combined
+
+
 def _budget(value: int) -> int:
     budget = int(value)
     if budget < 1:
@@ -1330,6 +1463,7 @@ def _build_context_trace(
     task_budget: Optional[int] = None,
     retrieval: Optional[Any] = None,
     freshness: Optional[Any] = None,
+    session: Optional[Any] = None,
     selected_count: int = 0,
     empty_reason: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -1350,6 +1484,7 @@ def _build_context_trace(
     if not isinstance(attempts, list):
         attempts = []
     freshness_trace = dict(freshness) if isinstance(freshness, Mapping) else None
+    session_trace_payload = dict(session) if isinstance(session, Mapping) else None
     profile_trace = dict(profile) if isinstance(profile, Mapping) else _build_context_profile_trace(
         None,
         task_policy,
@@ -1359,7 +1494,7 @@ def _build_context_trace(
         task_budget=task_budget,
     )
     selected_task_budget = int(task_budget or (task_policy.budget if task_policy is not None else 0))
-    return {
+    payload: dict[str, Any] = {
         "policy": dict(policy),
         "task_class": task_class,
         "recall_policy": task_policy.model_dump(mode="json") if task_policy is not None else None,
@@ -1396,6 +1531,9 @@ def _build_context_trace(
             },
         ],
     }
+    if session_trace_payload:
+        payload["session"] = session_trace_payload
+    return payload
 
 
 def _refresh_index_for_query(config: MemoryConfig, *, before: str) -> Optional[dict[str, Any]]:

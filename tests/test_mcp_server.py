@@ -859,6 +859,48 @@ def test_mcp_recall_uses_budgeted_packing_service(tmp_path):
     assert payload["citations"][0]["path"] == remembered["relative_path"]
     assert payload["retrieval"]["planned_query_variants"][0] == "keyword retrieval"
     assert payload["retrieval"]["mode"] == "text"
+    assert "session" not in payload
+
+
+def test_mcp_recall_omits_loaded_memory_ids_from_filters(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    loaded = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP session dedupe should omit this already loaded memory.",
+            "source": "Sources/2026-05-02_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    remaining = remember_tool(
+        {
+            "type": "decision",
+            "text": "MCP session dedupe should keep this remaining memory.",
+            "source": "Sources/2026-05-02_mcp/source.md",
+            "confidence": 0.7,
+        },
+        vault=vault,
+    )
+    reindex_vault(load_config(vault))
+
+    payload = recall_tool(
+        "mcp session dedupe",
+        120,
+        {
+            "status": "pending",
+            "session_id": "mcp-session",
+            "loaded_memory_id": loaded["id"],
+        },
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert loaded["id"] not in {chunk["id"] for chunk in payload["chunks"]}
+    assert remaining["id"] in {chunk["id"] for chunk in payload["chunks"]}
+    assert payload["session"]["session_id"] == "mcp-session"
+    assert payload["session"]["filtered_memory_ids"] == [loaded["id"]]
 
 
 def test_mcp_recall_refreshes_index_when_configured(tmp_path):
@@ -910,6 +952,27 @@ def test_mcp_brief_uses_memory_brief_service(tmp_path):
     assert "Citations:" in payload["markdown"]
     assert payload["retrieval"]["mode"] == "text"
     assert payload["recall"]["retrieval"]["selected_count"] == 1
+
+
+def test_mcp_lookup_source_omits_loaded_source_ids(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    source_dir = vault / "Sources" / "2026-05-02_mcp_loaded_source"
+    source_dir.mkdir()
+    (source_dir / "extract.md").write_text("Already loaded MCP source evidence.", encoding="utf-8")
+
+    payload = lookup_source_tool(
+        "2026-05-02_mcp_loaded_source",
+        session_id="mcp-source-session",
+        loaded_source_ids=["2026-05-02_mcp_loaded_source"],
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["chunks"] == []
+    assert payload["citations"] == []
+    assert payload["empty_reason"] == "session_filtered"
+    assert payload["session"]["filtered_source_ids"] == ["2026-05-02_mcp_loaded_source"]
 
 
 def test_mcp_should_recall_classifies_messages():

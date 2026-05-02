@@ -31,6 +31,7 @@ from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
+from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sources import lookup_source, save_source_material
 from agent_memory.synthesis import write_synthesis
 from agent_memory.sync import detect_sync_conflicts
@@ -793,6 +794,17 @@ def recall(
         help="Override semantic search config for this query.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    loaded_memory_id: list[str] = typer.Option(
+        [],
+        "--loaded-memory-id",
+        help="Memory id already loaded in this session; may be repeated or comma-separated.",
+    ),
+    loaded_source_id: list[str] = typer.Option(
+        [],
+        "--loaded-source-id",
+        help="Source id already loaded in this session; may be repeated or comma-separated.",
+    ),
     refresh: Optional[bool] = typer.Option(
         None,
         "--refresh/--no-refresh",
@@ -822,6 +834,9 @@ def recall(
             include_related=selected_include_related,
             semantic=semantic,
             mode=mode,
+            session_id=session_id,
+            loaded_memory_ids=loaded_memory_id,
+            loaded_source_ids=loaded_source_id,
         ).to_dict()
         payload.update(
             {
@@ -948,13 +963,26 @@ def lookup_source_command(
     query: Optional[str] = typer.Option(None, "--query", help="Optional query used to rank source chunks."),
     budget: int = typer.Option(800, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    loaded_source_id: list[str] = typer.Option(
+        [],
+        "--loaded-source-id",
+        help="Source id already loaded in this session; may be repeated or comma-separated.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Return compact read-only evidence for a saved source directory."""
 
     try:
         config = load_config(vault)
-        payload = lookup_source(config, source_id, query=query, budget=budget)
+        payload = lookup_source(
+            config,
+            source_id,
+            query=query,
+            budget=budget,
+            session_id=session_id,
+            loaded_source_ids=loaded_source_id,
+        )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="lookup_source_failed")
 
@@ -1004,6 +1032,17 @@ def brief(
         help="Override semantic search config for this brief.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    loaded_memory_id: list[str] = typer.Option(
+        [],
+        "--loaded-memory-id",
+        help="Memory id already loaded in this session; may be repeated or comma-separated.",
+    ),
+    loaded_source_id: list[str] = typer.Option(
+        [],
+        "--loaded-source-id",
+        help="Source id already loaded in this session; may be repeated or comma-separated.",
+    ),
     refresh: Optional[bool] = typer.Option(
         None,
         "--refresh/--no-refresh",
@@ -1033,6 +1072,9 @@ def brief(
             include_related=selected_include_related,
             semantic=semantic,
             mode=mode,
+            session_id=session_id,
+            loaded_memory_ids=loaded_memory_id,
+            loaded_source_ids=loaded_source_id,
         ).to_dict()
         payload.update(
             {
@@ -1074,6 +1116,17 @@ def build_context_command(
         help="Override semantic search config for this context.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    loaded_memory_id: list[str] = typer.Option(
+        [],
+        "--loaded-memory-id",
+        help="Memory id already loaded in this session; may be repeated or comma-separated.",
+    ),
+    loaded_source_id: list[str] = typer.Option(
+        [],
+        "--loaded-source-id",
+        help="Source id already loaded in this session; may be repeated or comma-separated.",
+    ),
     refresh: Optional[bool] = typer.Option(
         None,
         "--refresh/--no-refresh",
@@ -1094,6 +1147,13 @@ def build_context_command(
         )
         decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
         if not decision["should_recall"]:
+            session_payload = session_trace(
+                normalize_session_recall_state(
+                    session_id=session_id,
+                    loaded_memory_ids=loaded_memory_id,
+                    loaded_source_ids=loaded_source_id,
+                )
+            )
             profile_payload = _policy_skipped_profile_payload(
                 config,
                 requested=profile_requested,
@@ -1117,12 +1177,15 @@ def build_context_command(
                     task_policy=task_policy,
                     profile=profile_payload,
                     task_budget=selected_budget,
+                    session=session_payload,
                     empty_reason="policy_skipped",
                 ),
                 "markdown": "",
                 "citations": [],
                 "brief": None,
             }
+            if session_payload:
+                payload["session"] = session_payload
         else:
             freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
             filters = SearchFilters(project=project)
@@ -1141,7 +1204,11 @@ def build_context_command(
                 include_related=include_related or task_policy.include_related,
                 semantic=semantic,
                 mode=mode,
+                session_id=session_id,
+                loaded_memory_ids=loaded_memory_id,
+                loaded_source_ids=loaded_source_id,
             ).to_dict()
+            session_payload = brief_payload.get("session")
             payload = {
                 "ok": True,
                 "implemented": True,
@@ -1162,12 +1229,15 @@ def build_context_command(
                     task_budget=selected_budget,
                     freshness=freshness,
                     retrieval=brief_payload.get("retrieval"),
+                    session=session_payload,
                     selected_count=int(brief_payload.get("recall", {}).get("chunk_count", 0)),
                 ),
                 "markdown": _compose_context_markdown(profile_payload, brief_payload["markdown"]),
                 "citations": [*profile_payload.get("citations", []), *brief_payload["citations"]],
                 "brief": brief_payload,
             }
+            if session_payload:
+                payload["session"] = session_payload
     except Exception as exc:
         _handle_error(
             exc,
@@ -2037,6 +2107,7 @@ def _build_context_trace(
     task_budget: int,
     retrieval: Optional[Any] = None,
     freshness: Optional[Any] = None,
+    session: Optional[Any] = None,
     selected_count: int = 0,
     empty_reason: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -2057,9 +2128,10 @@ def _build_context_trace(
     attempts = retrieval_trace.get("attempted_searches")
     if not isinstance(attempts, list):
         attempts = []
+    session_trace_payload = dict(session) if isinstance(session, Mapping) else None
 
     profile_budget = int(profile.get("budget") or 0)
-    return {
+    payload: dict[str, Any] = {
         "policy": dict(policy),
         "task_class": task_class,
         "recall_policy": task_policy.model_dump(mode="json"),
@@ -2096,6 +2168,9 @@ def _build_context_trace(
             },
         ],
     }
+    if session_trace_payload:
+        payload["session"] = session_trace_payload
+    return payload
 
 
 def _file_content_hash(path: Path) -> str:

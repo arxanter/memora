@@ -79,7 +79,7 @@ class BriefResponse:
         return estimate_tokens(self.markdown)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "ok": True,
             "implemented": True,
             "query": self.query,
@@ -104,6 +104,10 @@ class BriefResponse:
             "retrieval": dict(self.recall.retrieval_trace),
             "truncated": self.truncated,
         }
+        if self.recall.session:
+            payload["session"] = dict(self.recall.session)
+            payload["recall"]["session"] = dict(self.recall.session)
+        return payload
 
 
 def brief_memory(
@@ -116,6 +120,9 @@ def brief_memory(
     semantic: Optional[bool] = None,
     mode: str = "auto",
     recall_response: Optional[RecallResponse] = None,
+    session_id: Any = None,
+    loaded_memory_ids: Any = None,
+    loaded_source_ids: Any = None,
 ) -> BriefResponse:
     """Build a deterministic memory brief from Stage 7 recall output."""
 
@@ -128,6 +135,9 @@ def brief_memory(
         include_related=include_related,
         semantic=semantic,
         mode=mode,
+        session_id=session_id,
+        loaded_memory_ids=loaded_memory_ids,
+        loaded_source_ids=loaded_source_ids,
     )
     selected_filters = SearchFilters.from_mapping(recall.filters.to_dict())
     items = _items_from_recall(config, recall)

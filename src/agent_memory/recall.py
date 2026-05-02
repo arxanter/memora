@@ -7,11 +7,14 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
+import yaml
+
 from agent_memory.config import MemoryConfig, RecallConfig
 from agent_memory.indexer import estimate_tokens
 from agent_memory.lifecycle import touch_last_used
 from agent_memory.retrieval import SearchFilters, search_memory
 from agent_memory.schema import LifecycleStatus, RelationType
+from agent_memory.session import SessionRecallState, normalize_session_recall_state, session_trace
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,7 @@ class RecallResponse:
     chunks: tuple[PackedChunk, ...]
     candidate_count: int
     retrieval_trace: Mapping[str, Any] = field(default_factory=dict)
+    session: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def used_tokens_estimate(self) -> int:
@@ -148,7 +152,7 @@ class RecallResponse:
         return [chunk.citation for chunk in self.chunks]
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "ok": True,
             "implemented": True,
             "query": self.query,
@@ -170,6 +174,9 @@ class RecallResponse:
             "chunks": [chunk.to_dict() for chunk in self.chunks],
             "citations": self.citations,
         }
+        if self.session:
+            payload["session"] = dict(self.session)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -254,6 +261,9 @@ def recall_memory(
     include_related: bool = False,
     semantic: Optional[bool] = None,
     mode: str = "auto",
+    session_id: Any = None,
+    loaded_memory_ids: Any = None,
+    loaded_source_ids: Any = None,
 ) -> RecallResponse:
     """Search indexed memory and pack the best chunks under a strict budget."""
 
@@ -271,6 +281,13 @@ def recall_memory(
     candidates = _candidates_from_search(config, search_response.results)
     if selected_filters.status is None:
         candidates = _remove_superseded_targets(config, candidates)
+    candidate_count_before_session_filter = len(candidates)
+    session_state = normalize_session_recall_state(
+        session_id=session_id,
+        loaded_memory_ids=loaded_memory_ids,
+        loaded_source_ids=loaded_source_ids,
+    )
+    candidates, selected_session_trace = _apply_session_dedupe(candidates, session_state)
     chunks = pack_candidates(candidates, budget=selected_budget, recall_config=config.recall)
     try:
         touch_last_used(config, (chunk.document_id for chunk in chunks))
@@ -284,6 +301,13 @@ def recall_memory(
         chunks=chunks,
         candidate_count=len(candidates),
         retrieval_trace=search_response.trace_to_dict(),
+        session=session_trace(
+            session_state,
+            filtered_memory_ids=selected_session_trace["filtered_memory_ids"],
+            filtered_source_ids=selected_session_trace["filtered_source_ids"],
+            candidate_count_before=candidate_count_before_session_filter,
+            candidate_count_after=len(candidates),
+        ),
     )
 
 
@@ -531,7 +555,7 @@ def _candidates_from_search(config: MemoryConfig, results: Sequence[Any]) -> tup
         row = chunks_by_id.get(chunk_id)
         if row is None:
             continue
-        metadata = dict(result.metadata)
+        metadata = {**dict(result.metadata), **_source_metadata(config, result.path)}
         candidates.append(
             RecallCandidate(
                 chunk_id=chunk_id,
@@ -551,6 +575,95 @@ def _candidates_from_search(config: MemoryConfig, results: Sequence[Any]) -> tup
             )
         )
     return tuple(candidates)
+
+
+def _apply_session_dedupe(
+    candidates: Sequence[RecallCandidate],
+    state: SessionRecallState,
+) -> tuple[tuple[RecallCandidate, ...], dict[str, tuple[str, ...]]]:
+    """Filter candidates the client says are already loaded."""
+
+    if not state.loaded_memory_ids and not state.loaded_source_ids:
+        return tuple(candidates), {"filtered_memory_ids": (), "filtered_source_ids": ()}
+
+    loaded_memory_ids = state.loaded_memory_id_set
+    loaded_source_ids = state.loaded_source_id_set
+    filtered_memory_ids: list[str] = []
+    filtered_source_ids: list[str] = []
+    selected: list[RecallCandidate] = []
+    for candidate in candidates:
+        source_id = _candidate_source_id(candidate)
+        memory_loaded = candidate.document_id in loaded_memory_ids
+        source_loaded = source_id in loaded_source_ids if source_id is not None else False
+        if memory_loaded or source_loaded:
+            filtered_memory_ids.append(candidate.document_id)
+            if source_loaded and source_id is not None:
+                filtered_source_ids.append(source_id)
+            continue
+        selected.append(candidate)
+    return (
+        tuple(selected),
+        {
+            "filtered_memory_ids": tuple(dict.fromkeys(filtered_memory_ids)),
+            "filtered_source_ids": tuple(dict.fromkeys(filtered_source_ids)),
+        },
+    )
+
+
+def _candidate_source_id(candidate: RecallCandidate) -> Optional[str]:
+    value = candidate.metadata.get("source_id")
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _source_metadata(config: MemoryConfig, relative_path: str) -> dict[str, str]:
+    path = config.vault_path / relative_path
+    try:
+        text = path.read_text(encoding="utf-8")
+        frontmatter = _frontmatter_mapping(text)
+    except Exception:
+        return {}
+    source = frontmatter.get("source")
+    if not isinstance(source, Mapping):
+        return {}
+
+    source_path = _optional_source_string(source.get("path"))
+    source_id = _optional_source_string(source.get("source_id")) or _source_id_from_path(source_path)
+    metadata: dict[str, str] = {}
+    if source_id is not None:
+        metadata["source_id"] = source_id
+    if source_path is not None:
+        metadata["source_path"] = source_path
+    return metadata
+
+
+def _frontmatter_mapping(text: str) -> Mapping[str, Any]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}
+    parts = normalized.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    payload = yaml.safe_load(parts[0][4:]) or {}
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _source_id_from_path(path: Optional[str]) -> Optional[str]:
+    if path is None:
+        return None
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[0] == "Sources" and parts[1] not in {"", ".", ".."}:
+        return parts[1]
+    return None
+
+
+def _optional_source_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
 
 
 def _remove_superseded_targets(
