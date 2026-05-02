@@ -33,7 +33,7 @@ from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_me
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sources import lookup_source, save_source_material
-from agent_memory.synthesis import write_synthesis
+from agent_memory.synthesis import plan_synthesis, write_synthesis
 from agent_memory.sync import detect_sync_conflicts
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
 from agent_memory.vault import (
@@ -1351,19 +1351,23 @@ def build_context_command(
 
 @app.command("synthesize")
 def synthesize_command(
+    query: Optional[str] = typer.Argument(None, help="Optional topic/query filter."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     title: Optional[str] = typer.Option(None, "--title", help="Synthesis title."),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum active memories to include."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the generated synthesis without writing."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """Write a deterministic generated synthesis Markdown file."""
+    """Plan or write a deterministic generated synthesis Markdown file."""
 
     try:
         config = load_config(vault)
-        payload = write_synthesis(
+        synthesize = plan_synthesis if dry_run else write_synthesis
+        payload = synthesize(
             config,
             project=project,
+            query=query,
             title=title,
             limit=limit,
         ).to_dict()
@@ -1372,6 +1376,12 @@ def synthesize_command(
 
     if json_output:
         _print_json(payload)
+        return
+
+    if payload["dry_run"]:
+        console.print("[green]Synthesis dry run:[/green] no files written")
+        console.print(f"Planned path: {payload['relative_path']}")
+        console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
         return
 
     console.print(f"[green]Wrote synthesis:[/green] {payload['relative_path']}")

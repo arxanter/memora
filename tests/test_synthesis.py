@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from agent_memory.cli import app
 from agent_memory.config import load_config
-from agent_memory.synthesis import write_synthesis
+from agent_memory.synthesis import plan_synthesis, write_synthesis
 from agent_memory.vault import init_vault
 
 
@@ -137,6 +137,67 @@ def test_write_synthesis_filters_project_and_does_not_mutate_memories(tmp_path):
     assert "Promote durable conclusions with `memory remember`" in result.to_dict()["next_steps"][1]
 
 
+def test_plan_synthesis_dry_run_returns_payload_without_writes(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/topic.md",
+        memory_id="mem_20260501_topic",
+        memory_type="fact",
+        body="Dry-run synthesis should find topic-specific memory.",
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    result = plan_synthesis(
+        config,
+        query="topic-specific",
+        title="Topic Preview",
+        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    payload = result.to_dict()
+    assert payload["dry_run"] is True
+    assert payload["would_write"] is True
+    assert payload["written"] is False
+    assert payload["query"] == "topic-specific"
+    assert payload["filters"] == {"status": "active", "query": "topic-specific"}
+    assert payload["relative_path"] == "Synthesis/2026-05-01_topic-preview.md"
+    assert payload["memory_count"] == 1
+    assert "Dry-run synthesis should find topic-specific memory. [C1]" in payload["markdown"]
+    assert not (vault / payload["relative_path"]).exists()
+    assert list((vault / "Synthesis").glob("*.md")) == []
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+
+
+def test_plan_synthesis_no_match_is_reviewable_empty_payload(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/other.md",
+        memory_id="mem_20260501_other",
+        memory_type="fact",
+        body="This memory is about a different topic.",
+    )
+    config = load_config(vault)
+
+    result = plan_synthesis(
+        config,
+        query="unmatched phrase",
+        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    payload = result.to_dict()
+    assert payload["memory_count"] == 0
+    assert payload["source_memory_ids"] == []
+    assert payload["citations"] == []
+    assert "No active memories matched the synthesis filters." in payload["markdown"]
+    assert not (vault / payload["relative_path"]).exists()
+
+
 def test_synthesize_cli_json_and_help_listing(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -172,8 +233,12 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
     relative_path = Path(payload["relative_path"])
     assert payload["command"] == "synthesize"
     assert payload["implemented"] is True
+    assert payload["dry_run"] is False
+    assert payload["written"] is True
     assert payload["memory_count"] == 1
     assert payload["citations"][0]["path"] == "Memories/decisions/cli.md"
+    assert payload["filters"] == {"status": "active", "project": "agent-memory"}
+    assert "CLI synthesis should write a generated Markdown file. [C1]" in payload["markdown"]
     assert relative_path.parent == Path("Synthesis")
     assert relative_path.name.endswith("_cli-synthesis.md")
     assert (vault / relative_path).exists()
@@ -185,6 +250,47 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
         for command in group["commands"]
     }
     assert "synthesize" in command_usages
+
+
+def test_synthesize_cli_dry_run_query_json_does_not_write(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/projects/context.md",
+        memory_id="mem_20260501_context",
+        memory_type="project_context",
+        scope="project",
+        project="agent-memory",
+        body="Reading summaries should be generated from matching project context.",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "synthesize",
+            "reading summaries",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["dry_run"] is True
+    assert payload["written"] is False
+    assert payload["would_write"] is True
+    assert payload["query"] == "reading summaries"
+    assert payload["filters"] == {"status": "active", "project": "agent-memory", "query": "reading summaries"}
+    assert payload["memory_count"] == 1
+    assert payload["relative_path"].startswith("Synthesis/")
+    assert "Query: reading summaries" in payload["markdown"]
+    assert not (vault / payload["relative_path"]).exists()
+    assert list((vault / "Synthesis").glob("*.md")) == []
 
 
 def _write_memory(

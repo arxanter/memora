@@ -51,14 +51,18 @@ class SynthesisItem:
     summary: str
     citation_key: str
     relative_path: Path
+    source: Optional[dict[str, Any]] = None
 
     def citation(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "key": self.citation_key,
             "id": self.memory_id,
             "path": self.relative_path.as_posix(),
             "type": self.memory_type,
         }
+        if self.source:
+            payload["source"] = dict(self.source)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,9 @@ class SynthesisResult:
     generated_at: datetime
     markdown: str
     items: tuple[SynthesisItem, ...]
+    query: Optional[str] = None
+    dry_run: bool = False
+    written: bool = True
 
     @property
     def citations(self) -> tuple[dict[str, Any], ...]:
@@ -86,30 +93,65 @@ class SynthesisResult:
             "schema": SYNTHESIS_SCHEMA,
             "title": self.title,
             "project": self.project,
+            "query": self.query,
+            "filters": _result_filters(project=self.project, query=self.query),
             "generated_at": self.generated_at.isoformat(),
             "vault_path": str(self.config.vault_path),
             "path": str(self.path),
             "relative_path": self.relative_path.as_posix(),
+            "dry_run": self.dry_run,
+            "would_write": self.dry_run,
+            "written": self.written,
             "memory_count": len(self.items),
             "source_memory_ids": [item.memory_id for item in self.items],
             "citations": [dict(citation) for citation in self.citations],
+            "markdown": self.markdown,
             "next_steps": list(NEXT_STEPS),
         }
+
+
+def plan_synthesis(
+    config: MemoryConfig,
+    *,
+    project: Optional[str] = None,
+    query: Optional[str] = None,
+    title: Optional[str] = None,
+    limit: int = DEFAULT_LIMIT,
+    now: Optional[datetime] = None,
+) -> SynthesisResult:
+    """Plan deterministic Markdown synthesis without writing a note."""
+
+    return _synthesize(config, project=project, query=query, title=title, limit=limit, now=now, write=False)
 
 
 def write_synthesis(
     config: MemoryConfig,
     *,
     project: Optional[str] = None,
+    query: Optional[str] = None,
     title: Optional[str] = None,
     limit: int = DEFAULT_LIMIT,
     now: Optional[datetime] = None,
 ) -> SynthesisResult:
     """Write a deterministic Markdown synthesis under the vault's Synthesis directory."""
 
+    return _synthesize(config, project=project, query=query, title=title, limit=limit, now=now, write=True)
+
+
+def _synthesize(
+    config: MemoryConfig,
+    *,
+    project: Optional[str],
+    query: Optional[str],
+    title: Optional[str],
+    limit: int,
+    now: Optional[datetime],
+    write: bool,
+) -> SynthesisResult:
     selected_limit = _validate_limit(limit)
     selected_project = _clean_optional(project)
-    selected_title = _synthesis_title(title=title, project=selected_project)
+    selected_query = _clean_optional(query)
+    selected_title = _synthesis_title(title=title, project=selected_project, query=selected_query)
     generated_at = _normalize_now(now)
 
     report = validate_vault(config.vault_path)
@@ -121,6 +163,7 @@ def write_synthesis(
         report.documents,
         config=config,
         project=selected_project,
+        query=selected_query,
         limit=selected_limit,
     )
     items = tuple(
@@ -130,15 +173,19 @@ def write_synthesis(
     markdown = render_synthesis_markdown(
         title=selected_title,
         project=selected_project,
+        query=selected_query,
         generated_at=generated_at,
         items=items,
     )
 
-    with vault_lock(config, name="synthesis"):
-        synthesis_root = config.vault_path / config.synthesis_dir
-        synthesis_root.mkdir(parents=True, exist_ok=True)
+    synthesis_root = config.vault_path / config.synthesis_dir
+    if write:
+        with vault_lock(config, name="synthesis"):
+            synthesis_root.mkdir(parents=True, exist_ok=True)
+            target_path = _unique_synthesis_path(synthesis_root, generated_at=generated_at, title=selected_title)
+            atomic_write_text(target_path, markdown)
+    else:
         target_path = _unique_synthesis_path(synthesis_root, generated_at=generated_at, title=selected_title)
-        atomic_write_text(target_path, markdown)
 
     return SynthesisResult(
         config=config,
@@ -146,9 +193,12 @@ def write_synthesis(
         relative_path=target_path.relative_to(config.vault_path),
         title=selected_title,
         project=selected_project,
+        query=selected_query,
         generated_at=generated_at,
         markdown=markdown,
         items=items,
+        dry_run=not write,
+        written=write,
     )
 
 
@@ -156,6 +206,7 @@ def render_synthesis_markdown(
     *,
     title: str,
     project: Optional[str],
+    query: Optional[str] = None,
     generated_at: datetime,
     items: Sequence[SynthesisItem],
 ) -> str:
@@ -167,9 +218,12 @@ def render_synthesis_markdown(
         "title": title,
         "aliases": presentation_aliases(title, _synthesis_alias(project=project)),
         "project": project,
+        "query": query,
+        "created_at": generated_at.isoformat(),
         "generated_at": generated_at.isoformat(),
         "source_memory_ids": [item.memory_id for item in items],
         "source_memory_count": len(items),
+        "source_citations": [item.citation() for item in items],
         "generated_by": "memory synthesize",
     }
     rendered_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=False).strip()
@@ -184,6 +238,8 @@ def render_synthesis_markdown(
     ]
     if project:
         lines.append(f"Project: {project}")
+    if query:
+        lines.append(f"Query: {query}")
     lines.extend(
         [
             f"Selected active memories: {len(items)}",
@@ -209,7 +265,9 @@ def render_synthesis_markdown(
         for item in items:
             link = _relative_link_from_synthesis(item.relative_path)
             wikilink = wikilink_for_memory(item.memory_id, item.relative_path)
-            lines.append(f"- [{item.citation_key}] {wikilink} ({link})")
+            source = _source_label(item.source)
+            suffix = f"; source: {source}" if source else ""
+            lines.append(f"- [{item.citation_key}] {wikilink} ({link}){suffix}")
         lines.append("")
 
     lines.append("## Next Steps")
@@ -223,15 +281,33 @@ def _select_documents(
     *,
     config: MemoryConfig,
     project: Optional[str],
+    query: Optional[str],
     limit: int,
 ) -> tuple[MemoryDocument, ...]:
-    selected = [
+    candidates = [
         document
         for document in documents
         if document.frontmatter.status == LifecycleStatus.ACTIVE
         and (project is None or document.frontmatter.project == project)
     ]
-    return tuple(sorted(selected, key=lambda document: _document_sort_key(config, document))[:limit])
+    if query is None:
+        return tuple(sorted(candidates, key=lambda document: _document_sort_key(config, document))[:limit])
+    query_terms = _query_terms(query)
+    if not query_terms:
+        return ()
+
+    scored = [
+        (score, document)
+        for document in candidates
+        if (score := _document_query_score(document, query=query or "", terms=query_terms)) > 0
+    ]
+    return tuple(
+        document
+        for _, document in sorted(
+            scored,
+            key=lambda item: (-item[0], *_document_sort_key(config, item[1])),
+        )[:limit]
+    )
 
 
 def _document_sort_key(config: MemoryConfig, document: MemoryDocument) -> tuple[int, str, str]:
@@ -253,6 +329,7 @@ def _item_from_document(config: MemoryConfig, document: MemoryDocument, *, citat
         summary=_summary_text(document),
         citation_key=citation_key,
         relative_path=_relative_path(config, document),
+        source=_source_from_document(document),
     )
 
 
@@ -265,6 +342,87 @@ def _summary_text(document: MemoryDocument, *, max_words: int = 32) -> str:
     if body_text:
         return _truncate_words(body_text, max_words=max_words)
     return document.frontmatter.id
+
+
+def _document_query_score(document: MemoryDocument, *, query: str, terms: Sequence[str]) -> int:
+    haystack = _document_query_haystack(document)
+    score = 0
+    cleaned_query = query.lower().strip()
+    if cleaned_query and cleaned_query in haystack:
+        score += 3
+    for term in terms:
+        if term in haystack:
+            score += 1
+    return score
+
+
+def _document_query_haystack(document: MemoryDocument) -> str:
+    frontmatter = document.frontmatter
+    values: list[str] = [
+        frontmatter.id,
+        frontmatter.type.value,
+        frontmatter.scope.value,
+        frontmatter.project or "",
+        frontmatter.title or "",
+        " ".join(frontmatter.aliases),
+        " ".join(frontmatter.tags),
+        document.body,
+    ]
+    values.extend(observation.text for observation in frontmatter.observations)
+    if frontmatter.source:
+        values.extend(
+            str(value)
+            for value in (
+                frontmatter.source.path,
+                frontmatter.source.url,
+                frontmatter.source.title,
+            )
+            if value
+        )
+    return _clean_summary_text(" ".join(values)).lower()
+
+
+def _query_terms(query: Optional[str]) -> tuple[str, ...]:
+    cleaned = _clean_optional(query)
+    if cleaned is None:
+        return ()
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in re.findall(r"[a-z0-9][a-z0-9_.:-]*", cleaned.lower()):
+        if term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return tuple(terms)
+
+
+def _source_from_document(document: MemoryDocument) -> Optional[dict[str, Any]]:
+    source = document.frontmatter.source
+    if source is None:
+        return None
+    payload = source.model_dump(mode="json", exclude_none=True)
+    return payload if payload else None
+
+
+def _source_label(source: Optional[Mapping[str, Any]]) -> Optional[str]:
+    if not source:
+        return None
+    title = source.get("title")
+    if source.get("path"):
+        return wikilink_for_memory(str(title or "Source"), source.get("path"))
+    if source.get("url"):
+        label = str(title or source["url"])
+        return f"[{label}]({source['url']})"
+    return None
+
+
+def _result_filters(*, project: Optional[str], query: Optional[str]) -> dict[str, Any]:
+    filters: dict[str, Any] = {"status": LifecycleStatus.ACTIVE.value}
+    if project is not None:
+        filters["project"] = project
+    if query is not None:
+        filters["query"] = query
+    return filters
 
 
 def _clean_summary_text(text: str) -> str:
@@ -315,10 +473,14 @@ def _unique_synthesis_path(root: Path, *, generated_at: datetime, title: str) ->
     return candidate
 
 
-def _synthesis_title(*, title: Optional[str], project: Optional[str]) -> str:
+def _synthesis_title(*, title: Optional[str], project: Optional[str], query: Optional[str] = None) -> str:
     cleaned = _clean_optional(title)
     if cleaned:
         return cleaned
+    if project and query:
+        return f"{project} synthesis: {query}"
+    if query:
+        return f"Synthesis: {query}"
     if project:
         return f"{project} synthesis"
     return "Memory synthesis"
@@ -365,6 +527,7 @@ __all__ = [
     "SYNTHESIS_SCHEMA",
     "SynthesisItem",
     "SynthesisResult",
+    "plan_synthesis",
     "render_synthesis_markdown",
     "write_synthesis",
 ]

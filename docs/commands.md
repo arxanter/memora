@@ -26,6 +26,7 @@ memory search "query"
 memory recall "query" --budget 1200
 memory explain-recall "query" --budget 1200
 memory brief "query" --budget 1200
+memory synthesize ["topic"] --project <project> --dry-run
 memory should-recall "user message"
 memory eval <fixture-or-file>
 memory status
@@ -501,6 +502,28 @@ Example:
 ```bash
 memory brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
 memory brief "Obsidian sync decisions" --vault ./memory-vault --json
+```
+
+### `memory synthesize`
+
+Implemented in Phase 3.
+
+Generates a deterministic, reviewable synthesis note from active canonical
+memories. The command can filter by project and/or a simple topic query, emits
+citations to source memory files, and writes only under `Synthesis/`. It never
+promotes, approves, rejects, or otherwise edits canonical memory lifecycle
+status.
+
+Use `--dry-run` to preview the exact Markdown and JSON payload without creating a
+file. Without `--dry-run`, the command writes a generated Markdown note with
+frontmatter metadata including `schema`, `kind`, `created_at`, `generated_at`,
+`source_memory_ids`, and structured citation data.
+
+Examples:
+
+```bash
+memory synthesize "raw ingestion" --vault ./memory-vault --project agent-memory --dry-run --json
+memory synthesize --vault ./memory-vault --project agent-memory --title "Agent Memory synthesis" --json
 ```
 
 ### `memory build-context`
