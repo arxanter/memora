@@ -144,6 +144,8 @@ class MemoryFrontmatter(BaseModel):
 
     schema_version: int
     id: str = Field(min_length=1)
+    title: Optional[str] = None
+    aliases: list[str] = Field(default_factory=list)
     type: MemoryType
     scope: MemoryScope = MemoryScope.USER
     project: Optional[str] = None
@@ -162,6 +164,8 @@ class MemoryFrontmatter(BaseModel):
     observations: list[Observation] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
+    source_links: list[str] = Field(default_factory=list)
+    relation_links: list[str] = Field(default_factory=list)
 
     @field_validator("schema_version")
     @classmethod
@@ -191,6 +195,23 @@ class MemoryFrontmatter(BaseModel):
         if invalid:
             raise ValueError(f"link ids must be memory ids without whitespace: {invalid}")
         return values
+
+    @field_validator("aliases", "source_links", "relation_links", mode="before")
+    @classmethod
+    def normalize_presentation_links(cls, values: Any) -> list[str]:
+        if values in (None, ""):
+            return []
+        if isinstance(values, str):
+            values = [values]
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            item = str(value).strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            cleaned.append(item)
+        return cleaned
 
     @field_validator("risk_flags", mode="before")
     @classmethod

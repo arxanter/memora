@@ -11,6 +11,8 @@ from typing import Any, Mapping, Optional, Sequence
 import yaml
 
 from agent_memory.config import MemoryConfig
+from agent_memory.markdown import aliases as presentation_aliases
+from agent_memory.markdown import wikilink_for_memory
 from agent_memory.schema import LifecycleStatus, MemoryDocument, MemoryType, validate_vault
 from agent_memory.sync import atomic_write_text, vault_lock
 
@@ -163,6 +165,7 @@ def render_synthesis_markdown(
         "schema": SYNTHESIS_SCHEMA,
         "kind": "generated_synthesis",
         "title": title,
+        "aliases": presentation_aliases(title, _synthesis_alias(project=project)),
         "project": project,
         "generated_at": generated_at.isoformat(),
         "source_memory_ids": [item.memory_id for item in items],
@@ -205,7 +208,8 @@ def render_synthesis_markdown(
         lines.append("## Citations")
         for item in items:
             link = _relative_link_from_synthesis(item.relative_path)
-            lines.append(f"- [{item.citation_key}] {item.memory_id} ({link})")
+            wikilink = wikilink_for_memory(item.memory_id, item.relative_path)
+            lines.append(f"- [{item.citation_key}] {wikilink} ({link})")
         lines.append("")
 
     lines.append("## Next Steps")
@@ -318,6 +322,12 @@ def _synthesis_title(*, title: Optional[str], project: Optional[str]) -> str:
     if project:
         return f"{project} synthesis"
     return "Memory synthesis"
+
+
+def _synthesis_alias(*, project: Optional[str]) -> str:
+    if project:
+        return f"Agent Memory Synthesis: {project}"
+    return "Agent Memory Synthesis"
 
 
 def _title_from_type(memory_type: str) -> str:

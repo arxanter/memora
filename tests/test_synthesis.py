@@ -77,11 +77,13 @@ def test_write_synthesis_writes_grouped_cited_active_memories(tmp_path):
     ]
     assert "schema: agent-memory.synthesis.v1" in markdown
     assert "kind: generated_synthesis" in markdown
+    assert "aliases:" in markdown
     assert "## Decisions" in markdown
     assert "- Use Markdown as durable memory for synthesis output. [C1]" in markdown
     assert "## Facts" in markdown
     assert "- SQLite remains a rebuildable cache for synthesis inputs. [C2]" in markdown
-    assert "[C1] mem_20260501_decision (../Memories/decisions/decision.md)" in markdown
+    assert "[C1] [[Memories/decisions/decision|mem_20260501_decision]]" in markdown
+    assert "(../Memories/decisions/decision.md)" in markdown
     assert "Pending synthesis memory should be excluded." not in markdown
     assert "Rejected synthesis memory should be excluded." not in markdown
     assert "Superseded synthesis memory should be excluded." not in markdown

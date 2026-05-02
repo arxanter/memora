@@ -13,6 +13,8 @@ import yaml
 
 from agent_memory.config import MemoryConfig
 from agent_memory.indexer import estimate_tokens
+from agent_memory.markdown import aliases as presentation_aliases
+from agent_memory.markdown import wikilink_for_memory
 from agent_memory.safety import has_unsafe_recall_risk, scan_text
 from agent_memory.schema import LifecycleStatus, MemoryDocument, MemoryScope, MemoryType, validate_vault
 from agent_memory.sync import atomic_write_text, vault_lock
@@ -325,9 +327,12 @@ def render_profile_markdown(
 ) -> str:
     """Render profile Markdown with generated, non-canonical frontmatter."""
 
+    title = _profile_title(profile_type=profile_type, project=project)
     frontmatter = {
         "kind": "profile",
         "schema_version": PROFILE_SCHEMA_VERSION,
+        "title": title,
+        "aliases": presentation_aliases(title, _profile_alias(profile_type=profile_type, project=project)),
         "profile_type": profile_type,
         "project": project,
         "generated_at": generated_at.isoformat(),
@@ -336,7 +341,6 @@ def render_profile_markdown(
         "status": "generated",
     }
     rendered_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=False).strip()
-    title = _profile_title(profile_type=profile_type, project=project)
     lines = [
         "---",
         rendered_yaml,
@@ -363,7 +367,8 @@ def render_profile_markdown(
         profile_relative_path = _relative_profile_path(profile_type=profile_type, project=project)
         for item in items:
             link = _relative_link_from_profile(profile_relative_path, item.relative_path)
-            lines.append(f"- [{item.citation_key}] {item.memory_id} ({link})")
+            wikilink = wikilink_for_memory(item.memory_id, item.relative_path)
+            lines.append(f"- [{item.citation_key}] {wikilink} ({link})")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -537,6 +542,12 @@ def _profile_title(*, profile_type: str, project: Optional[str]) -> str:
     if profile_type == "project":
         return f"{project} Profile"
     return "User Profile"
+
+
+def _profile_alias(*, profile_type: str, project: Optional[str]) -> str:
+    if profile_type == "project":
+        return f"Agent Memory Project Profile: {project}"
+    return "Agent Memory User Profile"
 
 
 def _title_from_type(memory_type: str) -> str:

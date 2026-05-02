@@ -12,6 +12,8 @@ import yaml
 
 from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
 from agent_memory.indexer import estimate_tokens
+from agent_memory.markdown import aliases as presentation_aliases
+from agent_memory.markdown import wikilink_for_path
 from agent_memory.safety import (
     SafetyScanResult,
     merge_scan_results,
@@ -410,6 +412,9 @@ def save_source_material(
     sources_root = config.vault_path / config.sources_dir
     source_dir = _unique_source_dir(sources_root, source_id)
     source_id = source_dir.name
+    relative_source_path = (source_dir / "source.md").relative_to(config.vault_path).as_posix()
+    relative_extract_path = (source_dir / "extract.md").relative_to(config.vault_path).as_posix()
+    has_extract = _optional_string(extract) is not None
 
     source_markdown = _render_source_markdown(
         source_id=source_id,
@@ -424,11 +429,13 @@ def save_source_material(
         origin=selected_origin,
         safety=safety,
         captured_at=selected_at,
+        source_path=relative_source_path,
+        extract_path=relative_extract_path if has_extract else None,
     )
     files: list[tuple[PathLike, str]] = [(source_dir / "source.md", source_markdown)]
 
     extract_path: Optional[Path] = None
-    if _optional_string(extract):
+    if has_extract:
         extract_path = source_dir / "extract.md"
         files.append(
             (
@@ -446,6 +453,8 @@ def save_source_material(
                     origin=selected_origin,
                     safety=safety,
                     captured_at=selected_at,
+                    source_path=relative_source_path,
+                    extract_path=relative_extract_path,
                 ),
             )
         )
@@ -745,6 +754,8 @@ def _render_source_markdown(
     origin: Mapping[str, str],
     safety: SafetyScanResult,
     captured_at: datetime,
+    source_path: str,
+    extract_path: Optional[str],
 ) -> str:
     frontmatter = _frontmatter(
         source_id=source_id,
@@ -759,6 +770,8 @@ def _render_source_markdown(
         safety=safety,
         captured_at=captured_at,
         kind="source",
+        source_path=source_path,
+        extract_path=extract_path,
     )
     body = content or (
         "No raw content was provided to Agent Memory. The agent should fetch or "
@@ -781,6 +794,8 @@ def _render_extract_markdown(
     origin: Mapping[str, str],
     safety: SafetyScanResult,
     captured_at: datetime,
+    source_path: str,
+    extract_path: str,
 ) -> str:
     frontmatter = _frontmatter(
         source_id=source_id,
@@ -795,6 +810,8 @@ def _render_extract_markdown(
         safety=safety,
         captured_at=captured_at,
         kind="extract",
+        source_path=source_path,
+        extract_path=extract_path,
     )
     return f"---\n{frontmatter}\n---\n\n# Extract: {title}\n\n{_source_url_line(url)}{extract.strip()}\n"
 
@@ -813,12 +830,15 @@ def _frontmatter(
     safety: SafetyScanResult,
     captured_at: datetime,
     kind: str,
+    source_path: str,
+    extract_path: Optional[str],
 ) -> str:
     data = {
         "source_id": source_id,
         "kind": kind,
         "schema_version": 1,
         "title": title,
+        "aliases": presentation_aliases(title, source_id),
         "url": url,
         "project": project,
         "tags": list(tags),
@@ -829,6 +849,10 @@ def _frontmatter(
         "risk_flags": list(safety.risk_flags),
         "safety": safety.to_dict(),
     }
+    if kind == "source" and extract_path:
+        data["extract_links"] = [wikilink_for_path(extract_path, label=f"Extract: {title}")]
+    if kind == "extract":
+        data["source_links"] = [wikilink_for_path(source_path, label=title)]
     if origin:
         data["origin"] = dict(origin)
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=False).strip()

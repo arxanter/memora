@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from agent_memory.schema import MemoryFrontmatter, parse_markdown_document, validate_vault
 from agent_memory.safety import scan_text
+from agent_memory.vault import render_memory_markdown
 
 
 SAMPLE_VAULT = Path(__file__).resolve().parents[1] / "examples" / "sample-vault"
@@ -48,6 +49,8 @@ Use Markdown as the durable record.
 
     assert document.frontmatter.id == "mem_20260429_abc123"
     assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.title is None
+    assert document.frontmatter.aliases == []
     assert document.body.strip() == "Use Markdown as the durable record."
 
 
@@ -86,6 +89,39 @@ def test_migration_field_is_supported():
 
     assert frontmatter.migration is not None
     assert frontmatter.migration.from_schema_version == 0
+
+
+def test_render_memory_markdown_adds_graph_friendly_metadata():
+    frontmatter = MemoryFrontmatter.model_validate(
+        base_frontmatter(
+            type="decision",
+            source={
+                "path": "Sources/2026-05-01_demo/extract.md",
+                "title": "Demo Source",
+            },
+            relations=[
+                {"type": "supports", "target": "mem_20260429_target"},
+            ],
+            supersedes=["mem_20260429_old"],
+        )
+    )
+
+    markdown = render_memory_markdown(frontmatter, "Use Markdown as durable memory.")
+    document = parse_markdown_document(markdown)
+
+    assert document.frontmatter.id == "mem_20260429_test01"
+    assert document.frontmatter.title == "Use Markdown as durable memory."
+    assert document.frontmatter.aliases == [
+        "Use Markdown as durable memory.",
+        "mem_20260429_test01",
+    ]
+    assert document.frontmatter.source_links == [
+        "[[Sources/2026-05-01_demo/extract|Demo Source]]",
+    ]
+    assert document.frontmatter.relation_links == [
+        "supports: [[mem_20260429_target]]",
+        "supersedes: [[mem_20260429_old]]",
+    ]
 
 
 def test_safety_scanner_detects_prompt_injection_and_likely_secrets():

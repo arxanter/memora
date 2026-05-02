@@ -80,6 +80,8 @@ def test_build_user_profile_writes_active_user_and_global_memories_without_mutat
     assert frontmatter == {
         "kind": "profile",
         "schema_version": 1,
+        "title": "User Profile",
+        "aliases": ["User Profile", "Agent Memory User Profile"],
         "profile_type": "user",
         "project": None,
         "generated_at": "2026-05-01T12:00:00+00:00",
@@ -94,7 +96,8 @@ def test_build_user_profile_writes_active_user_and_global_memories_without_mutat
     assert "- Use generated profiles only as context. [C1]" in markdown
     assert "## Preferences" in markdown
     assert "- Prefer compact profile bullets with citations. [C2]" in markdown
-    assert "[C1] mem_20260501_user_decision (../Memories/decisions/user-decision.md)" in markdown
+    assert "[C1] [[Memories/decisions/user-decision|mem_20260501_user_decision]]" in markdown
+    assert "(../Memories/decisions/user-decision.md)" in markdown
     assert "Project memory should not enter the user profile." not in markdown
     assert "Pending memory should not enter any generated profile." not in markdown
     assert payload["citations"][0] == {
@@ -145,7 +148,7 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
         config,
         profile_type="project",
         project="agent-memory",
-        budget=75,
+        budget=95,
         now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
     )
 
@@ -157,11 +160,17 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
     assert payload["project"] == "agent-memory"
     assert payload["memory_count"] == 1
     assert payload["truncated"] is True
-    assert payload["used_tokens_estimate"] <= 75
-    assert estimate_tokens(markdown) <= 75
+    assert payload["used_tokens_estimate"] <= 95
+    assert estimate_tokens(markdown) <= 95
+    assert frontmatter["title"] == "agent-memory Profile"
+    assert frontmatter["aliases"] == [
+        "agent-memory Profile",
+        "Agent Memory Project Profile: agent-memory",
+    ]
     assert frontmatter["source_memory_ids"] == ["mem_20260501_project_a"]
     assert "Include exact project profile memory. [C1]" in markdown
     assert "../../Memories/decisions/project-a.md" in markdown
+    assert "[[Memories/decisions/project-a|mem_20260501_project_a]]" in markdown
     assert "Other project memory should be excluded." not in markdown
     assert "This second exact project memory" not in markdown
 

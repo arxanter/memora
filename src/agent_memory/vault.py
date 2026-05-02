@@ -12,6 +12,8 @@ from typing import Any, Iterable, Optional, Union
 import yaml
 
 from agent_memory.config import MemoryConfig, create_default_config, load_config, write_config
+from agent_memory.markdown import aliases as presentation_aliases
+from agent_memory.markdown import readable_title, wikilink_for_memory, wikilink_for_path
 from agent_memory.schema import (
     AuthorKind,
     AuthorMetadata,
@@ -206,9 +208,58 @@ def remember_memory(
 def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
     """Render a validated memory as Obsidian-compatible Markdown."""
 
-    frontmatter_data = frontmatter.model_dump(mode="json", exclude_none=False)
+    frontmatter_data = _memory_frontmatter_with_presentation(frontmatter, body)
     rendered_yaml = yaml.safe_dump(frontmatter_data, sort_keys=False, allow_unicode=False).strip()
     return f"---\n{rendered_yaml}\n---\n\n{body.strip()}\n"
+
+
+def _memory_frontmatter_with_presentation(frontmatter: MemoryFrontmatter, body: str) -> dict[str, Any]:
+    """Add optional Obsidian presentation fields without changing canonical ids."""
+
+    frontmatter_data = frontmatter.model_dump(mode="json", exclude_none=False)
+    title = frontmatter.title or readable_title(body, fallback=frontmatter.id)
+    frontmatter_data["title"] = title
+    frontmatter_data["aliases"] = frontmatter.aliases or presentation_aliases(title, frontmatter.id)
+
+    source_links = list(frontmatter.source_links)
+    if frontmatter.source and frontmatter.source.path and not source_links:
+        source_links = [
+            wikilink_for_path(
+                frontmatter.source.path,
+                label=frontmatter.source.title or "Source",
+            )
+        ]
+    frontmatter_data["source_links"] = source_links
+
+    relation_links = list(frontmatter.relation_links)
+    if not relation_links:
+        relation_links = _memory_relation_links(frontmatter)
+    frontmatter_data["relation_links"] = relation_links
+
+    for field in ("aliases", "source_links", "relation_links"):
+        if not frontmatter_data[field]:
+            frontmatter_data.pop(field)
+    return frontmatter_data
+
+
+def _memory_relation_links(frontmatter: MemoryFrontmatter) -> list[str]:
+    links: list[str] = []
+    seen: set[str] = set()
+
+    def add_link(relation: str, target: str) -> None:
+        link = f"{relation}: {wikilink_for_memory(target)}"
+        if link in seen:
+            return
+        seen.add(link)
+        links.append(link)
+
+    for relation in frontmatter.relations:
+        add_link(relation.type.value, relation.target)
+    for target in frontmatter.supersedes:
+        add_link(RelationType.SUPERSEDES.value, target)
+    for target in frontmatter.contradicts:
+        add_link(RelationType.CONTRADICTS.value, target)
+    return links
 
 
 def status_summary(config: MemoryConfig) -> dict[str, Any]:
