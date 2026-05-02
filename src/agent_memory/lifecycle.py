@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 import yaml
 
 from agent_memory.config import MemoryConfig
+from agent_memory.curation import detect_opposite_claim, near_duplicate_text
 from agent_memory.schema import (
     AuthorKind,
     LifecycleStatus,
@@ -75,9 +76,11 @@ class DuplicateCandidate:
     match_reason: str
     signature: str
     matched_fields: dict[str, tuple[str, ...]]
+    score: Optional[float] = None
+    confidence: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.memory_id,
             "relative_path": self.relative_path.as_posix(),
             "type": self.memory_type,
@@ -89,6 +92,11 @@ class DuplicateCandidate:
                 for side, fields in self.matched_fields.items()
             },
         }
+        if self.score is not None:
+            payload["score"] = self.score
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        return payload
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,9 @@ class ContradictionCandidate:
     status: Optional[str]
     relation_direction: str
     match_reason: str
+    confidence: Optional[float] = None
+    matched_fields: Optional[dict[str, tuple[str, ...]]] = None
+    evidence: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -114,6 +125,15 @@ class ContradictionCandidate:
             payload["type"] = self.memory_type
         if self.status is not None:
             payload["status"] = self.status
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.matched_fields is not None:
+            payload["matched_fields"] = {
+                side: list(fields)
+                for side, fields in self.matched_fields.items()
+            }
+        if self.evidence is not None:
+            payload["evidence"] = dict(self.evidence)
         return payload
 
 
@@ -226,6 +246,7 @@ class ReviewItem:
             "proposed_actions": list(self.proposed_actions),
             "duplicate_candidates": [candidate.to_dict() for candidate in self.duplicate_candidates],
             "contradiction_candidates": [candidate.to_dict() for candidate in self.contradiction_candidates],
+            "curation": _curation_metadata(self, recommended_action=_curation_recommended_action(self)),
             "citation": self.citation,
         }
 
@@ -646,6 +667,7 @@ def _curation_item(item: ReviewItem) -> dict[str, Any]:
     recommended_action = _curation_recommended_action(item)
     duplicate_candidates = [candidate.to_dict() for candidate in item.duplicate_candidates]
     contradiction_candidates = [candidate.to_dict() for candidate in item.contradiction_candidates]
+    curation = _curation_metadata(item, recommended_action=recommended_action)
     return {
         "id": item.memory_id,
         "path": str(item.path),
@@ -660,6 +682,7 @@ def _curation_item(item: ReviewItem) -> dict[str, Any]:
         "importance": item.importance.to_dict(),
         "duplicate_candidates": duplicate_candidates,
         "contradiction_candidates": contradiction_candidates,
+        "curation": curation,
         "candidate_summaries": _candidate_summaries(item),
         "citation": item.citation,
     }
@@ -678,6 +701,56 @@ def _curation_recommended_action(item: ReviewItem) -> str:
     if not flags and item.recommended_action == "approve":
         return "approve"
     return "defer"
+
+
+def _curation_metadata(item: ReviewItem, *, recommended_action: str) -> dict[str, Any]:
+    return {
+        "proposal_only": True,
+        "recommended_action": recommended_action,
+        "reason": _curation_reason(item, recommended_action),
+        "duplicate_candidate_count": len(item.duplicate_candidates),
+        "contradiction_candidate_count": len(item.contradiction_candidates),
+        "signals": _curation_signals(item),
+    }
+
+
+def _curation_reason(item: ReviewItem, recommended_action: str) -> str:
+    if item.contradiction_candidates:
+        return "likely_contradiction_requires_human_inspection"
+    if item.duplicate_candidates:
+        if any(candidate.status == LifecycleStatus.ACTIVE.value for candidate in item.duplicate_candidates):
+            return "likely_duplicate_of_active_memory"
+        return "possible_duplicate_requires_human_inspection"
+    flags = set(item.risk_flags)
+    if flags & {"low_confidence", "missing_confidence", "missing_source"}:
+        return "review_risk_flags_require_inspection"
+    if recommended_action == "approve":
+        return "no_curation_risks_detected"
+    return "no_high_confidence_curation_action"
+
+
+def _curation_signals(item: ReviewItem) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for candidate in item.duplicate_candidates:
+        signal = {
+            "kind": "duplicate",
+            "id": candidate.memory_id,
+            "reason": candidate.match_reason,
+            "score": candidate.score if candidate.score is not None else 1.0,
+            "confidence": candidate.confidence if candidate.confidence is not None else 0.95,
+        }
+        signals.append(signal)
+    for candidate in item.contradiction_candidates:
+        signal = {
+            "kind": "contradiction",
+            "id": candidate.memory_id,
+            "reason": candidate.match_reason,
+            "confidence": candidate.confidence if candidate.confidence is not None else 0.95,
+        }
+        if candidate.evidence is not None:
+            signal["evidence"] = dict(candidate.evidence)
+        signals.append(signal)
+    return signals
 
 
 def _candidate_summaries(item: ReviewItem) -> list[dict[str, Any]]:
@@ -995,6 +1068,17 @@ def _contradiction_candidates(
             target_record=candidate_record,
             relation_direction="incoming",
         )
+    for candidate_record in records:
+        candidate_frontmatter = candidate_record.document.frontmatter
+        if candidate_frontmatter.id == frontmatter.id:
+            continue
+        if candidate_frontmatter.status.value not in _DUPLICATE_CANDIDATE_STATUSES:
+            continue
+        if any(candidate.memory_id == candidate_frontmatter.id for candidate in candidates.values()):
+            continue
+        heuristic = _heuristic_contradiction_candidate(config, record, candidate_record)
+        if heuristic is not None:
+            candidates[(heuristic.memory_id, heuristic.relation_direction)] = heuristic
     return tuple(candidates.values())
 
 
@@ -1028,6 +1112,44 @@ def _outgoing_contradiction_targets(frontmatter: MemoryFrontmatter) -> tuple[str
         if relation.type == RelationType.CONTRADICTS
     )
     return tuple(dict.fromkeys(targets))
+
+
+def _heuristic_contradiction_candidate(
+    config: MemoryConfig,
+    record: _MemoryRecord,
+    candidate_record: _MemoryRecord,
+) -> Optional[ContradictionCandidate]:
+    for pending_field, pending_text in _contradiction_text_values(record):
+        for candidate_field, candidate_text in _contradiction_text_values(candidate_record):
+            signal = detect_opposite_claim(pending_text, candidate_text)
+            if signal is None:
+                continue
+            candidate_frontmatter = candidate_record.document.frontmatter
+            return ContradictionCandidate(
+                memory_id=candidate_frontmatter.id,
+                relative_path=candidate_record.path.relative_to(config.vault_path),
+                memory_type=candidate_frontmatter.type.value,
+                status=candidate_frontmatter.status.value,
+                relation_direction="inferred",
+                match_reason=signal.match_reason,
+                confidence=signal.confidence,
+                matched_fields={
+                    "pending": (pending_field,),
+                    "candidate": (candidate_field,),
+                },
+                evidence=signal.evidence(),
+            )
+    return None
+
+
+def _contradiction_text_values(record: _MemoryRecord) -> tuple[tuple[str, str], ...]:
+    values: list[tuple[str, str]] = []
+    if record.body.strip():
+        values.append(("body", record.body))
+    for observation in record.document.frontmatter.observations:
+        if observation.text.strip():
+            values.append(("observation", observation.text))
+    return tuple(dict.fromkeys(values))
 
 
 def _duplicate_candidates(
@@ -1073,6 +1195,28 @@ def _duplicate_candidates(
                     "candidate": _sorted_tuple((*existing.matched_fields["candidate"], candidate_field)),
                 },
             )
+    for candidate_record in _iter_near_duplicate_records(record, signature_index):
+        candidate_frontmatter = candidate_record.document.frontmatter
+        if candidate_frontmatter.id in candidates:
+            continue
+        signal = _near_duplicate_candidate_signal(record, candidate_record)
+        if signal is None:
+            continue
+        pending_field, candidate_field, match = signal
+        candidates[candidate_frontmatter.id] = DuplicateCandidate(
+            memory_id=candidate_frontmatter.id,
+            relative_path=candidate_record.path.relative_to(config.vault_path),
+            memory_type=candidate_frontmatter.type.value,
+            status=candidate_frontmatter.status.value,
+            match_reason="normalized_content_near_match",
+            signature=match.signature,
+            matched_fields={
+                "pending": (pending_field,),
+                "candidate": (candidate_field,),
+            },
+            score=match.score,
+            confidence=match.confidence,
+        )
     return tuple(
         sorted(
             candidates.values(),
@@ -1093,16 +1237,60 @@ def _duplicate_signature_index(records: Sequence[_MemoryRecord]) -> dict[str, li
     return index
 
 
+def _iter_near_duplicate_records(
+    record: _MemoryRecord,
+    signature_index: dict[str, list[tuple[_MemoryRecord, str]]],
+) -> tuple[_MemoryRecord, ...]:
+    records: dict[str, _MemoryRecord] = {}
+    current_id = record.document.frontmatter.id
+    for indexed_records in signature_index.values():
+        for candidate_record, _field in indexed_records:
+            candidate_frontmatter = candidate_record.document.frontmatter
+            if candidate_frontmatter.id == current_id:
+                continue
+            if candidate_frontmatter.status.value not in _DUPLICATE_CANDIDATE_STATUSES:
+                continue
+            records[candidate_frontmatter.id] = candidate_record
+    return tuple(records.values())
+
+
+def _near_duplicate_candidate_signal(record: _MemoryRecord, candidate_record: _MemoryRecord) -> Optional[tuple[str, str, Any]]:
+    best: Optional[tuple[str, str, Any]] = None
+    for pending_field, pending_text in _duplicate_text_values(record):
+        for candidate_field, candidate_text in _duplicate_text_values(candidate_record):
+            match = near_duplicate_text(pending_text, candidate_text)
+            if match is None:
+                continue
+            if _duplicate_text_signature(pending_text) == _duplicate_text_signature(candidate_text):
+                continue
+            if best is None or match.score > best[2].score:
+                best = (pending_field, candidate_field, match)
+    return best
+
+
 def _duplicate_text_signatures(record: _MemoryRecord) -> tuple[tuple[str, str], ...]:
     signatures: list[tuple[str, str]] = []
-    body_signature = _duplicate_text_signature(record.body)
-    if body_signature is not None:
-        signatures.append((body_signature, "body"))
-    for observation in record.document.frontmatter.observations:
-        observation_signature = _duplicate_text_signature(observation.text)
-        if observation_signature is not None:
-            signatures.append((observation_signature, "observation"))
+    for field, value in _duplicate_text_values(record):
+        signature = _duplicate_text_signature(value)
+        if signature is not None:
+            signatures.append((signature, field))
     return tuple(dict.fromkeys(signatures))
+
+
+def _duplicate_text_values(record: _MemoryRecord) -> tuple[tuple[str, str], ...]:
+    values: list[tuple[str, str]] = []
+    frontmatter = record.document.frontmatter
+    if record.body.strip():
+        values.append(("body", record.body))
+    for observation in frontmatter.observations:
+        if observation.text.strip():
+            values.append(("observation", observation.text))
+    if frontmatter.title:
+        values.append(("title", frontmatter.title))
+    for alias in frontmatter.aliases:
+        if alias.strip():
+            values.append(("alias", alias))
+    return tuple(dict.fromkeys(values))
 
 
 def _duplicate_text_signature(text: str) -> Optional[str]:

@@ -429,6 +429,55 @@ def test_review_queue_surfaces_duplicate_candidates_without_mutating_memories(tm
     assert payload["source_groups"][0]["items"][0]["contradiction_candidates"] == []
 
 
+def test_review_queue_surfaces_near_duplicate_candidates_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/active.md",
+        memory_id="mem_20260430_active_near_duplicate",
+        memory_type="fact",
+        status="active",
+        body="Use SQLite FTS for memory recall results.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/pending.md",
+        memory_id="mem_20260430_pending_near_duplicate",
+        memory_type="fact",
+        status="pending",
+        body="Use sqlite fts for memory recall results!",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_near_duplicates/extract.md",
+        confidence=0.95,
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    item = payload["items"][0]
+    assert item["id"] == "mem_20260430_pending_near_duplicate"
+    assert item["risk_flags"] == ["possible_duplicate"]
+    assert item["recommended_action"] == "inspect"
+    assert len(item["duplicate_candidates"]) == 1
+    candidate = item["duplicate_candidates"][0]
+    assert candidate["id"] == "mem_20260430_active_near_duplicate"
+    assert candidate["match_reason"] == "normalized_content_near_match"
+    assert candidate["score"] == 1.0
+    assert candidate["confidence"] == 0.86
+    assert candidate["matched_fields"] == {
+        "pending": ["body"],
+        "candidate": ["body"],
+    }
+    assert item["curation"]["proposal_only"] is True
+    assert item["curation"]["duplicate_candidate_count"] == 1
+    assert item["curation"]["signals"][0]["reason"] == "normalized_content_near_match"
+
+
 def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutating_memories(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -540,6 +589,80 @@ def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutatin
     ]
 
 
+def test_review_queue_surfaces_high_signal_opposite_claims_without_mutating_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/decisions/active-use.md",
+        memory_id="mem_20260430_active_use_sqlite",
+        memory_type="decision",
+        status="active",
+        body="Use SQLite cache for recall indexing.",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/pending-do-not-use.md",
+        memory_id="mem_20260430_pending_do_not_use_sqlite",
+        memory_type="decision",
+        status="pending",
+        body="Do not use SQLite cache for recall indexing.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_opposite_claims/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/decisions/pending-unrelated.md",
+        memory_id="mem_20260430_pending_unrelated_claim",
+        memory_type="decision",
+        status="pending",
+        body="Use generated profile context for user preferences.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_opposite_claims/extract.md",
+        confidence=0.95,
+    )
+    memory_paths = sorted((vault / "Memories").rglob("*.md"))
+    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
+    config = load_config(vault)
+
+    payload = review_queue(config).to_dict()
+
+    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
+    items = {item["id"]: item for item in payload["items"]}
+    contradiction_item = items["mem_20260430_pending_do_not_use_sqlite"]
+    assert contradiction_item["risk_flags"] == ["has_contradictions"]
+    assert contradiction_item["recommended_action"] == "inspect"
+    assert contradiction_item["contradiction_candidates"] == [
+        {
+            "id": "mem_20260430_active_use_sqlite",
+            "relation_direction": "inferred",
+            "match_reason": "opposite_claim:use_vs_do_not_use",
+            "relative_path": "Memories/decisions/active-use.md",
+            "type": "decision",
+            "status": "active",
+            "confidence": 0.86,
+            "matched_fields": {
+                "pending": ["body"],
+                "candidate": ["body"],
+            },
+            "evidence": {
+                "left_subject": "sqlite cache recall indexing",
+                "right_subject": "sqlite cache recall indexing",
+                "left_claim": "do not use sqlite cache for recall indexing",
+                "right_claim": "use sqlite cache for recall indexing",
+            },
+        }
+    ]
+    assert contradiction_item["curation"]["contradiction_candidate_count"] == 1
+    assert contradiction_item["curation"]["signals"][0]["reason"] == "opposite_claim:use_vs_do_not_use"
+
+    unrelated_item = items["mem_20260430_pending_unrelated_claim"]
+    assert unrelated_item["contradiction_candidates"] == []
+    assert "has_contradictions" not in unrelated_item["risk_flags"]
+
+
 def test_curation_plan_proposes_conservative_actions_without_mutating_memories(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -604,6 +727,8 @@ def test_curation_plan_proposes_conservative_actions_without_mutating_memories(t
     duplicate_item = items["mem_20260430_pending_duplicate"]
     assert duplicate_item["recommended_action"] == "merge_or_reject_duplicate"
     assert duplicate_item["review_recommended_action"] == "inspect"
+    assert duplicate_item["curation"]["proposal_only"] is True
+    assert duplicate_item["curation"]["reason"] == "likely_duplicate_of_active_memory"
     assert duplicate_item["candidate_summaries"] == [
         {
             "kind": "duplicate",
@@ -616,6 +741,8 @@ def test_curation_plan_proposes_conservative_actions_without_mutating_memories(t
     ]
     contradiction_item = items["mem_20260430_pending_contradiction"]
     assert contradiction_item["recommended_action"] == "inspect_contradiction"
+    assert contradiction_item["curation"]["proposal_only"] is True
+    assert contradiction_item["curation"]["reason"] == "likely_contradiction_requires_human_inspection"
     assert contradiction_item["candidate_summaries"] == [
         {
             "kind": "contradiction",
