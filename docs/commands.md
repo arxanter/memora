@@ -52,6 +52,7 @@ memory raw process-inbox raw/inbox --project <project> --limit 10
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
 memory import-url <url> --dry-run
+memory import-pdf <path> --text-file <path> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
 memory import <path>
 memory export --format markdown
@@ -824,6 +825,30 @@ memory import-url https://example.com/article \
   --vault ./memory-vault \
   --project agent-memory \
   --tag article \
+  --json
+```
+
+### `memory import-pdf`
+
+Implemented in Phase 4 as an optional explicit connector.
+
+Imports one local PDF into `Sources/` by extracting text with the optional
+`agent-memory[pdf]` dependency, or by reading pre-extracted UTF-8 text with
+`--text-file` / `--content-file`. The command records `channel: pdf`, file
+origin, extraction method, project, tags, sensitivity, and safety risk flags. It
+does not create canonical memories by itself.
+
+Use `--dry-run` to preview metadata without extracting or writing files.
+
+Examples:
+
+```bash
+memory import-pdf ./paper.pdf --vault ./memory-vault --dry-run --json
+memory import-pdf ./paper.pdf \
+  --text-file ./paper.txt \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --tag paper \
   --json
 ```
 

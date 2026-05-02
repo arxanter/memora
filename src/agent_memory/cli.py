@@ -27,6 +27,7 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
+from agent_memory.pdf_import import load_pdf_content
 from agent_memory.profile import build_context_profile_payload, build_profile
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
@@ -98,6 +99,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
             ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
             ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
+            ("import-pdf <path>", "Import explicit local PDF text into Sources/."),
             ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
         ),
     ),
@@ -722,6 +724,83 @@ def import_url_command(
         return
 
     console.print(f"[green]Imported URL source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
+
+
+@app.command("import-pdf")
+def import_pdf_command(
+    path: Path = typer.Argument(..., help="Explicit local PDF file to import into Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to the PDF file stem."),
+    text_file: Optional[Path] = typer.Option(
+        None,
+        "--text-file",
+        "--content-file",
+        help="Read pre-extracted PDF text from a UTF-8 file instead of using the optional extractor.",
+    ),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    channel: str = typer.Option("pdf", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("user_provided", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the PDF import plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Import explicit local PDF text as reviewable source material."""
+
+    try:
+        config = load_config(vault)
+        if dry_run:
+            payload = _pdf_import_plan_payload(
+                config,
+                path=path,
+                title=title,
+                text_file=text_file,
+                project=project,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                tags=tag,
+            )
+        else:
+            imported = load_pdf_content(path, text_file=text_file)
+            result = save_source_material(
+                config,
+                title=title or imported.title,
+                content=imported.content,
+                extract=imported.extract,
+                project=project,
+                tags=tag,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                origin=imported.origin,
+            )
+            payload = result.to_dict()
+            payload.update(
+                {
+                    "command": "import-pdf",
+                    "dry_run": False,
+                    "content": imported.summary(),
+                    "next_steps": [
+                        "Review the saved PDF source and extract before promoting canonical memory.",
+                        "Create pending source-backed memories only for durable facts, decisions, preferences, project context, or tasks.",
+                    ],
+                }
+            )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_pdf_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] PDF source would be imported: {payload['path']}")
+        return
+
+    console.print(f"[green]Imported PDF source:[/green] {payload['relative_source_path']}")
     if payload.get("relative_extract_path"):
         console.print(f"Extract: {payload['relative_extract_path']}")
 
@@ -2290,6 +2369,67 @@ def _url_import_plan_payload(
         "would_write": "Sources/<source_id>/{source.md,extract.md}",
         "next_steps": [
             "Run without --dry-run to fetch or read the URL content and save it under Sources/.",
+            "Review the saved extract before creating pending source-backed memories.",
+        ],
+    }
+
+
+def _pdf_import_plan_payload(
+    config: Any,
+    *,
+    path: Path,
+    title: Optional[str],
+    text_file: Optional[Path],
+    project: Optional[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    pdf_path = path.expanduser()
+    if not pdf_path.is_file():
+        raise ValueError(f"PDF file not found: {pdf_path}")
+    origin: dict[str, Any] = {
+        "provider": "pdf",
+        "path": str(pdf_path),
+        "file_name": pdf_path.name,
+        "extractor": "text_file" if text_file is not None else "pypdf",
+        "source_kind": "pre_extracted_text" if text_file is not None else "pdf_text",
+        "content_type": "application/pdf",
+    }
+    if text_file is not None:
+        selected_text_file = text_file.expanduser()
+        origin["text_file"] = str(selected_text_file)
+        origin["text_file_name"] = selected_text_file.name
+    planned_source = {
+        "title": title or pdf_path.stem,
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": origin,
+    }
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "import-pdf",
+        "dry_run": True,
+        "vault_path": str(config.vault_path),
+        "path": str(pdf_path),
+        "title": title or pdf_path.stem,
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": origin,
+        "planned_source": planned_source,
+        "would_extract": text_file is None,
+        "would_read_text_file": str(text_file.expanduser()) if text_file is not None else None,
+        "would_write": "Sources/<source_id>/{source.md,extract.md}",
+        "next_steps": [
+            "Run without --dry-run to extract or read PDF text and save it under Sources/.",
             "Review the saved extract before creating pending source-backed memories.",
         ],
     }

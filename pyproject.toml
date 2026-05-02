@@ -22,6 +22,9 @@ memory-mcp = "agent_memory.mcp_server:main"
 mcp = [
   "mcp",
 ]
+pdf = [
+  "pypdf",
+]
 test = [
   "pytest>=8.0",
 ]
