@@ -604,6 +604,7 @@ def import_session_command(
                     "source_id": saved_source.source_id,
                 },
                 confidence=confidence,
+                risk_flags=saved_source.risk_flags,
             )
             payload["memory"] = memory.to_dict()
             payload["review_required"] = memory.status == LifecycleStatus.PENDING

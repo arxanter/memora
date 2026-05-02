@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence, Union
+from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
 import yaml
 
@@ -21,6 +21,13 @@ from agent_memory.schema import (
     RelationType,
     iter_memory_markdown_files,
     parse_markdown_document,
+)
+from agent_memory.safety import (
+    has_unsafe_recall_risk,
+    merge_scan_results,
+    normalize_risk_flags,
+    scan_metadata,
+    scan_text,
 )
 from agent_memory.sync import atomic_write_many, atomic_write_text, vault_lock
 
@@ -580,6 +587,14 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
             has_duplicate_candidates=bool(duplicate_candidates),
             has_contradiction_candidates=bool(contradiction_candidates),
         )
+        risk_flags = _review_risk_flags(
+            config,
+            frontmatter,
+            body=record.body,
+            importance=importance,
+            has_duplicate_candidates=bool(duplicate_candidates),
+            has_contradiction_candidates=bool(contradiction_candidates),
+        )
         items.append(
             ReviewItem(
                 memory_id=frontmatter.id,
@@ -593,18 +608,11 @@ def review_queue(config: MemoryConfig) -> ReviewQueue:
                 importance=importance,
                 body=record.body,
                 updated_at=frontmatter.updated_at.isoformat(),
-                risk_flags=_review_risk_flags(
-                    config,
-                    frontmatter,
-                    importance=importance,
-                    has_duplicate_candidates=bool(duplicate_candidates),
-                    has_contradiction_candidates=bool(contradiction_candidates),
-                ),
+                risk_flags=risk_flags,
                 recommended_action=_review_recommended_action(
                     config,
                     frontmatter,
-                    has_duplicate_candidates=bool(duplicate_candidates),
-                    has_contradiction_candidates=bool(contradiction_candidates),
+                    risk_flags=risk_flags,
                 ),
                 duplicate_candidates=duplicate_candidates,
                 contradiction_candidates=contradiction_candidates,
@@ -744,11 +752,13 @@ def _review_risk_flags(
     config: MemoryConfig,
     frontmatter: MemoryFrontmatter,
     *,
+    body: str = "",
     importance: Optional[ReviewImportance] = None,
     has_duplicate_candidates: bool = False,
     has_contradiction_candidates: bool = False,
 ) -> tuple[str, ...]:
     flags: list[str] = []
+    flags.extend(_memory_safety_flags(config, frontmatter, body=body))
     confidence = frontmatter.confidence
     if confidence is None:
         flags.append("missing_confidence")
@@ -764,24 +774,19 @@ def _review_risk_flags(
         flags.append("possible_duplicate")
     if importance is not None and importance.score >= _HIGH_IMPORTANCE_THRESHOLD:
         flags.append("high_importance")
-    return tuple(flags)
+    return normalize_risk_flags(flags)
 
 
 def _review_recommended_action(
     config: MemoryConfig,
     frontmatter: MemoryFrontmatter,
     *,
-    has_duplicate_candidates: bool = False,
-    has_contradiction_candidates: bool = False,
+    risk_flags: Optional[Sequence[str]] = None,
 ) -> str:
-    flags = _review_risk_flags(
-        config,
-        frontmatter,
-        has_duplicate_candidates=has_duplicate_candidates,
-        has_contradiction_candidates=has_contradiction_candidates,
-    )
+    flags = normalize_risk_flags(risk_flags or _review_risk_flags(config, frontmatter))
     if (
-        "low_confidence" in flags
+        has_unsafe_recall_risk(flags)
+        or "low_confidence" in flags
         or "missing_source" in flags
         or "missing_confidence" in flags
         or "possible_duplicate" in flags
@@ -791,6 +796,54 @@ def _review_recommended_action(
     if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
         return "approve"
     return "defer"
+
+
+def _memory_safety_flags(
+    config: MemoryConfig,
+    frontmatter: MemoryFrontmatter,
+    *,
+    body: str,
+) -> tuple[str, ...]:
+    frontmatter_flags = normalize_risk_flags(frontmatter.risk_flags)
+    source_flags = _source_safety_flags(config, frontmatter.source)
+    scanned = scan_text(body, field="memory")
+    observation_scans = [
+        scan_text(observation.text, field="observation")
+        for observation in frontmatter.observations
+    ]
+    safety = merge_scan_results(scanned, *observation_scans)
+    return normalize_risk_flags((*frontmatter_flags, *source_flags, *safety.risk_flags))
+
+
+def _source_safety_flags(config: MemoryConfig, source: Any) -> tuple[str, ...]:
+    if source is None:
+        return ()
+    source_payload = source.model_dump(mode="json", exclude_none=True) if hasattr(source, "model_dump") else {}
+    flags = list(normalize_risk_flags(source_payload.get("risk_flags")))
+    flags.extend(scan_metadata(source_payload).risk_flags)
+    source_path = source_payload.get("path")
+    if isinstance(source_path, str) and source_path:
+        candidate = config.vault_path / source_path
+        if candidate.is_file() and candidate.resolve().is_relative_to(config.vault_path.resolve()):
+            try:
+                text = candidate.read_text(encoding="utf-8")
+                frontmatter = _source_frontmatter_mapping(text)
+            except Exception:
+                frontmatter = {}
+            flags.extend(normalize_risk_flags(frontmatter.get("risk_flags")))
+            flags.extend(scan_metadata(frontmatter).risk_flags)
+    return normalize_risk_flags(flags)
+
+
+def _source_frontmatter_mapping(text: str) -> Mapping[str, Any]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}
+    parts = normalized.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    payload = yaml.safe_load(parts[0][4:]) or {}
+    return payload if isinstance(payload, Mapping) else {}
 
 
 def _review_importance(

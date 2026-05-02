@@ -81,7 +81,7 @@ def remember_tool(memory: Mapping[str, Any], *, vault: Optional[PathLike] = None
                 "confidence": confidence,
                 "policy": _agent_policy_payload(
                     config.agent_policy,
-                    selected_status=selected_status,
+                    selected_status=result.status,
                     confidence=confidence,
                     explicit_user_save=_explicit_user_save(memory),
                 ),
@@ -381,6 +381,7 @@ def import_session_tool(
                     "source_id": saved_source.source_id,
                 },
                 confidence=confidence,
+                risk_flags=saved_source.risk_flags,
             )
             payload["memory"] = memory.to_dict()
             payload["review_required"] = memory.status == LifecycleStatus.PENDING

@@ -26,6 +26,7 @@ from agent_memory.schema import (
     parse_markdown_document,
     validate_vault,
 )
+from agent_memory.safety import merge_scan_results, normalize_risk_flags, scan_text
 from agent_memory.sync import atomic_write_text, detect_sync_conflicts, vault_lock
 
 MEMORY_TYPE_DIRECTORIES: dict[MemoryType, str] = {
@@ -63,6 +64,7 @@ class RememberResult:
     relative_path: Path
     status: LifecycleStatus
     memory_type: MemoryType
+    risk_flags: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +74,7 @@ class RememberResult:
             "relative_path": self.relative_path.as_posix(),
             "type": self.memory_type.value,
             "status": self.status.value,
+            "risk_flags": list(self.risk_flags),
         }
 
 
@@ -113,12 +116,14 @@ def remember_memory(
     author_name: Optional[str] = None,
     source: Optional[Union[SourceRef, dict[str, Any]]] = None,
     confidence: Optional[float] = None,
+    risk_flags: Iterable[str] = (),
 ) -> RememberResult:
     """Create one canonical Markdown memory file."""
 
     cleaned_text = text.strip()
     if not cleaned_text:
         raise ValueError("memory text must not be empty")
+    selected_tags = tuple(tags)
 
     selected_scope = MemoryScope(scope or config.default_scope)
     selected_project = project or config.default_project
@@ -134,6 +139,13 @@ def remember_memory(
             else config.user_default_status
         )
     )
+    safety = merge_scan_results(
+        scan_text(cleaned_text, field="memory"),
+        scan_text(" ".join(selected_tags), field="tags"),
+    )
+    selected_risk_flags = normalize_risk_flags((*risk_flags, *safety.risk_flags))
+    if selected_author_kind == AuthorKind.AGENT and selected_status == LifecycleStatus.ACTIVE and selected_risk_flags:
+        selected_status = LifecycleStatus.PENDING
     selected_source = (
         source
         if isinstance(source, SourceRef) or source is None
@@ -168,7 +180,8 @@ def remember_memory(
                 confidence=confidence,
             )
         ],
-        tags=list(tags),
+        tags=list(selected_tags),
+        risk_flags=list(selected_risk_flags),
     )
 
     markdown = render_memory_markdown(frontmatter, cleaned_text)
@@ -186,6 +199,7 @@ def remember_memory(
         relative_path=target_path.relative_to(config.vault_path),
         status=selected_status,
         memory_type=memory_type,
+        risk_flags=selected_risk_flags,
     )
 
 

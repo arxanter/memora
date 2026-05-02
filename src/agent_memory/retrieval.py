@@ -8,6 +8,8 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Literal, Mapping, Optional, Sequence
 
+import yaml
+
 from agent_memory.config import MemoryConfig
 from agent_memory.embeddings import (
     EmbeddingProvider,
@@ -17,6 +19,7 @@ from agent_memory.embeddings import (
     provider_from_config,
     serialize_vector,
 )
+from agent_memory.safety import has_unsafe_recall_risk, normalize_risk_flags, scan_metadata, scan_text
 from agent_memory.schema import LifecycleStatus, MemoryScope, MemoryType, RelationType
 
 DEFAULT_STATUSES = (LifecycleStatus.ACTIVE.value, LifecycleStatus.STALE.value)
@@ -399,7 +402,11 @@ def search_memory(
             )
         )
 
-    results = _merged_results(results_by_id, selected_limit)
+    results = _safety_annotated_results(
+        config,
+        _merged_results(results_by_id, selected_limit),
+        filter_unsafe=selected_filters.status is None,
+    )
     return SearchResponse(
         config=config,
         query=cleaned_query,
@@ -1109,6 +1116,59 @@ def _rank_candidate(
         score_breakdown=breakdown,
         related=candidate.related,
     )
+
+
+def _safety_annotated_results(
+    config: MemoryConfig,
+    results: Sequence[SearchResult],
+    *,
+    filter_unsafe: bool,
+) -> tuple[SearchResult, ...]:
+    selected: list[SearchResult] = []
+    for result in results:
+        risk_flags = _risk_flags_for_path(config, result.path)
+        metadata = dict(result.metadata)
+        if risk_flags:
+            metadata["risk_flags"] = list(risk_flags)
+        annotated = replace(result, metadata=metadata)
+        if filter_unsafe and has_unsafe_recall_risk(risk_flags):
+            continue
+        selected.append(annotated)
+    return tuple(selected)
+
+
+def _risk_flags_for_path(config: MemoryConfig, relative_path: str) -> tuple[str, ...]:
+    path = config.vault_path / relative_path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return ()
+    frontmatter = _frontmatter_mapping(text)
+    flags = list(normalize_risk_flags(frontmatter.get("risk_flags")))
+    flags.extend(scan_metadata(frontmatter).risk_flags)
+    flags.extend(scan_text(_body_text(text), field="memory").risk_flags)
+    return normalize_risk_flags(flags)
+
+
+def _body_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return normalized
+    parts = normalized.split("\n---\n", 1)
+    if len(parts) != 2:
+        return normalized
+    return parts[1]
+
+
+def _frontmatter_mapping(text: str) -> Mapping[str, Any]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}
+    parts = normalized.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    payload = yaml.safe_load(parts[0][4:]) or {}
+    return payload if isinstance(payload, Mapping) else {}
 
 
 def _filter_sql(filters: SearchFilters, *, table_alias: str) -> tuple[str, tuple[Any, ...]]:

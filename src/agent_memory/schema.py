@@ -161,6 +161,7 @@ class MemoryFrontmatter(BaseModel):
     relations: list[Relation] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    risk_flags: list[str] = Field(default_factory=list)
 
     @field_validator("schema_version")
     @classmethod
@@ -190,6 +191,23 @@ class MemoryFrontmatter(BaseModel):
         if invalid:
             raise ValueError(f"link ids must be memory ids without whitespace: {invalid}")
         return values
+
+    @field_validator("risk_flags", mode="before")
+    @classmethod
+    def normalize_risk_flags(cls, values: Any) -> list[str]:
+        if values in (None, ""):
+            return []
+        if isinstance(values, str):
+            values = [values]
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            flag = str(value).strip().lower()
+            if not flag or flag in seen:
+                continue
+            seen.add(flag)
+            cleaned.append(flag)
+        return cleaned
 
     @model_validator(mode="after")
     def validate_conditionals(self) -> MemoryFrontmatter:

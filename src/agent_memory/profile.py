@@ -13,6 +13,7 @@ import yaml
 
 from agent_memory.config import MemoryConfig
 from agent_memory.indexer import estimate_tokens
+from agent_memory.safety import has_unsafe_recall_risk, scan_text
 from agent_memory.schema import LifecycleStatus, MemoryDocument, MemoryScope, MemoryType, validate_vault
 from agent_memory.sync import atomic_write_text, vault_lock
 
@@ -379,6 +380,10 @@ def _select_candidates(
     for document in documents:
         frontmatter = document.frontmatter
         if frontmatter.status != LifecycleStatus.ACTIVE:
+            continue
+        risk_flags = tuple(frontmatter.risk_flags)
+        risk_flags = (*risk_flags, *scan_text(document.body, field="memory").risk_flags)
+        if has_unsafe_recall_risk(risk_flags):
             continue
         if profile_type == "project":
             if frontmatter.project != project:

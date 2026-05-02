@@ -12,6 +12,14 @@ import yaml
 
 from agent_memory.config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
 from agent_memory.indexer import estimate_tokens
+from agent_memory.safety import (
+    SafetyScanResult,
+    merge_scan_results,
+    normalize_risk_flags,
+    scan_metadata,
+    scan_source_material,
+    scan_text,
+)
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType, SourceRef
 from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sync import atomic_write_many, vault_lock
@@ -51,6 +59,8 @@ class SourceCaptureResult:
     source_quality: str
     sensitivity: str
     origin: dict[str, str]
+    risk_flags: tuple[str, ...] = ()
+    safety: Optional[SafetyScanResult] = None
 
     @property
     def citations(self) -> list[dict[str, str]]:
@@ -92,6 +102,8 @@ class SourceCaptureResult:
             "source_quality": self.source_quality,
             "sensitivity": self.sensitivity,
             "origin": dict(self.origin),
+            "risk_flags": list(self.risk_flags),
+            "safety": (self.safety or SafetyScanResult(self.risk_flags, ())).to_dict(),
             "citations": self.citations,
         }
 
@@ -207,6 +219,7 @@ class _PlannedMemory:
     tags: tuple[str, ...]
     confidence: float
     status: LifecycleStatus
+    risk_flags: tuple[str, ...] = ()
 
 
 _PROMOTABLE_MEMORY_TYPES = {
@@ -311,7 +324,28 @@ def lookup_source(
         )
 
     relative_path = evidence_path.relative_to(config.vault_path)
-    text = _strip_frontmatter(evidence_path.read_text(encoding="utf-8"))
+    raw_text = evidence_path.read_text(encoding="utf-8")
+    text = _strip_frontmatter(raw_text)
+    safety = merge_scan_results(
+        scan_metadata(_frontmatter_mapping(raw_text)),
+        scan_text(text, field=kind),
+    )
+    base_payload.update(
+        {
+            "risk_flags": list(safety.risk_flags),
+            "safety": safety.to_dict(),
+        }
+    )
+    if safety.blocks_default_recall:
+        base_payload.update(
+            {
+                "source_path": relative_path.as_posix(),
+                "fallback": False,
+                "empty_reason": "safety_filtered",
+                "safety_filtered": True,
+            }
+        )
+        return base_payload
     raw_chunks = _source_text_chunks(text)
     query_tokens = _lookup_tokens(query)
     ranked_chunks, matched = _rank_source_chunks(raw_chunks, query_tokens)
@@ -361,6 +395,16 @@ def save_source_material(
     selected_quality = _normalized_choice(source_quality, SOURCE_QUALITIES, default="user_provided")
     selected_sensitivity = _normalized_choice(sensitivity, SOURCE_SENSITIVITIES, default="normal")
     selected_origin = _clean_mapping(origin)
+    safety = scan_source_material(
+        content=_optional_string(content),
+        extract=_optional_string(extract),
+        metadata={
+            "channel": selected_channel,
+            "source_quality": selected_quality,
+            "sensitivity": selected_sensitivity,
+            **selected_origin,
+        },
+    )
     selected_slug = _slugify(slug or selected_title or url or "source")
     source_id = f"{selected_at:%Y-%m-%d}_{selected_slug}"
     sources_root = config.vault_path / config.sources_dir
@@ -378,6 +422,7 @@ def save_source_material(
         source_quality=selected_quality,
         sensitivity=selected_sensitivity,
         origin=selected_origin,
+        safety=safety,
         captured_at=selected_at,
     )
     files: list[tuple[PathLike, str]] = [(source_dir / "source.md", source_markdown)]
@@ -399,6 +444,7 @@ def save_source_material(
                     source_quality=selected_quality,
                     sensitivity=selected_sensitivity,
                     origin=selected_origin,
+                    safety=safety,
                     captured_at=selected_at,
                 ),
             )
@@ -423,6 +469,8 @@ def save_source_material(
         source_quality=selected_quality,
         sensitivity=selected_sensitivity,
         origin=selected_origin,
+        risk_flags=safety.risk_flags,
+        safety=safety,
     )
 
 
@@ -441,6 +489,18 @@ def save_source_with_memories(
         SOURCE_SENSITIVITIES,
         default="normal",
     )
+    source_safety = scan_source_material(
+        content=_optional_string(
+            source_payload.get("content")
+            or source_payload.get("raw")
+            or source_payload.get("markdown")
+        ),
+        extract=_optional_string(source_payload.get("extract") or source_payload.get("summary")),
+        metadata={
+            "source_quality": _optional_string(source_payload.get("source_quality")) or "unknown",
+            "sensitivity": selected_sensitivity,
+        },
+    )
     if selected_sensitivity in PROMOTION_BLOCKED_SENSITIVITIES:
         raise ValueError(
             "source sensitivity is blocked from memory promotion; "
@@ -458,6 +518,15 @@ def save_source_with_memories(
         raise ValueError("memories must include at least one durable atomic item")
     if selected_sensitivity == "private":
         planned = tuple(replace(item, status=LifecycleStatus.PENDING) for item in planned)
+    if source_safety.risk_flags:
+        planned = tuple(
+            replace(
+                item,
+                status=LifecycleStatus.PENDING,
+                risk_flags=normalize_risk_flags((*item.risk_flags, *source_safety.risk_flags)),
+            )
+            for item in planned
+        )
 
     saved_source = save_source_material(
         config,
@@ -492,6 +561,7 @@ def save_source_with_memories(
             author_name=author_name,
             source=source_ref,
             confidence=item.confidence,
+            risk_flags=item.risk_flags,
         )
         promoted.append(
             PromotedMemoryResult(
@@ -542,6 +612,17 @@ def _strip_frontmatter(text: str) -> str:
     if lines and lines[0].startswith("Source URL: "):
         lines = lines[1:]
     return "\n".join(lines).strip()
+
+
+def _frontmatter_mapping(text: str) -> Mapping[str, Any]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}
+    parts = normalized.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    payload = yaml.safe_load(parts[0][4:]) or {}
+    return payload if isinstance(payload, Mapping) else {}
 
 
 def _source_text_chunks(text: str) -> list[str]:
@@ -662,6 +743,7 @@ def _render_source_markdown(
     source_quality: str,
     sensitivity: str,
     origin: Mapping[str, str],
+    safety: SafetyScanResult,
     captured_at: datetime,
 ) -> str:
     frontmatter = _frontmatter(
@@ -674,6 +756,7 @@ def _render_source_markdown(
         source_quality=source_quality,
         sensitivity=sensitivity,
         origin=origin,
+        safety=safety,
         captured_at=captured_at,
         kind="source",
     )
@@ -696,6 +779,7 @@ def _render_extract_markdown(
     source_quality: str,
     sensitivity: str,
     origin: Mapping[str, str],
+    safety: SafetyScanResult,
     captured_at: datetime,
 ) -> str:
     frontmatter = _frontmatter(
@@ -708,6 +792,7 @@ def _render_extract_markdown(
         source_quality=source_quality,
         sensitivity=sensitivity,
         origin=origin,
+        safety=safety,
         captured_at=captured_at,
         kind="extract",
     )
@@ -725,6 +810,7 @@ def _frontmatter(
     source_quality: str,
     sensitivity: str,
     origin: Mapping[str, str],
+    safety: SafetyScanResult,
     captured_at: datetime,
     kind: str,
 ) -> str:
@@ -740,6 +826,8 @@ def _frontmatter(
         "channel": channel,
         "source_quality": source_quality,
         "sensitivity": sensitivity,
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
     }
     if origin:
         data["origin"] = dict(origin)
@@ -851,14 +939,22 @@ def _plan_promoted_memory(
     if confidence < 0 or confidence > 1:
         raise ValueError("confidence must be between 0 and 1")
 
+    text = _memory_text(memory)
+    safety = scan_text(text, field="memory")
+    risk_flags = normalize_risk_flags((*_clean_list(memory.get("risk_flags", ())), *safety.risk_flags))
+    selected_status = _promoted_memory_status(memory, policy, confidence)
+    if risk_flags and selected_status == LifecycleStatus.ACTIVE:
+        selected_status = LifecycleStatus.PENDING
+
     return _PlannedMemory(
         memory_type=memory_type,
-        text=_memory_text(memory),
+        text=text,
         scope=_optional_enum(MemoryScope, memory.get("scope")),
         project=_optional_string(memory.get("project")) or default_project,
         tags=tuple(_clean_list(memory.get("tags", ()))),
         confidence=confidence,
-        status=_promoted_memory_status(memory, policy, confidence),
+        status=selected_status,
+        risk_flags=risk_flags,
     )
 
 
