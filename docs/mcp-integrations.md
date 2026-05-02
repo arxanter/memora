@@ -1,6 +1,11 @@
 # MCP Integrations
 
-The MCP server is the primary coding-agent interface. It uses the same config
+> Status: paused/outdated for the current product direction. Agent Memory is now
+> CLI-first; prefer `memory ... --json` plus generated agent instructions/skills.
+> Keep this document for legacy MCP users, but do not expand MCP-specific
+> contracts unless the decision is explicitly reopened.
+
+The MCP server is a legacy optional coding-agent adapter. It uses the same config
 loader, schema validation, Markdown write path, retrieval, recall, brief, and
 lifecycle services as the CLI.
 

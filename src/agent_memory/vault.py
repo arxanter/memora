@@ -325,6 +325,16 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
     memory_dirs = tuple(config.memory_root / directory for directory in MEMORY_TYPE_DIRECTORIES.values())
     return (
         config.vault_path,
+        config.raw_root,
+        config.raw_root / "inbox",
+        config.raw_root / "inbox" / "webclips",
+        config.raw_root / "inbox" / "files",
+        config.raw_root / "inbox" / "sessions",
+        config.raw_root / "inbox" / "slack",
+        config.raw_root / "inbox" / "zoom",
+        config.raw_root / "inbox" / "failed",
+        config.raw_root / "processed",
+        config.raw_root / "quarantine",
         config.memory_root,
         *memory_dirs,
         config.vault_path / config.sources_dir,

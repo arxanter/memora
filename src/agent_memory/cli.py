@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as json_module
 import os
 import shutil
+import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,6 +47,8 @@ app = typer.Typer(
     help="Local-first Obsidian-backed memory CLI.",
     no_args_is_help=True,
 )
+raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
+app.add_typer(raw_app, name="raw")
 console = Console()
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
@@ -60,6 +63,10 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("reindex", "Rebuild the disposable SQLite index from Markdown."),
             ("refresh-index", "Reindex only when durable vault files changed."),
             ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
+            ("raw list", "List raw inbox/archive files."),
+            ("raw inspect <path>", "Inspect one raw file before processing."),
+            ("raw process <path>", "Normalize one raw file into Sources/."),
+            ("raw process-inbox <path>", "Normalize raw inbox files into Sources/."),
         ),
     ),
     (
@@ -86,6 +93,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("explain-recall", "Explain selected and skipped recall candidates."),
             ("lookup-source <source_id>", "Return compact evidence from a saved source."),
             ("brief", "Render a citation-preserving Memory Brief."),
+            ("build-context", "Apply recall policy and return agent-ready context."),
             ("build-profile", "Write a generated user or project profile under Profiles/."),
             ("synthesize", "Write a deterministic generated synthesis under Synthesis/."),
             ("should-recall", "Decide whether a user request should use memory."),
@@ -195,6 +203,189 @@ def mcp_config(
         return
 
     typer.echo(json_module.dumps(payload["config"], indent=2))
+
+
+@raw_app.command("list")
+def raw_list_command(
+    path: Optional[Path] = typer.Argument(None, help="Raw directory to list; defaults to <vault>/raw."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """List files in the raw inbox/archive layer."""
+
+    try:
+        config = load_config(vault)
+        raw_path = _resolve_raw_path(config, path)
+        candidates = _raw_files(raw_path)
+        payload = {
+            "ok": True,
+            "implemented": True,
+            "command": "raw list",
+            "raw_path": str(raw_path),
+            "relative_path": _relative_to_vault(config, raw_path),
+            "file_count": len(candidates),
+            "files": [_raw_file_payload(config, candidate, include_preview=False) for candidate in candidates],
+        }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="raw_list_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Raw files:[/green] {payload['file_count']} [dim]{payload['relative_path']}[/dim]")
+    for item in payload["files"]:
+        marker = "" if item["processable"] else " [yellow](unsupported)[/yellow]"
+        console.print(f"- {item['relative_path']}{marker}")
+
+
+@raw_app.command("inspect")
+def raw_inspect_command(
+    path: Path = typer.Argument(..., help="Raw file to inspect."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Inspect one raw file before processing."""
+
+    try:
+        config = load_config(vault)
+        raw_path = _resolve_raw_path(config, path)
+        if not raw_path.is_file():
+            raise ValueError(f"raw file not found: {raw_path}")
+        payload = {
+            "ok": True,
+            "implemented": True,
+            "command": "raw inspect",
+            **_raw_file_payload(config, raw_path, include_preview=True),
+        }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="raw_inspect_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[bold]{payload['relative_path']}[/bold]")
+    console.print(f"Size: {payload['size_bytes']} bytes")
+    console.print(f"Hash: {payload['content_hash']}")
+    console.print(f"Processable: {payload['processable']}")
+    if payload.get("preview"):
+        console.print("")
+        console.print(payload["preview"], markup=False, soft_wrap=True)
+
+
+@raw_app.command("process")
+def raw_process_command(
+    path: Path = typer.Argument(..., help="Raw Markdown/text file to normalize into Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to file stem."),
+    extract_file: Optional[Path] = typer.Option(None, "--extract-file", help="Optional Markdown/text extract file."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    channel: str = typer.Option("manual", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("user_provided", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the normalization plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Normalize one raw file into Sources/ without creating canonical memories."""
+
+    try:
+        config = load_config(vault)
+        raw_path = _resolve_raw_path(config, path)
+        payload = _raw_process_one(
+            config,
+            raw_path,
+            title=title,
+            extract_file=extract_file,
+            project=project,
+            channel=channel,
+            source_quality=source_quality,
+            sensitivity=sensitivity,
+            tags=tag,
+            dry_run=dry_run,
+        )
+        payload["command"] = "raw process"
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="raw_process_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["dry_run"]:
+        console.print(f"[yellow]Dry run:[/yellow] {payload['relative_path']} -> Sources/")
+        return
+    console.print(f"[green]Saved source:[/green] {payload['relative_source_path']}")
+
+
+@raw_app.command("process-inbox")
+def raw_process_inbox_command(
+    path: Optional[Path] = typer.Argument(None, help="Raw inbox directory; defaults to <vault>/raw/inbox."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for imported sources."),
+    channel: str = typer.Option("manual", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("user_provided", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Maximum number of files to process."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the normalization plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Normalize Markdown/text files from raw/inbox into Sources/."""
+
+    try:
+        config = load_config(vault)
+        inbox_path = _resolve_raw_path(config, path) if path is not None else config.raw_root / "inbox"
+        candidates = [candidate for candidate in _raw_files(inbox_path) if _is_processable_raw(candidate)]
+        if limit is not None:
+            candidates = candidates[:limit]
+        if dry_run:
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "command": "raw process-inbox",
+                "dry_run": True,
+                "inbox_path": str(inbox_path),
+                "relative_path": _relative_to_vault(config, inbox_path),
+                "source_count": len(candidates),
+                "sources": [_raw_file_payload(config, candidate, include_preview=False) for candidate in candidates],
+            }
+        else:
+            sources = [
+                _raw_process_one(
+                    config,
+                    candidate,
+                    title=None,
+                    extract_file=None,
+                    project=project,
+                    channel=channel,
+                    source_quality=source_quality,
+                    sensitivity=sensitivity,
+                    tags=tag,
+                    dry_run=False,
+                )
+                for candidate in candidates
+            ]
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "command": "raw process-inbox",
+                "dry_run": False,
+                "inbox_path": str(inbox_path),
+                "relative_path": _relative_to_vault(config, inbox_path),
+                "source_count": len(sources),
+                "sources": sources,
+            }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="raw_process_inbox_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    action = "Would process" if payload["dry_run"] else "Processed"
+    console.print(f"[green]{action} {payload['source_count']} raw file(s)[/green]")
 
 
 @app.command()
@@ -513,6 +704,11 @@ def search(
         help="Override semantic search config for this query.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the index before search; defaults to index_freshness config.",
+    ),
     limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
@@ -520,6 +716,7 @@ def search(
 
     try:
         config = load_config(vault)
+        freshness = _maybe_refresh_index(config, before="search", refresh=refresh)
         filters = SearchFilters(
             project=project,
             memory_type=memory_type.value if memory_type else None,
@@ -541,6 +738,7 @@ def search(
             semantic=semantic,
             mode=mode,
         ).to_dict()
+        payload["freshness"] = freshness
     except Exception as exc:
         _handle_error(
             exc,
@@ -581,12 +779,13 @@ def search(
 @app.command()
 def recall(
     query: str = typer.Argument(..., help="Recall query."),
-    budget: int = typer.Option(1200, "--budget", min=1, help="Token budget."),
+    budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
     status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
     include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
     semantic: Optional[bool] = typer.Option(
         None,
@@ -594,12 +793,21 @@ def recall(
         help="Override semantic search config for this query.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the index before recall; defaults to index_freshness config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Recall ranked memory chunks packed under a strict token budget."""
 
     try:
         config = load_config(vault)
+        selected_task_class, task_policy = _resolve_task_policy(config, task_class)
+        selected_budget = _cli_budget(budget, task_policy)
+        selected_include_related = include_related or task_policy.include_related
+        freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
         filters = SearchFilters(
             project=project,
             memory_type=memory_type.value if memory_type else None,
@@ -610,11 +818,18 @@ def recall(
             config,
             query,
             filters=SearchFilters.from_mapping(filters.to_dict()),
-            budget=budget,
-            include_related=include_related,
+            budget=selected_budget,
+            include_related=selected_include_related,
             semantic=semantic,
             mode=mode,
         ).to_dict()
+        payload.update(
+            {
+                "task_class": selected_task_class,
+                "recall_policy": task_policy.model_dump(mode="json"),
+                "freshness": freshness,
+            }
+        )
     except Exception as exc:
         _handle_error(
             exc,
@@ -651,12 +866,13 @@ def recall(
 @app.command("explain-recall")
 def explain_recall_command(
     query: str = typer.Argument(..., help="Recall query to explain."),
-    budget: int = typer.Option(1200, "--budget", min=1, help="Token budget."),
+    budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
     status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
     include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
     semantic: Optional[bool] = typer.Option(
         None,
@@ -664,12 +880,21 @@ def explain_recall_command(
         help="Override semantic search config for this explanation.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the index before explanation; defaults to index_freshness config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Explain why recall selected or skipped candidate chunks."""
 
     try:
         config = load_config(vault)
+        selected_task_class, task_policy = _resolve_task_policy(config, task_class)
+        selected_budget = _cli_budget(budget, task_policy)
+        selected_include_related = include_related or task_policy.include_related
+        freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
         filters = SearchFilters(
             project=project,
             memory_type=memory_type.value if memory_type else None,
@@ -680,11 +905,18 @@ def explain_recall_command(
             config,
             query,
             filters=SearchFilters.from_mapping(filters.to_dict()),
-            budget=budget,
-            include_related=include_related,
+            budget=selected_budget,
+            include_related=selected_include_related,
             semantic=semantic,
             mode=mode,
         ).to_dict()
+        payload.update(
+            {
+                "task_class": selected_task_class,
+                "recall_policy": task_policy.model_dump(mode="json"),
+                "freshness": freshness,
+            }
+        )
     except Exception as exc:
         _handle_error(
             exc,
@@ -758,12 +990,13 @@ def lookup_source_command(
 @app.command()
 def brief(
     query: str = typer.Argument(..., help="Brief query."),
-    budget: int = typer.Option(1200, "--budget", min=1, help="Token budget."),
+    budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
     status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
+    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
     include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
     semantic: Optional[bool] = typer.Option(
         None,
@@ -771,12 +1004,21 @@ def brief(
         help="Override semantic search config for this brief.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the index before brief; defaults to index_freshness config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate a citation-preserving memory brief under a strict budget."""
 
     try:
         config = load_config(vault)
+        selected_task_class, task_policy = _resolve_task_policy(config, task_class)
+        selected_budget = _cli_budget(budget, task_policy)
+        selected_include_related = include_related or task_policy.include_related
+        freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
         filters = SearchFilters(
             project=project,
             memory_type=memory_type.value if memory_type else None,
@@ -787,11 +1029,18 @@ def brief(
             config,
             query,
             filters=SearchFilters.from_mapping(filters.to_dict()),
-            budget=budget,
-            include_related=include_related,
+            budget=selected_budget,
+            include_related=selected_include_related,
             semantic=semantic,
             mode=mode,
         ).to_dict()
+        payload.update(
+            {
+                "task_class": selected_task_class,
+                "recall_policy": task_policy.model_dump(mode="json"),
+                "freshness": freshness,
+            }
+        )
     except Exception as exc:
         _handle_error(
             exc,
@@ -803,6 +1052,92 @@ def brief(
         _print_json(payload)
         return
 
+    console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
+
+
+@app.command("build-context")
+def build_context_command(
+    task: str = typer.Argument(..., help="User task to enrich with memory when useful."),
+    budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
+    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    semantic: Optional[bool] = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Override semantic search config for this context.",
+    ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the index before context building; defaults to index_freshness config.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Build CLI-first agent context with deterministic recall gating."""
+
+    try:
+        config = load_config(vault)
+        selected_task_class, task_policy = _resolve_task_policy(config, task_class)
+        selected_budget = _cli_budget(budget, task_policy)
+        decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
+        if not decision["should_recall"]:
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "command": "build-context",
+                "task": task,
+                "memory_needed": False,
+                "task_class": selected_task_class,
+                "budget": selected_budget,
+                "policy": decision,
+                "markdown": "",
+                "citations": [],
+                "brief": None,
+            }
+        else:
+            freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
+            filters = SearchFilters(project=project)
+            brief_payload = brief_memory(
+                config,
+                str(decision["query"]),
+                filters=SearchFilters.from_mapping(filters.to_dict()),
+                budget=selected_budget,
+                include_related=include_related or task_policy.include_related,
+                semantic=semantic,
+                mode=mode,
+            ).to_dict()
+            payload = {
+                "ok": True,
+                "implemented": True,
+                "command": "build-context",
+                "task": task,
+                "memory_needed": True,
+                "task_class": selected_task_class,
+                "budget": selected_budget,
+                "policy": decision,
+                "freshness": freshness,
+                "recall_policy": task_policy.model_dump(mode="json"),
+                "markdown": brief_payload["markdown"],
+                "citations": brief_payload["citations"],
+                "brief": brief_payload,
+            }
+    except Exception as exc:
+        _handle_error(
+            exc,
+            json_output=json_output,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "build_context_failed",
+        )
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if not payload["memory_needed"]:
+        console.print("[yellow]No memory context needed.[/yellow]")
+        return
     console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
 
 
@@ -1455,6 +1790,176 @@ def _source_inbox_plan_payload(path: Path, candidates: list[Path], *, dry_run: b
             for candidate in candidates
         ],
     }
+
+
+def _resolve_raw_path(config: Any, path: Optional[Path]) -> Path:
+    if path is None:
+        return config.raw_root
+    candidate = path.expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    parts = candidate.parts
+    if parts and parts[0] == config.raw_dir:
+        return (config.vault_path / candidate).resolve()
+    return (config.raw_root / candidate).resolve()
+
+
+def _raw_files(path: Path) -> list[Path]:
+    if not path.exists():
+        raise ValueError(f"raw path not found: {path}")
+    if path.is_file():
+        return [path]
+    return sorted(item for item in path.rglob("*") if item.is_file())
+
+
+def _is_processable_raw(path: Path) -> bool:
+    return path.suffix.lower() in SOURCE_INBOX_SUFFIXES
+
+
+def _raw_file_payload(config: Any, path: Path, *, include_preview: bool) -> dict[str, Any]:
+    content_hash = _file_content_hash(path)
+    processable = _is_processable_raw(path)
+    payload: dict[str, Any] = {
+        "path": str(path),
+        "relative_path": _relative_to_vault(config, path),
+        "file_name": path.name,
+        "suffix": path.suffix.lower(),
+        "size_bytes": path.stat().st_size,
+        "content_hash": content_hash,
+        "idempotency_key": f"raw:{_relative_to_vault(config, path)}#{content_hash}",
+        "processable": processable,
+    }
+    if include_preview and processable:
+        payload["preview"] = _read_text_file(path)[:4000]
+    return payload
+
+
+def _raw_process_one(
+    config: Any,
+    path: Path,
+    *,
+    title: Optional[str],
+    extract_file: Optional[Path],
+    project: Optional[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    tags: list[str],
+    dry_run: bool,
+) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(f"raw file not found: {path}")
+    if not _is_processable_raw(path):
+        raise ValueError(f"raw file is not processable yet: {path.suffix}")
+    raw_payload = _raw_file_payload(config, path, include_preview=False)
+    extract = _read_text_file(extract_file) if extract_file is not None else None
+    if dry_run:
+        return {
+            "ok": True,
+            "implemented": True,
+            "dry_run": True,
+            **raw_payload,
+            "title": title or path.stem,
+            "project": project,
+            "channel": channel,
+            "source_quality": source_quality,
+            "sensitivity": sensitivity,
+            "tags": tags,
+            "would_write": "Sources/<source_id>/source.md",
+            "next_steps": [
+                "Run without --dry-run to normalize this raw item into Sources/.",
+                "Have the agent create an extract and source-backed pending memories for review.",
+            ],
+        }
+    result = save_source_material(
+        config,
+        title=title or path.stem,
+        content=_read_text_file(path),
+        extract=extract,
+        project=project,
+        tags=tags,
+        channel=channel,
+        source_quality=source_quality,
+        sensitivity=sensitivity,
+        origin={
+            "provider": "raw",
+            "file_name": path.name,
+            "raw_path": _relative_to_vault(config, path),
+            "content_hash": raw_payload["content_hash"],
+        },
+        slug=path.stem,
+    ).to_dict()
+    result.update(
+        {
+            "dry_run": False,
+            "raw_path": raw_payload["relative_path"],
+            "content_hash": raw_payload["content_hash"],
+            "idempotency_key": raw_payload["idempotency_key"],
+            "next_steps": [
+                "Create or review the source extract before promoting canonical memory.",
+                "Use memory review --group-by source after pending memories are created.",
+            ],
+        }
+    )
+    return result
+
+
+def _maybe_refresh_index(config: Any, *, before: str, refresh: Optional[bool]) -> dict[str, Any]:
+    freshness_config = config.index_freshness
+    if before == "search":
+        configured = freshness_config.refresh_before_search
+    elif before == "recall":
+        configured = freshness_config.refresh_before_recall
+    else:
+        raise ValueError("before must be 'search' or 'recall'")
+    enabled = configured if refresh is None else refresh
+    if not enabled:
+        return {
+            "enabled": freshness_config.enabled,
+            "trigger": f"before_{before}",
+            "skipped": True,
+            "reason": "disabled_for_operation",
+        }
+    payload = refresh_index_if_needed(config).to_dict()
+    payload.update({"trigger": f"before_{before}", "skipped": False})
+    return payload
+
+
+def _resolve_task_policy(config: Any, task_class: str) -> tuple[str, Any]:
+    selected = (task_class or "default").strip().lower()
+    policy = config.recall_policies.get(selected)
+    if policy is None:
+        selected = "default"
+        policy = config.recall_policies.get(selected)
+    return selected, policy
+
+
+def _cli_budget(budget: Optional[int], task_policy: Any) -> int:
+    selected = task_policy.budget if budget is None else int(budget)
+    if selected < 1:
+        raise ValueError("budget must be at least 1")
+    return selected
+
+
+def _file_content_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _read_text_file(path: Optional[Path]) -> Optional[str]:
+    if path is None:
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _relative_to_vault(config: Any, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(config.vault_path).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def _print_json(payload: dict[str, Any]) -> None:

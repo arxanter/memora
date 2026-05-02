@@ -2,9 +2,14 @@
 
 ## Principles
 
-The CLI is the development and maintenance interface. MCP is the primary coding-agent interface. Both should call the same underlying services for validation, retrieval, lifecycle handling, and token-budget packing.
+The CLI is the primary development, maintenance, and coding-agent interface.
+Agents should prefer CLI JSON commands from any project directory. MCP is paused
+as an outdated optional adapter for now; do not expand MCP-specific contracts
+unless the product direction explicitly reopens that decision.
 
-Agent-facing operations should support structured JSON responses, stable error codes, and citations. Mutating commands must not silently promote agent-written memory to active durable truth unless explicitly configured.
+Agent-facing operations should support structured JSON responses, stable error
+codes, and citations. Mutating commands must not silently promote agent-written
+memory to active durable truth unless explicitly configured.
 
 ## Initial CLI Commands
 
@@ -32,6 +37,10 @@ memory mark <id> --status stale
 memory decay
 memory review
 memory reject <id>
+memory raw list
+memory raw inspect raw/inbox/webclips/article.md
+memory raw process raw/inbox/webclips/article.md --project <project> --dry-run
+memory raw process-inbox raw/inbox --project <project> --limit 10
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
@@ -56,6 +65,16 @@ Created folders:
 - `Memories/projects`
 - `Memories/conversations`
 - `Sources`
+- `raw`
+- `raw/inbox`
+- `raw/inbox/webclips`
+- `raw/inbox/files`
+- `raw/inbox/sessions`
+- `raw/inbox/slack`
+- `raw/inbox/zoom`
+- `raw/inbox/failed`
+- `raw/processed`
+- `raw/quarantine`
 - `Briefs`
 - `Profiles/projects`
 - `Synthesis`
@@ -197,6 +216,34 @@ memory refresh-index --vault ./memory-vault --json
 memory refresh-index --vault ./memory-vault --debounce 1
 ```
 
+### `memory raw ...`
+
+Implemented as the CLI-first input layer for unprocessed material.
+
+`raw/` is a drop zone and original archive. It is not canonical memory and is
+not part of normal recall. Processing raw files normalizes Markdown/text input
+into `Sources/<source_id>/source.md`, preserving content hash, idempotency key,
+channel, project, sensitivity, and origin metadata. Agents can then create
+extracts and source-backed pending memories for review.
+
+Examples:
+
+```bash
+memory raw list --vault ./memory-vault --json
+memory raw inspect raw/inbox/webclips/article.md --vault ./memory-vault --json
+memory raw process raw/inbox/webclips/article.md --project agent-memory --dry-run --json
+memory raw process raw/inbox/webclips/article.md --project agent-memory --json
+memory raw process-inbox raw/inbox --project agent-memory --limit 10 --dry-run --json
+```
+
+MVP behavior:
+
+- supports Markdown/text files;
+- never deletes inbox files automatically;
+- writes normalized sources, not active canonical memories;
+- uses `raw/quarantine/` as the intended home for secret or unsafe inputs;
+- leaves AI extraction outside the CLI until optional LLM providers are added.
+
 ### `memory search`
 
 Implemented in Stage 5, with optional semantic retrieval added in Stage 6.
@@ -205,9 +252,10 @@ Searches the Stage 4 SQLite FTS index and, when `semantic.provider` is
 configured, can lazily generate chunk embeddings for vector or hybrid retrieval.
 It returns ranked memory-level results with snippets, score breakdowns, metadata,
 planned query variants, attempted searches, and Obsidian-relative citations.
-SQLite and embeddings remain disposable cache data; search does not silently
-rebuild a missing or incomplete index. Run `memory reindex --vault <vault>` first
-if search reports `index_missing`.
+SQLite and embeddings remain disposable cache data. By default, CLI search uses
+`index_freshness.refresh_before_search` to refresh the index before retrieval.
+Pass `--no-refresh` to skip that behavior for speed, or `--refresh` to force it
+when config disables refresh-before-search.
 
 Natural-language queries are planned into a small deterministic variant list. The
 original query is always tried first; normalized case/punctuation/slug variants
@@ -231,6 +279,7 @@ Supported filters:
 - `--include-related` to include linked graph neighbors from the `links` table
 - `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one query
+- `--refresh` or `--no-refresh` to override index freshness for one query
 - `--limit <n>`
 
 `--mode auto` is the default. It chooses `hybrid` when a semantic provider is
@@ -251,6 +300,7 @@ memory search "vector db" --vault ./memory-vault --project foo --type decision -
 memory search "agent memory" --vault ./memory-vault --include-related
 memory search "database decisions" --vault ./memory-vault --mode auto
 memory search "database decisions" --vault ./memory-vault --no-semantic
+memory search "recent decision" --vault ./memory-vault --refresh
 ```
 
 Semantic search is disabled by default. Under the current same-session
@@ -271,6 +321,11 @@ Searches indexed memory with the same retrieval layer as `memory search`, then
 packs ranked chunks under a strict estimated token budget. The JSON response
 includes `budget`, `used_tokens_estimate`, packed `chunks`, and a citation object
 for every packed chunk.
+
+If `--budget` is omitted, `memory recall` resolves the budget from
+`recall_policies.<task-class>.budget`. It also refreshes the index before recall
+according to `index_freshness.refresh_before_recall`, unless overridden with
+`--refresh` or `--no-refresh`.
 
 Packing behavior is deterministic for a fixed index and search configuration:
 
@@ -296,8 +351,10 @@ Supported filters:
 - `--status <pending|active|stale|superseded|rejected>`
 - `--scope <user|project|global>`
 - `--include-related` to include linked graph-related memories before packing
+- `--task-class <default|coding|planning|review>` to select configured recall defaults
 - `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one recall
+- `--refresh` or `--no-refresh` to override index freshness for one recall
 
 JSON output includes a compact `retrieval` trace with planned query variants,
 effective mode, semantic provider status, attempted searches, selected count, and
@@ -323,7 +380,7 @@ Example:
 
 ```bash
 memory explain-recall "Obsidian sync decisions" --vault ./memory-vault
-memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --mode text --json
+memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --task-class planning --mode text --json
 ```
 
 ### `memory brief`
@@ -372,8 +429,10 @@ Supported filters match `memory recall`:
 - `--status <pending|active|stale|superseded|rejected>`
 - `--scope <user|project|global>`
 - `--include-related` to include graph-related memories before brief generation
+- `--task-class <default|coding|planning|review>` to select configured recall defaults
 - `--mode <auto|text|vector|hybrid>` to select retrieval mode
 - `--semantic` or `--no-semantic` to override the config for one brief
+- `--refresh` or `--no-refresh` to override index freshness for one brief
 
 The rendered Markdown stays compact and does not include diagnostics. JSON output
 includes the same compact `retrieval` trace exposed by recall, both top-level and
@@ -385,6 +444,25 @@ Example:
 memory brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
 memory brief "Obsidian sync decisions" --vault ./memory-vault --json
 ```
+
+### `memory build-context`
+
+CLI-first replacement for agent-side automatic recall. It runs
+`memory should-recall` policy first. When memory is not useful, it returns
+`memory_needed: false` without spending recall budget. When memory is useful, it
+refreshes the index as configured and returns the same citation-preserving brief
+shape agents can use directly.
+
+Examples:
+
+```bash
+memory build-context "What did we decide about raw ingestion?" --project agent-memory --task-class planning --json
+memory build-context "Run git status" --json
+```
+
+Agents should prefer this command for substantial tasks and keep `memory search`,
+`memory recall`, `memory brief`, and `memory lookup-source` as explicit deeper
+operations.
 
 ### `memory should-recall`
 

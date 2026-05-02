@@ -22,6 +22,9 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert payload["ok"] is True
     assert payload["config_created"] is True
     assert (vault / ".agent-memory" / "config.yaml").exists()
+    assert (vault / "raw" / "inbox" / "webclips").is_dir()
+    assert (vault / "raw" / "processed").is_dir()
+    assert (vault / "raw" / "quarantine").is_dir()
     assert (vault / "Memories" / "decisions").is_dir()
     assert (vault / "Profiles" / "projects").is_dir()
 
@@ -100,6 +103,8 @@ def test_help_command_lists_grouped_commands():
         "import-session <path>",
         "lookup-source <source_id>",
         "brief",
+        "build-context",
+        "raw list",
         "eval <fixture-or-file>",
     } <= command_usages
 
@@ -282,6 +287,113 @@ def test_import_source_inbox_imports_matching_files(tmp_path):
     assert source_frontmatter["tags"] == ["clip"]
     assert source_frontmatter["channel"] == "web_clipper"
     assert source_frontmatter["origin"]["provider"] == "file"
+
+
+def test_raw_list_and_inspect_report_inbox_files(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    raw_file = vault / "raw" / "inbox" / "webclips" / "article.md"
+    raw_file.write_text("# Article\n\nRaw clip content.", encoding="utf-8")
+
+    list_result = runner.invoke(app, ["raw", "list", "--vault", str(vault), "--json"])
+    inspect_result = runner.invoke(
+        app,
+        ["raw", "inspect", "raw/inbox/webclips/article.md", "--vault", str(vault), "--json"],
+    )
+
+    assert list_result.exit_code == 0, list_result.output
+    list_payload = json.loads(list_result.output)
+    assert list_payload["ok"] is True
+    assert list_payload["command"] == "raw list"
+    assert list_payload["file_count"] == 1
+    assert list_payload["files"][0]["relative_path"] == "raw/inbox/webclips/article.md"
+    assert list_payload["files"][0]["processable"] is True
+
+    assert inspect_result.exit_code == 0, inspect_result.output
+    inspect_payload = json.loads(inspect_result.output)
+    assert inspect_payload["ok"] is True
+    assert inspect_payload["command"] == "raw inspect"
+    assert inspect_payload["relative_path"] == "raw/inbox/webclips/article.md"
+    assert inspect_payload["content_hash"].startswith("sha256:")
+    assert "Raw clip content." in inspect_payload["preview"]
+
+
+def test_raw_process_normalizes_raw_file_into_sources(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    raw_file = vault / "raw" / "inbox" / "files" / "note.md"
+    raw_file.write_text("# Note\n\nRaw research note.", encoding="utf-8")
+
+    dry_run = runner.invoke(
+        app,
+        [
+            "raw",
+            "process",
+            "raw/inbox/files/note.md",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert dry_run.exit_code == 0, dry_run.output
+    assert json.loads(dry_run.output)["dry_run"] is True
+    assert not any((vault / "Sources").iterdir())
+
+    result = runner.invoke(
+        app,
+        [
+            "raw",
+            "process",
+            "raw/inbox/files/note.md",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--tag",
+            "raw",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "raw process"
+    assert payload["dry_run"] is False
+    assert payload["raw_path"] == "raw/inbox/files/note.md"
+    assert payload["content_hash"].startswith("sha256:")
+    assert payload["origin"]["provider"] == "raw"
+    assert payload["origin"]["raw_path"] == "raw/inbox/files/note.md"
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["project"] == "agent-memory"
+    assert source_frontmatter["tags"] == ["raw"]
+    assert "Raw research note." in source_text
+
+
+def test_raw_process_inbox_dry_run_respects_limit(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    inbox = vault / "raw" / "inbox"
+    (inbox / "a.md").write_text("A", encoding="utf-8")
+    (inbox / "b.txt").write_text("B", encoding="utf-8")
+    (inbox / "skip.json").write_text("{}", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["raw", "process-inbox", "--vault", str(vault), "--limit", "1", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "raw process-inbox"
+    assert payload["dry_run"] is True
+    assert payload["source_count"] == 1
+    assert payload["sources"][0]["relative_path"] == "raw/inbox/a.md"
 
 
 def test_import_session_command_saves_transcript_source(tmp_path):
@@ -573,6 +685,65 @@ def test_search_command_returns_ranked_json_results(tmp_path):
     assert payload["results"][0]["citation"]["path"].startswith("Memories/decisions/")
 
 
+def test_search_command_refreshes_index_before_query(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _disable_freshness_debounce(vault)
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "CLI search refreshes the index before retrieval.",
+            "--json",
+        ],
+    )
+
+    result = runner.invoke(app, ["search", "refreshes index", "--vault", str(vault), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["freshness"]["trigger"] == "before_search"
+    assert payload["freshness"]["reindexed"] is True
+    assert payload["result_count"] == 1
+
+
+def test_recall_command_uses_task_class_budget(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Planning recall uses task policy budgets.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        ["recall", "planning recall", "--task-class", "planning", "--vault", str(vault), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["task_class"] == "planning"
+    assert payload["budget"] == 2000
+    assert payload["recall_policy"]["include_related"] is True
+
+
 def test_reindex_command_builds_sqlite_index(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])
@@ -840,3 +1011,11 @@ def _snapshot_source_files(*paths):
         path.name: path.read_text(encoding="utf-8")
         for path in paths
     }
+
+
+def _disable_freshness_debounce(vault):
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("debounce_seconds: 2.0", "debounce_seconds: 0"),
+        encoding="utf-8",
+    )

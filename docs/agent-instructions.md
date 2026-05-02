@@ -4,6 +4,10 @@ Use this document when configuring Claude Code, Cursor, Codex, or another coding
 agent to work with Agent Memory. Copy the relevant sections into project-level
 `AGENTS.md`, `CLAUDE.md`, or `.cursor/rules/agent-memory.mdc`.
 
+Current product direction is CLI-first. Prefer `memory ... --json` commands from
+any project directory. MCP is paused/outdated for now and should be treated only
+as a legacy optional adapter unless the user explicitly reopens that decision.
+
 ## Core Rule
 
 Agent Memory stores and retrieves durable context. The AI agent does the
@@ -13,8 +17,8 @@ understanding work.
 AI agent:
   read/fetch material
   summarize and extract durable information
-  call save_source or ingest_url
-  call remember for atomic durable memories
+  call memory raw/import/source commands to preserve material
+  call memory remember/review lifecycle commands for atomic durable memories
 
 Agent Memory:
   validate and store Markdown
@@ -23,8 +27,8 @@ Agent Memory:
   preserve citations and lifecycle state
 ```
 
-Default source capture stores the raw material and structured summary under
-`Sources/`; canonical `Memories/` should receive only separate atomic
+Default capture starts in `raw/` when material is unprocessed, then normalizes
+into `Sources/`; canonical `Memories/` should receive only separate atomic
 promotions.
 
 ## Startup Recall
@@ -55,8 +59,8 @@ source-backed with an audit reason.
 
 When recall is relevant, call:
 
-```text
-build_context(task, budget=1200, filters={ "project": "<project-name>" })
+```bash
+memory build-context "<task>" --project "<project-name>" --task-class planning --json
 ```
 
 Use returned memory only when `memory_needed` is true. Preserve citations when
@@ -68,10 +72,10 @@ Treat `Toby`, `Тоби`, and `tb` as explicit Agent Memory aliases.
 
 Intent routing:
 
-- `Toby, что мы решили ...`: call `build_context` or `brief` and answer with citations.
+- `Toby, что мы решили ...`: run `memory build-context` or `memory brief` and answer with citations.
 - `Toby, сохрани ...`: save memory according to `agent_policy.trust_level`.
 - `Toby, проанализируй статью и сохрани ...`: fetch/read the source, create an extract, save source/extract, then promote durable atomic memories.
-- `Toby, review memory`: call `review()` and present a readable queue.
+- `Toby, review memory`: run `memory review --json` and present a readable queue.
 - `Toby, актуализируй память`: find related entries and propose or apply lifecycle changes according to policy.
 
 Recommended `.agent-memory/config.yaml` policy shape:
@@ -113,9 +117,9 @@ material into memory:
 
 1. Fetch or read the material with the agent's normal browser/file tools.
 2. Produce a concise extract.
-3. Call `ingest_url` for URL-centered material or `save_source` for arbitrary
-   source material.
-4. Call `remember` for each durable atomic memory extracted from the source. Do
+3. If the material is unprocessed, place it in `raw/` or run
+   `memory raw process ... --json`; otherwise run `memory import-source ...`.
+4. Call `memory remember` for each durable atomic memory extracted from the source. Do
    not duplicate the saved `Sources/.../extract.md` summary as a default
    canonical `source_extract`.
 5. Apply `agent_policy`: inferred agent-created memories remain `pending`;
@@ -206,10 +210,10 @@ dumps as canonical memory.
 Use natural-language questions rather than trying to remember exact filenames.
 The usual choices are:
 
-```text
-search(query, filters)
-recall(query, budget=1200, filters)
-brief(query, budget=1200, filters)
+```bash
+memory search "<query>" --project "<project>" --json
+memory recall "<query>" --project "<project>" --budget 1200 --json
+memory brief "<query>" --project "<project>" --budget 1200 --json
 ```
 
 Use `search` for direct lookup, `recall` for compact cited context, and `brief`

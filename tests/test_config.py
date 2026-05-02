@@ -30,6 +30,7 @@ def test_load_config_from_explicit_vault(tmp_path):
     config = load_config(vault)
 
     assert config.vault_path == vault.resolve()
+    assert config.raw_root == vault.resolve() / "raw"
     assert config.memory_root == vault.resolve() / "Memories"
     assert config.config_path == vault.resolve() / ".agent-memory" / "config.yaml"
 

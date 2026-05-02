@@ -246,6 +246,7 @@ class MemoryConfig(BaseModel):
 
     schema_version: int = SCHEMA_VERSION
     vault_path: Path
+    raw_dir: str = "raw"
     memories_dir: str = "Memories"
     sources_dir: str = "Sources"
     briefs_dir: str = "Briefs"
@@ -287,6 +288,7 @@ class MemoryConfig(BaseModel):
         return value
 
     @field_validator(
+        "raw_dir",
         "memories_dir",
         "sources_dir",
         "briefs_dir",
@@ -309,6 +311,10 @@ class MemoryConfig(BaseModel):
     @property
     def memory_root(self) -> Path:
         return self.vault_path / self.memories_dir
+
+    @property
+    def raw_root(self) -> Path:
+        return self.vault_path / self.raw_dir
 
     @property
     def index_file(self) -> Path:

@@ -1,6 +1,12 @@
 ## Agent Memory Usage
 
-This project uses Agent Memory via MCP.
+This project uses Agent Memory. The preferred current interface is CLI-first.
+
+Current project direction is CLI-first. Treat the existing MCP path as
+outdated/paused unless the user explicitly reopens it. Prefer `memory ... --json`
+commands and generated agent instructions/skills for future workflows. Existing
+MCP tools may be used as a legacy fallback when they are already available, but
+do not expand MCP-specific behavior by default.
 
 ## Toby / Agent Memory Policy
 
@@ -50,13 +56,26 @@ requests, first decide whether memory is relevant. Recall is relevant when the
 request uses a Toby alias, asks about previous decisions, earlier work, stored
 preferences, project history/status, or project-specific memory.
 
-When recall is relevant, call:
+When recall is relevant, prefer CLI:
+
+`memory build-context "<task>" --project "<project-name>" --task-class planning --json`
+
+If the CLI is not available and MCP tools are already configured, call:
 
 `build_context(task, budget=1200, filters={ "project": "<project-name>" })`
 
 Use returned memory only when `memory_needed` is true.
 
-When the user asks to find information in the knowledge base, prefer:
+When the user asks to find information in the knowledge base, prefer CLI:
+
+1. `memory search "<query>" --project "<project>" --json` for direct lookup and
+   citations.
+2. `memory recall "<query>" --budget 1200 --project "<project>" --json` when
+   the agent needs compact source chunks to answer a question.
+3. `memory brief "<query>" --budget 1200 --project "<project>" --json` when the
+   user wants a synthesized, citation-preserving summary.
+
+MCP equivalents remain fallback options:
 
 1. `search(query, filters)` for direct lookup and citations.
 2. `recall(query, budget=1200, filters)` when the agent needs compact source
@@ -73,8 +92,10 @@ When the user asks to save a URL, article, notes, transcript, document, or raw m
 
 1. Read or fetch the source material.
 2. Create a concise extract from the material.
-3. Preserve the raw source and extract with `save_source`, `ingest_url`, or
-   `save_source_with_memories` so the material lives under `Sources/...`.
+3. If material is unprocessed, place it in `raw/` or use
+   `memory raw process ... --json` to normalize it into `Sources/...`.
+   Otherwise preserve the source and extract with `memory import-source`,
+   `save_source`, `ingest_url`, or `save_source_with_memories`.
 4. Promote only durable atomic facts, decisions, preferences, tasks, or project
    context into canonical `Memories/...` items.
 5. Leave inferred agent-created memories `pending` for review unless policy

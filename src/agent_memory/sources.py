@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Union
@@ -28,6 +28,7 @@ SOURCE_QUALITIES = {
     "unknown",
 }
 SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
+PROMOTION_BLOCKED_SENSITIVITIES = {"secret", "unsafe"}
 
 
 @dataclass(frozen=True)
@@ -411,6 +412,16 @@ def save_source_with_memories(
     """Save source material and promote agent-supplied atomic memories for review."""
 
     source_payload = dict(source)
+    selected_sensitivity = _normalized_choice(
+        _optional_string(source_payload.get("sensitivity")),
+        SOURCE_SENSITIVITIES,
+        default="normal",
+    )
+    if selected_sensitivity in PROMOTION_BLOCKED_SENSITIVITIES:
+        raise ValueError(
+            "source sensitivity is blocked from memory promotion; "
+            "save the source only and review it manually"
+        )
     planned = tuple(
         _plan_promoted_memory(
             memory,
@@ -421,6 +432,8 @@ def save_source_with_memories(
     )
     if not planned:
         raise ValueError("memories must include at least one durable atomic item")
+    if selected_sensitivity == "private":
+        planned = tuple(replace(item, status=LifecycleStatus.PENDING) for item in planned)
 
     saved_source = save_source_material(
         config,
@@ -436,7 +449,7 @@ def save_source_with_memories(
         tags=_clean_list(source_payload.get("tags", ())),
         channel=_optional_string(source_payload.get("channel")),
         source_quality=_optional_string(source_payload.get("source_quality")),
-        sensitivity=_optional_string(source_payload.get("sensitivity")),
+        sensitivity=selected_sensitivity,
         origin=_mapping_or_none(source_payload.get("origin")),
         slug=_optional_string(source_payload.get("slug")),
     )

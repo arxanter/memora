@@ -8,6 +8,16 @@ Recommended vault layout:
 
 ```text
 Obsidian Vault/
+  raw/
+    inbox/
+      webclips/
+      files/
+      sessions/
+      slack/
+      zoom/
+      failed/
+    processed/
+    quarantine/
   Memories/
     facts/
     preferences/
@@ -33,6 +43,13 @@ Obsidian Vault/
 ```
 
 Generated paths under `.agent-memory/` are local and disposable. They should be rebuildable from Markdown.
+
+`raw/` is the unprocessed input layer. Users, Obsidian Web Clipper, exports, and
+future pollers can drop original material there without understanding the
+canonical memory schema. Raw files are not canonical memories and should not be
+loaded by default recall. Processing raw material should copy or normalize it
+into `Sources/<source_id>/source.md` and optional `extract.md`, then propose
+source-backed pending memories under `Memories/`.
 
 ## Memory Frontmatter
 

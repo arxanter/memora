@@ -532,6 +532,50 @@ def test_mcp_save_source_with_memories_rejects_source_extract_promotion(tmp_path
     assert "durable atomic memory types" in payload["error"]["message"]
 
 
+def test_mcp_save_source_with_memories_blocks_secret_source_promotion(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    payload = save_source_with_memories_tool(
+        {"title": "Secret source", "extract": "Sensitive summary", "sensitivity": "secret"},
+        [{"type": "decision", "text": "This should not be promoted automatically.", "confidence": 0.9}],
+        vault=vault,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "save_source_with_memories_failed"
+    assert "blocked from memory promotion" in payload["error"]["message"]
+    assert not any((vault / "Sources").iterdir())
+    assert not any((vault / "Memories" / "decisions").iterdir())
+
+
+def test_mcp_save_source_with_memories_keeps_private_source_pending(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace("trust_level: review", "trust_level: autonomous")
+        .replace("require_review_for_source_extracts: true", "require_review_for_source_extracts: false"),
+        encoding="utf-8",
+    )
+
+    payload = save_source_with_memories_tool(
+        {
+            "title": "Private source",
+            "extract": "Private but promotable only through review.",
+            "sensitivity": "private",
+        },
+        [{"type": "fact", "text": "Private source promotions stay pending.", "confidence": 0.95}],
+        vault=vault,
+    )
+
+    assert payload["ok"] is True
+    assert payload["source"]["sensitivity"] == "private"
+    assert payload["memories"][0]["status"] == "pending"
+    assert payload["pending_count"] == 1
+
+
 def test_mcp_inspect_returns_memory_with_citation(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
