@@ -51,6 +51,7 @@ memory raw process raw/inbox/webclips/article.md --project <project> --dry-run
 memory raw process-inbox raw/inbox --project <project> --limit 10
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
+memory import-url <url> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
 memory import <path>
 memory export --format markdown
@@ -799,6 +800,30 @@ memory import-source-inbox ./Sources/Inbox \
   --project agent-memory \
   --tag web-clip \
   --dry-run \
+  --json
+```
+
+### `memory import-url`
+
+Implemented in Phase 4 as an optional explicit connector.
+
+Fetches one http(s) URL, or reads saved HTML/text with `--from-file`, then saves
+the raw content and readable extract under `Sources/`. The command is opt-in,
+does not crawl or watch pages, and does not create canonical memories by itself.
+Saved source metadata records `channel: url`, URL origin, fetch method, project,
+tags, sensitivity, and safety risk flags.
+
+Use `--dry-run` to preview metadata without fetching or writing files.
+
+Examples:
+
+```bash
+memory import-url https://example.com/article --vault ./memory-vault --dry-run --json
+memory import-url https://example.com/article \
+  --from-file ./article.html \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --tag article \
   --json
 ```
 

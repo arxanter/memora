@@ -36,6 +36,7 @@ from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sources import lookup_source, save_source_material
 from agent_memory.synthesis import plan_synthesis, write_synthesis
 from agent_memory.sync import detect_sync_conflicts
+from agent_memory.url_import import fetch_url_content, load_url_content_file, normalize_url
 from agent_memory.ux import graph_memory, inspect_memory, open_memory
 from agent_memory.vault import (
     doctor_report,
@@ -96,6 +97,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("decay", "Mark expired active memories stale."),
             ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
             ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
+            ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
             ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
         ),
     ),
@@ -639,6 +641,89 @@ def import_source_inbox_command(
     console.print(f"[green]Imported sources:[/green] {payload['source_count']}")
     for source in payload["sources"]:
         console.print(f"- {source['relative_source_path']}")
+
+
+@app.command("import-url")
+def import_url_command(
+    url: str = typer.Argument(..., help="Explicit http(s) URL to import into Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to the HTML title or URL."),
+    from_file: Optional[Path] = typer.Option(
+        None,
+        "--from-file",
+        "--content-file",
+        help="Read saved HTML/text from a local file instead of fetching the URL.",
+    ),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    channel: str = typer.Option("url", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("agent_fetched", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the URL import plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Fetch or import explicit URL content as reviewable source material."""
+
+    try:
+        config = load_config(vault)
+        normalized_url = normalize_url(url)
+        if dry_run:
+            payload = _url_import_plan_payload(
+                config,
+                url=normalized_url,
+                title=title,
+                from_file=from_file,
+                project=project,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                tags=tag,
+            )
+        else:
+            imported = (
+                load_url_content_file(normalized_url, from_file)
+                if from_file is not None
+                else fetch_url_content(normalized_url)
+            )
+            result = save_source_material(
+                config,
+                title=title or imported.title,
+                url=normalized_url,
+                content=imported.content,
+                extract=imported.extract,
+                project=project,
+                tags=tag,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                origin=imported.origin,
+            )
+            payload = result.to_dict()
+            payload.update(
+                {
+                    "command": "import-url",
+                    "dry_run": False,
+                    "content": imported.summary(),
+                    "next_steps": [
+                        "Review the saved source and extract before promoting canonical memory.",
+                        "Create pending source-backed memories only for durable facts, decisions, preferences, project context, or tasks.",
+                    ],
+                }
+            )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_url_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] URL source would be imported: {payload['url']}")
+        return
+
+    console.print(f"[green]Imported URL source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
 
 
 @app.command("import-session")
@@ -2161,6 +2246,51 @@ def _source_inbox_plan_payload(path: Path, candidates: list[Path], *, dry_run: b
                 "suffix": candidate.suffix.lower(),
             }
             for candidate in candidates
+        ],
+    }
+
+
+def _url_import_plan_payload(
+    config: Any,
+    *,
+    url: str,
+    title: Optional[str],
+    from_file: Optional[Path],
+    project: Optional[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    fetcher = "from_file" if from_file is not None else "stdlib"
+    origin: dict[str, Any] = {
+        "provider": "url",
+        "fetcher": fetcher,
+        "url": url,
+    }
+    if from_file is not None:
+        origin["content_file"] = str(from_file.expanduser())
+        origin["file_name"] = from_file.name
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "import-url",
+        "dry_run": True,
+        "vault_path": str(config.vault_path),
+        "url": url,
+        "title": title,
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": origin,
+        "would_fetch": from_file is None,
+        "would_read_file": str(from_file.expanduser()) if from_file is not None else None,
+        "would_write": "Sources/<source_id>/{source.md,extract.md}",
+        "next_steps": [
+            "Run without --dry-run to fetch or read the URL content and save it under Sources/.",
+            "Review the saved extract before creating pending source-backed memories.",
         ],
     }
 
