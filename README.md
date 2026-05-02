@@ -126,6 +126,7 @@ source .venv/bin/activate
 python -m pip install -e '.[test]'
 
 memory init ./memory-vault
+memory setup ./memory-vault --dry-run
 memory remember --vault ./memory-vault --type decision --text "Use Markdown as durable memory."
 memory reindex --vault ./memory-vault
 
@@ -139,6 +140,13 @@ Most commands also support `--json` for agent-friendly output:
 
 ```bash
 memory brief --vault ./memory-vault "storage decisions" --budget 1200 --json
+```
+
+To connect a coding agent without copying rule text manually:
+
+```bash
+memory agent-rules --format cursor --vault ./memory-vault --project agent-memory
+memory install-agent-rules --client cursor --project /path/to/repo --dry-run
 ```
 
 When a vault is already configured, commands resolve it in this order:
@@ -355,6 +363,12 @@ citations.
 Core setup and health commands:
 
 - `memory init <vault>` creates the vault layout and `.agent-memory/config.yaml`.
+- `memory setup [vault]` previews or creates the vault layout and next setup
+  steps, with `--dry-run` for no-write planning.
+- `memory agent-rules` generates CLI-first instructions for AGENTS.md, Cursor,
+  Claude, or Codex.
+- `memory install-agent-rules` installs generated rules into a project file with
+  dry-run and no-overwrite safeguards.
 - `memory status` summarizes memory count, pending count, issue count, and index
   presence.
 - `memory doctor` validates memory Markdown and graph targets.

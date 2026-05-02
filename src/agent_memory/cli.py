@@ -41,6 +41,7 @@ from agent_memory.vault import (
     init_vault,
     placeholder_result,
     remember_memory,
+    setup_vault,
     status_summary,
 )
 
@@ -51,6 +52,8 @@ app = typer.Typer(
 raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
 console = Console()
+AGENT_RULE_FORMATS = {"agents", "cursor", "claude", "codex"}
+AGENT_RULE_CLIENTS = {"agents", "cursor", "claude", "codex"}
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
@@ -58,11 +61,14 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Setup and health",
         (
             ("init <vault>", "Create the vault layout and config."),
+            ("setup [vault]", "Preview or create the vault layout and next setup steps."),
             ("status", "Show vault health and local index state."),
             ("doctor", "Validate Markdown schema, graph links, and conflicts."),
             ("conflicts", "Detect sync conflict markers, duplicate IDs, and invalid frontmatter."),
             ("reindex", "Rebuild the disposable SQLite index from Markdown."),
             ("refresh-index", "Reindex only when durable vault files changed."),
+            ("agent-rules", "Generate CLI-first instructions for coding agents."),
+            ("install-agent-rules", "Install generated agent instructions into a project."),
             ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
             ("raw list", "List raw inbox/archive files."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
@@ -138,6 +144,35 @@ def init_command(
         console.print(f"Preserved existing config: {payload['config_path']}")
 
 
+@app.command("setup")
+def setup_command(
+    vault: Optional[Path] = typer.Argument(None, help="Vault directory; defaults to the current directory."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview setup actions without writing files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Preview or create the default CLI-first Agent Memory vault layout."""
+
+    try:
+        selected_vault = vault or Path.cwd()
+        payload = setup_vault(selected_vault, dry_run=dry_run).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="setup_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    label = "Setup dry run" if payload["dry_run"] else "Setup complete"
+    console.print(f"[green]{label}:[/green] {payload['vault_path']}")
+    for action in payload["actions"]:
+        if action["exists"]:
+            continue
+        verb = "would create" if payload["dry_run"] else "created"
+        console.print(f"- {verb} {action['relative_path']}")
+    if not payload["would_write"] and payload["dry_run"]:
+        console.print("[green]Vault already has the default layout.[/green]")
+
+
 @app.command("help")
 def help_command(
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -164,7 +199,7 @@ def help_command(
         "tips": [
             "Run `memory <command> --help` for command-specific options.",
             "Most commands support `--json` for agent-friendly output.",
-            "Use `memory mcp-config` to print Claude/Cursor MCP configuration.",
+            "Use `memory agent-rules --format cursor` to generate project agent instructions.",
         ],
     }
     if json_output:
@@ -179,7 +214,65 @@ def help_command(
         for command in group["commands"]:
             console.print(f"  [cyan]{command['usage']:<24}[/cyan] {command['description']}")
         console.print("")
-    console.print("MCP setup: [cyan]memory mcp-config --format claude[/cyan]")
+    console.print("Agent setup: [cyan]memory agent-rules --format cursor[/cyan]")
+
+
+@app.command("agent-rules")
+def agent_rules_command(
+    rule_format: str = typer.Option("agents", "--format", help="Rule format: agents, cursor, claude, or codex."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in examples."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Generate CLI-first coding-agent instructions."""
+
+    try:
+        payload = _agent_rules_payload(rule_format=rule_format, vault=vault, project=project)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_rules_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo(payload["content"], nl=False)
+
+
+@app.command("install-agent-rules")
+def install_agent_rules_command(
+    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory that should receive the rules."),
+    target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the write without changing files."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing target file."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Install generated coding-agent instructions into a project file."""
+
+    try:
+        payload = _install_agent_rules_payload(
+            client=client,
+            project=project,
+            target=target,
+            vault=vault,
+            dry_run=dry_run,
+            force=force,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="install_agent_rules_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["dry_run"]:
+        if payload["blocked"]:
+            console.print(f"[yellow]Dry run:[/yellow] target exists and --force was not passed: {payload['target_path']}")
+        else:
+            console.print(f"[yellow]Dry run:[/yellow] would write {payload['target_path']}")
+        return
+    console.print(f"[green]Installed agent rules:[/green] {payload['target_path']}")
 
 
 @app.command("mcp-config")
@@ -2197,6 +2290,149 @@ def _relative_to_vault(config: Any, path: Path) -> str:
 
 def _print_json(payload: dict[str, Any]) -> None:
     typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
+
+
+def _agent_rules_payload(
+    *,
+    rule_format: str,
+    vault: Optional[Path],
+    project: Optional[str],
+) -> dict[str, Any]:
+    selected_format = rule_format.strip().lower()
+    if selected_format not in AGENT_RULE_FORMATS:
+        raise ValueError("format must be one of: agents, cursor, claude, codex")
+    resolved_vault = vault.expanduser().resolve() if vault is not None else None
+    selected_project = project.strip() if project else None
+    content = _render_agent_rules(
+        selected_format,
+        vault_path=resolved_vault,
+        project=selected_project,
+    )
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "agent-rules",
+        "format": selected_format,
+        "vault_path": str(resolved_vault) if resolved_vault else None,
+        "project": selected_project,
+        "content": content,
+    }
+
+
+def _install_agent_rules_payload(
+    *,
+    client: str,
+    project: Path,
+    target: Optional[Path],
+    vault: Optional[Path],
+    dry_run: bool,
+    force: bool,
+) -> dict[str, Any]:
+    selected_client = client.strip().lower()
+    if selected_client not in AGENT_RULE_CLIENTS:
+        raise ValueError("client must be one of: agents, cursor, claude, codex")
+
+    project_path = project.expanduser().resolve()
+    target_path = _agent_rules_target_path(selected_client, project_path, target)
+    target_exists = target_path.exists()
+    blocked = target_exists and not force
+    content = _render_agent_rules(
+        selected_client,
+        vault_path=vault.expanduser().resolve() if vault is not None else None,
+        project=project_path.name,
+    )
+    payload = {
+        "ok": True,
+        "implemented": True,
+        "command": "install-agent-rules",
+        "client": selected_client,
+        "project_path": str(project_path),
+        "target_path": str(target_path),
+        "target_exists": target_exists,
+        "dry_run": dry_run,
+        "force": force,
+        "blocked": blocked,
+        "would_write": not blocked,
+        "written": False,
+        "content": content,
+    }
+
+    if dry_run:
+        return payload
+    if blocked:
+        raise ValueError(f"target exists: {target_path}; pass --force to overwrite")
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(content, encoding="utf-8")
+    payload["written"] = True
+    return payload
+
+
+def _agent_rules_target_path(client: str, project_path: Path, target: Optional[Path]) -> Path:
+    if target is not None:
+        candidate = target.expanduser()
+        return candidate.resolve() if candidate.is_absolute() else (project_path / candidate).resolve()
+    if client == "cursor":
+        return project_path / ".cursor" / "rules" / "agent-memory.mdc"
+    if client == "claude":
+        return project_path / "CLAUDE.md"
+    return project_path / "AGENTS.md"
+
+
+def _render_agent_rules(format_name: str, *, vault_path: Optional[Path], project: Optional[str]) -> str:
+    vault_arg = f' --vault "{vault_path}"' if vault_path else ""
+    project_arg = f' --project "{project}"' if project else ' --project "<project-name>"'
+    lines = _agent_rules_body(vault_arg=vault_arg, project_arg=project_arg)
+    if format_name == "cursor":
+        return "\n".join(
+            [
+                "---",
+                "description: Use Agent Memory CLI for durable project memory",
+                "alwaysApply: true",
+                "---",
+                "",
+                *lines,
+            ]
+        )
+    if format_name == "claude":
+        return "\n".join(["# Agent Memory Instructions", "", *lines])
+    if format_name == "codex":
+        return "\n".join(["# Agent Memory Instructions For Codex", "", *lines])
+    return "\n".join(["## Agent Memory Usage", "", *lines])
+
+
+def _agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
+    build_context = f'memory build-context "<task>"{vault_arg}{project_arg} --task-class planning --json'
+    review = f"memory review{vault_arg} --json"
+    remember = f'memory remember{vault_arg} --type decision --text "<durable decision>" --json'
+    return [
+        "Current product direction is CLI-first. Prefer `memory ... --json` commands from any project directory. Treat MCP as legacy compatibility only unless the user explicitly reopens it.",
+        "",
+        "Do not run memory recall for every turn. Use memory when the request addresses Toby, asks about earlier decisions or preferences, references project history/status, or needs durable context from previous work.",
+        "",
+        "When recall is relevant, run:",
+        "",
+        "```bash",
+        build_context,
+        "```",
+        "",
+        "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
+        "",
+        "When saving new material, the AI agent reads and extracts the source first. Preserve raw/source material with `memory raw process`, `memory import-source`, or `memory import-session`, then promote only durable atomic facts, decisions, preferences, project context, or tasks with commands such as:",
+        "",
+        "```bash",
+        remember,
+        "```",
+        "",
+        "Agent-created or inferred memories should stay reviewable according to `.agent-memory/config.yaml` policy. Review pending items with:",
+        "",
+        "```bash",
+        review,
+        "```",
+        "",
+        "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory.",
+        "",
+    ]
 
 
 def _mcp_config_payload(

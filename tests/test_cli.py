@@ -29,6 +29,36 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert (vault / "Profiles" / "projects").is_dir()
 
 
+def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
+    vault = tmp_path / "memory-vault"
+
+    result = runner.invoke(app, ["setup", str(vault), "--dry-run", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "setup"
+    assert payload["dry_run"] is True
+    assert payload["would_write"] is True
+    assert any(action["relative_path"] == ".agent-memory/config.yaml" for action in payload["actions"])
+    assert not vault.exists()
+
+
+def test_setup_command_creates_vault_layout(tmp_path):
+    vault = tmp_path / "memory-vault"
+
+    result = runner.invoke(app, ["setup", str(vault), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is False
+    assert payload["config_created"] is True
+    assert (vault / ".agent-memory" / "config.yaml").exists()
+    assert (vault / "raw" / "inbox" / "files").is_dir()
+    assert (vault / "Memories" / "projects").is_dir()
+
+
 def test_remember_command_creates_valid_markdown(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])
@@ -83,6 +113,7 @@ def test_help_command_lists_grouped_commands():
     assert "Agent Memory commands" in human_result.output
     assert "Setup and health" in human_result.output
     assert "mcp-config" in human_result.output
+    assert "agent-rules" in human_result.output
     assert "explain-recall" in human_result.output
     assert "memory <command> --help" in human_result.output
 
@@ -97,6 +128,9 @@ def test_help_command_lists_grouped_commands():
     }
     assert {
         "init <vault>",
+        "setup [vault]",
+        "agent-rules",
+        "install-agent-rules",
         "mcp-config",
         "remember",
         "curate",
@@ -109,6 +143,88 @@ def test_help_command_lists_grouped_commands():
         "raw list",
         "eval <fixture-or-file>",
     } <= command_usages
+
+
+def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(tmp_path):
+    vault = tmp_path / "memory-vault"
+
+    for rule_format in ("agents", "cursor", "claude", "codex"):
+        result = runner.invoke(
+            app,
+            [
+                "agent-rules",
+                "--format",
+                rule_format,
+                "--vault",
+                str(vault),
+                "--project",
+                "agent-memory",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        content = payload["content"]
+        assert payload["ok"] is True
+        assert payload["format"] == rule_format
+        assert "CLI-first" in content
+        assert "memory build-context" in content
+        assert "--json" in content
+        assert '--project "agent-memory"' in content
+        assert "Treat MCP as legacy compatibility only" in content
+        if rule_format == "cursor":
+            assert content.startswith("---\ndescription:")
+
+
+def test_install_agent_rules_dry_run_and_no_overwrite_behavior(tmp_path):
+    project = tmp_path / "project"
+    target = project / "agent-memory-rules.md"
+    project.mkdir()
+
+    dry_run = runner.invoke(
+        app,
+        [
+            "install-agent-rules",
+            "--client",
+            "cursor",
+            "--project",
+            str(project),
+            "--target",
+            str(target),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert dry_run.exit_code == 0, dry_run.output
+    dry_payload = json.loads(dry_run.output)
+    assert dry_payload["ok"] is True
+    assert dry_payload["dry_run"] is True
+    assert dry_payload["would_write"] is True
+    assert dry_payload["target_path"] == str(target)
+    assert not target.exists()
+
+    target.write_text("existing", encoding="utf-8")
+    no_overwrite = runner.invoke(
+        app,
+        [
+            "install-agent-rules",
+            "--client",
+            "cursor",
+            "--project",
+            str(project),
+            "--target",
+            str(target),
+            "--json",
+        ],
+    )
+
+    assert no_overwrite.exit_code == 1, no_overwrite.output
+    payload = json.loads(no_overwrite.output)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "install_agent_rules_failed"
+    assert target.read_text(encoding="utf-8") == "existing"
 
 
 def test_mcp_config_command_prints_client_config(tmp_path):

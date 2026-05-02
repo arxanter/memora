@@ -4,9 +4,21 @@ Use this document when configuring Claude Code, Cursor, Codex, or another coding
 agent to work with Agent Memory. Copy the relevant sections into project-level
 `AGENTS.md`, `CLAUDE.md`, or `.cursor/rules/agent-memory.mdc`.
 
+You can generate focused project rules instead of copying this file manually:
+
+```bash
+memory agent-rules --format agents
+memory agent-rules --format cursor
+memory agent-rules --format claude
+memory agent-rules --format codex
+memory install-agent-rules --client cursor --project <path> --dry-run
+```
+
 Current product direction is CLI-first. Prefer `memory ... --json` commands from
 any project directory. MCP is paused/outdated for now and should be treated only
 as a legacy optional adapter unless the user explicitly reopens that decision.
+When using that legacy adapter, `save_source`, `ingest_url`, and `remember`
+correspond to the CLI source-preservation and atomic-memory workflows below.
 
 ## Core Rule
 

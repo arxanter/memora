@@ -60,6 +60,42 @@ class InitResult:
 
 
 @dataclass(frozen=True)
+class SetupResult:
+    vault_path: Path
+    config_path: Path
+    dry_run: bool
+    actions: tuple[dict[str, Any], ...]
+    created_paths: tuple[Path, ...] = ()
+    config_created: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        would_write = any(bool(action.get("would_write")) for action in self.actions)
+        return {
+            "ok": True,
+            "implemented": True,
+            "command": "setup",
+            "dry_run": self.dry_run,
+            "vault_path": str(self.vault_path),
+            "config_path": str(self.config_path),
+            "would_write": would_write,
+            "config_created": self.config_created,
+            "created_paths": [str(path) for path in self.created_paths],
+            "actions": list(self.actions),
+            "next_steps": [
+                "Run without --dry-run to create the planned vault files.",
+                "Run `memory agent-rules --format agents` to generate coding-agent instructions.",
+                "Run `memory install-agent-rules --client cursor --project <path> --dry-run` to preview project rule installation.",
+            ]
+            if self.dry_run
+            else [
+                "Run `memory doctor --vault <vault>` to validate the vault.",
+                "Run `memory agent-rules --format agents` to generate coding-agent instructions.",
+                "Run `memory install-agent-rules --client cursor --project <path>` to connect a project agent.",
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class RememberResult:
     memory_id: str
     path: Path
@@ -101,6 +137,36 @@ def init_vault(vault_path: Union[Path, str]) -> InitResult:
         vault_path=config.vault_path,
         config_path=config.config_path,
         created_paths=tuple(created_paths),
+        config_created=config_created,
+    )
+
+
+def setup_vault(vault_path: Union[Path, str], *, dry_run: bool = False) -> SetupResult:
+    """Plan or create the default vault layout without overwriting user files."""
+
+    config = create_default_config(vault_path)
+    planned_paths = (*_vault_directories(config), config.config_path)
+    exists_before = {path: path.exists() for path in planned_paths}
+
+    created_paths: tuple[Path, ...] = ()
+    config_created = False
+    if not dry_run:
+        result = init_vault(config.vault_path)
+        created_paths = result.created_paths
+        config_created = result.config_created
+
+    actions = _setup_actions(
+        config,
+        exists_before=exists_before,
+        created_paths=set(created_paths),
+        dry_run=dry_run,
+    )
+    return SetupResult(
+        vault_path=config.vault_path,
+        config_path=config.config_path,
+        dry_run=dry_run,
+        actions=actions,
+        created_paths=created_paths,
         config_created=config_created,
     )
 
@@ -413,6 +479,73 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
         config.vault_path / config.agent_memory_dir / "embeddings",
         config.vault_path / config.agent_memory_dir / "locks",
     )
+
+
+def _setup_actions(
+    config: MemoryConfig,
+    *,
+    exists_before: dict[Path, bool],
+    created_paths: set[Path],
+    dry_run: bool,
+) -> tuple[dict[str, Any], ...]:
+    actions: list[dict[str, Any]] = []
+    for path in _vault_directories(config):
+        existed = exists_before.get(path, path.exists())
+        actions.append(
+            _setup_action(
+                config,
+                path,
+                kind="directory",
+                action="create_directory",
+                existed=existed,
+                created=path in created_paths,
+                dry_run=dry_run,
+            )
+        )
+    config_existed = exists_before.get(config.config_path, config.config_path.exists())
+    actions.append(
+        _setup_action(
+            config,
+            config.config_path,
+            kind="config",
+            action="write_config",
+            existed=config_existed,
+            created=config.config_path in created_paths,
+            dry_run=dry_run,
+        )
+    )
+    return tuple(actions)
+
+
+def _setup_action(
+    config: MemoryConfig,
+    path: Path,
+    *,
+    kind: str,
+    action: str,
+    existed: bool,
+    created: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    would_write = not existed and dry_run
+    status = "exists" if existed else "planned" if dry_run else "created" if created else "skipped"
+    return {
+        "kind": kind,
+        "action": action,
+        "path": str(path),
+        "relative_path": _setup_relative_path(config, path),
+        "exists": existed,
+        "would_write": would_write,
+        "created": created,
+        "status": status,
+    }
+
+
+def _setup_relative_path(config: MemoryConfig, path: Path) -> str:
+    try:
+        return path.relative_to(config.vault_path).as_posix() or "."
+    except ValueError:
+        return str(path)
 
 
 def _new_memory_id(now: datetime) -> str:

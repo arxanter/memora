@@ -15,7 +15,10 @@ memory to active durable truth unless explicitly configured.
 
 ```bash
 memory init <vault>
+memory setup [vault] --dry-run
 memory help
+memory agent-rules --format cursor
+memory install-agent-rules --client cursor --project <path> --dry-run
 memory mcp-config
 memory remember --type decision --text "..."
 memory reindex
@@ -89,6 +92,22 @@ Example:
 memory init ./memory-vault --json
 ```
 
+### `memory setup [vault]`
+
+Creates the same safe vault layout as `memory init`, but adds a `--dry-run`
+planning mode and next-step guidance for connecting coding agents. It does not
+overwrite an existing `.agent-memory/config.yaml`.
+
+Examples:
+
+```bash
+memory setup ./memory-vault --dry-run --json
+memory setup ./memory-vault --json
+```
+
+The JSON output includes planned or created actions, `would_write`, the
+`config_path`, and next steps such as generating or installing agent rules.
+
 ### `memory help`
 
 Prints a grouped overview of available Agent Memory commands with short
@@ -104,6 +123,45 @@ memory help --json
 
 The JSON output is stable enough for agent clients to inspect available command
 groups and descriptions.
+
+### `memory agent-rules`
+
+Generates CLI-first agent instructions for `AGENTS.md`, Cursor rules, Claude, or
+Codex. Human output writes the rule text to stdout; `--json` wraps the same text
+as `content` with metadata.
+
+Examples:
+
+```bash
+memory agent-rules --format agents
+memory agent-rules --format cursor --vault ~/MemoryVault --project agent-memory
+memory agent-rules --format claude --json
+memory agent-rules --format codex
+```
+
+Generated rules tell agents to prefer `memory ... --json`, use
+`memory build-context` only when recall is relevant, preserve citations, and
+save raw material as `Sources/` before promoting atomic memories.
+
+### `memory install-agent-rules`
+
+Installs generated instructions into a project file. Defaults are:
+
+- `--client agents`: `<project>/AGENTS.md`
+- `--client cursor`: `<project>/.cursor/rules/agent-memory.mdc`
+- `--client claude`: `<project>/CLAUDE.md`
+- `--client codex`: `<project>/AGENTS.md`
+
+The command supports `--dry-run`, `--target <path>` for an explicit destination,
+and refuses to overwrite existing files unless `--force` is passed.
+
+Examples:
+
+```bash
+memory install-agent-rules --client cursor --project ./my-repo --dry-run --json
+memory install-agent-rules --client agents --project ./my-repo
+memory install-agent-rules --client claude --project ./my-repo --force
+```
 
 ### `memory mcp-config`
 
