@@ -1344,6 +1344,103 @@ def test_review_group_by_rejects_unsupported_value(tmp_path):
     assert "unsupported --group-by value 'project'; expected 'source'" in result.output
 
 
+def test_review_batch_cli_json_reports_per_item_results_and_failures(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/safe-review.md",
+        memory_id="mem_20260430_cli_safe_review",
+        memory_type="fact",
+        status="pending",
+        body="Safe CLI review item can be approved.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/unsafe-review.md",
+        memory_id="mem_20260430_cli_unsafe_review",
+        memory_type="fact",
+        status="pending",
+        body="Unsafe CLI review item should be blocked.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.95,
+        risk_flags=["prompt_injection"],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "approve",
+            "mem_20260430_cli_safe_review",
+            "mem_20260430_cli_unsafe_review",
+            "mem_20260430_cli_missing_review",
+            "--vault",
+            str(vault),
+            "--reason",
+            "verified",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["command"] == "review approve"
+    assert payload["success_count"] == 1
+    assert payload["failure_count"] == 2
+    results = {item["id"]: item for item in payload["results"]}
+    assert results["mem_20260430_cli_safe_review"]["ok"] is True
+    assert results["mem_20260430_cli_unsafe_review"]["error"]["code"] == "unsafe_approval_blocked"
+    assert results["mem_20260430_cli_missing_review"]["error"]["code"] == "memory_not_found"
+    assert validate_markdown_file(vault / "Memories/facts/safe-review.md").frontmatter.status == "active"
+    assert validate_markdown_file(vault / "Memories/facts/unsafe-review.md").frontmatter.status == "pending"
+
+
+def test_review_batch_cli_dry_run_does_not_write(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/dry-run-review.md",
+        memory_id="mem_20260430_cli_dry_run_review",
+        memory_type="fact",
+        status="pending",
+        body="CLI dry run should not reject this memory.",
+        author_kind="agent",
+        source_path="Sources/stage13.md",
+        confidence=0.7,
+    )
+    path = vault / "Memories/facts/dry-run-review.md"
+    before = path.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "reject",
+            "mem_20260430_cli_dry_run_review",
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["mutation_count"] == 0
+    assert payload["results"][0]["planned"] is True
+    assert payload["results"][0]["status"] == "rejected"
+    assert path.read_text(encoding="utf-8") == before
+
+
 def _write_memory(
     vault,
     relative_path,

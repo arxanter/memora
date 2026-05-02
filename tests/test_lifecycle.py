@@ -10,6 +10,7 @@ from agent_memory.lifecycle import (
     curation_plan,
     decay_memories,
     reject_memory,
+    review_batch_action,
     review_queue,
     supersede_memory,
 )
@@ -275,6 +276,218 @@ def test_review_queue_only_lists_pending_agent_memories(tmp_path):
     assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_lifecycle/source.md"
     assert payload["source_groups"][0]["memory_ids"] == ["mem_20260430_agent_pending"]
     assert payload["source_groups"][0]["items"][0]["importance"] == item["importance"]
+
+
+def test_review_batch_approve_changes_multiple_pending_items_and_records_history(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/first.md",
+        memory_id="mem_20260430_approve_first",
+        memory_type="fact",
+        status="pending",
+        body="First pending memory can be batch approved.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/second.md",
+        memory_id="mem_20260430_approve_second",
+        memory_type="fact",
+        status="pending",
+        body="Second pending memory can be batch approved.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.95,
+    )
+    config = load_config(vault)
+
+    result = review_batch_action(
+        config,
+        "approve",
+        ["mem_20260430_approve_first", "mem_20260430_approve_second"],
+        reason="verified source",
+    ).to_dict()
+
+    assert result["ok"] is True
+    assert result["command"] == "review approve"
+    assert result["success_count"] == 2
+    assert result["mutation_count"] == 2
+    for relative_path in ("Memories/facts/first.md", "Memories/facts/second.md"):
+        document = validate_markdown_file(vault / relative_path)
+        assert document.frontmatter.status == "active"
+        history = document.frontmatter.model_dump(mode="json")["history"]
+        assert history[-1]["action"] == "approve"
+        assert history[-1]["reason"] == "verified source"
+
+
+def test_review_batch_reject_changes_multiple_pending_items_and_records_history(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/first.md",
+        memory_id="mem_20260430_reject_first",
+        memory_type="fact",
+        status="pending",
+        body="First pending memory can be batch rejected.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.7,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/second.md",
+        memory_id="mem_20260430_reject_second",
+        memory_type="fact",
+        status="pending",
+        body="Second pending memory can be batch rejected.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.7,
+    )
+    config = load_config(vault)
+
+    result = review_batch_action(
+        config,
+        "reject",
+        ["mem_20260430_reject_first", "mem_20260430_reject_second"],
+        reason="not durable",
+    ).to_dict()
+
+    assert result["ok"] is True
+    assert result["success_count"] == 2
+    assert [mutation["status"] for mutation in result["mutations"]] == ["rejected", "rejected"]
+    for relative_path in ("Memories/facts/first.md", "Memories/facts/second.md"):
+        document = validate_markdown_file(vault / relative_path)
+        assert document.frontmatter.status == "rejected"
+        assert document.frontmatter.valid_to is not None
+        history = document.frontmatter.model_dump(mode="json")["history"]
+        assert history[-1]["action"] == "reject"
+        assert history[-1]["reason"] == "not durable"
+
+
+def test_review_batch_defer_keeps_pending_and_records_history(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/tasks/defer.md",
+        memory_id="mem_20260430_defer",
+        memory_type="task",
+        status="pending",
+        body="Pending memory can be deferred for later review.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.65,
+    )
+    config = load_config(vault)
+
+    result = review_batch_action(
+        config,
+        "defer",
+        ["mem_20260430_defer"],
+        reason="needs product confirmation",
+    ).to_dict()
+
+    assert result["ok"] is True
+    assert result["mutations"][0]["previous_status"] == "pending"
+    assert result["mutations"][0]["status"] == "pending"
+    document = validate_markdown_file(vault / "Memories/tasks/defer.md")
+    assert document.frontmatter.status == "pending"
+    history = document.frontmatter.model_dump(mode="json")["history"]
+    assert history[-1]["action"] == "defer"
+    assert history[-1]["reason"] == "needs product confirmation"
+
+
+def test_review_batch_dry_run_plans_operations_without_writing(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/dry-run.md",
+        memory_id="mem_20260430_dry_run",
+        memory_type="fact",
+        status="pending",
+        body="Dry run should not approve this memory.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.95,
+    )
+    path = vault / "Memories/facts/dry-run.md"
+    before = path.read_text(encoding="utf-8")
+    config = load_config(vault)
+
+    result = review_batch_action(
+        config,
+        "approve",
+        ["mem_20260430_dry_run"],
+        reason="looks good",
+        dry_run=True,
+    ).to_dict()
+
+    assert result["ok"] is True
+    assert result["dry_run"] is True
+    assert result["mutation_count"] == 0
+    assert result["results"][0]["planned"] is True
+    assert result["results"][0]["previous_status"] == "pending"
+    assert result["results"][0]["status"] == "active"
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_review_batch_reports_failures_without_corrupting_other_items(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/safe.md",
+        memory_id="mem_20260430_safe_review",
+        memory_type="fact",
+        status="pending",
+        body="Safe pending memory can still be approved.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.95,
+    )
+    _write_memory(
+        vault,
+        "Memories/facts/unsafe.md",
+        memory_id="mem_20260430_unsafe_review",
+        memory_type="fact",
+        status="pending",
+        body="Unsafe pending memory should require an override.",
+        author_kind="agent",
+        source_path="Sources/2026-04-30_review/extract.md",
+        confidence=0.95,
+        risk_flags=["prompt_injection"],
+    )
+    config = load_config(vault)
+
+    result = review_batch_action(
+        config,
+        "approve",
+        [
+            "mem_20260430_safe_review",
+            "mem_20260430_unsafe_review",
+            "mem_20260430_missing_review",
+        ],
+        reason="approved safe item",
+    ).to_dict()
+
+    assert result["ok"] is False
+    assert result["success_count"] == 1
+    assert result["failure_count"] == 2
+    results = {item["id"]: item for item in result["results"]}
+    assert results["mem_20260430_safe_review"]["ok"] is True
+    assert results["mem_20260430_unsafe_review"]["error"]["code"] == "unsafe_approval_blocked"
+    assert results["mem_20260430_missing_review"]["error"]["code"] == "memory_not_found"
+    safe_doc = validate_markdown_file(vault / "Memories/facts/safe.md")
+    unsafe_doc = validate_markdown_file(vault / "Memories/facts/unsafe.md")
+    assert safe_doc.frontmatter.status == "active"
+    assert unsafe_doc.frontmatter.status == "pending"
 
 
 def test_review_queue_surfaces_source_safety_risk_flags(tmp_path):
@@ -931,6 +1144,7 @@ def _write_memory(
     contradicts=None,
     relations=None,
     importance=None,
+    risk_flags=None,
 ):
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -959,6 +1173,7 @@ valid_to: {valid_to}
 supersedes: {supersedes}
 contradicts: {contradicts}
 {relations_block}
+risk_flags: {risk_flags}
 observations:
   - category: {memory_type}
     text: {body}
@@ -983,6 +1198,7 @@ observations:
             supersedes=_inline_list(supersedes or []),
             contradicts=_inline_list(contradicts or []),
             relations_block=_relations_block(relations or []),
+            risk_flags=_inline_list(risk_flags or []),
             body=body,
         ),
         encoding="utf-8",

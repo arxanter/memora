@@ -200,6 +200,106 @@ class LifecycleResult:
 
 
 @dataclass(frozen=True)
+class ReviewBatchItemResult:
+    """Per-memory outcome for a batch review action."""
+
+    memory_id: str
+    action: str
+    ok: bool
+    dry_run: bool
+    planned: bool = False
+    previous_status: Optional[str] = None
+    status: Optional[str] = None
+    path: Optional[Path] = None
+    relative_path: Optional[Path] = None
+    risk_flags: tuple[str, ...] = ()
+    mutation: Optional[LifecycleMutation] = None
+    error: Optional[dict[str, str]] = None
+
+    @property
+    def citation(self) -> Optional[dict[str, str]]:
+        if self.relative_path is None:
+            return None
+        return {
+            "id": self.memory_id,
+            "path": self.relative_path.as_posix(),
+            "kind": "memory",
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.memory_id,
+            "action": self.action,
+            "ok": self.ok,
+            "dry_run": self.dry_run,
+            "planned": self.planned,
+            "previous_status": self.previous_status,
+            "status": self.status,
+            "risk_flags": list(self.risk_flags),
+        }
+        if self.path is not None:
+            payload["path"] = str(self.path)
+        if self.relative_path is not None:
+            payload["relative_path"] = self.relative_path.as_posix()
+        if self.mutation is not None:
+            payload["mutation"] = self.mutation.to_dict()
+        if self.error is not None:
+            payload["error"] = dict(self.error)
+        citation = self.citation
+        if citation is not None:
+            payload["citation"] = citation
+        return payload
+
+
+@dataclass(frozen=True)
+class ReviewBatchResult:
+    """Structured result for batch review actions over pending memories."""
+
+    command: str
+    action: str
+    dry_run: bool
+    results: tuple[ReviewBatchItemResult, ...]
+    reason: Optional[str] = None
+    details: Optional[dict[str, Any]] = None
+
+    @property
+    def mutations(self) -> tuple[LifecycleMutation, ...]:
+        return tuple(result.mutation for result in self.results if result.mutation is not None)
+
+    @property
+    def citations(self) -> list[dict[str, str]]:
+        seen: set[str] = set()
+        citations: list[dict[str, str]] = []
+        for result in self.results:
+            citation = result.citation
+            if citation is None or result.memory_id in seen:
+                continue
+            seen.add(result.memory_id)
+            citations.append(citation)
+        return citations
+
+    def to_dict(self) -> dict[str, Any]:
+        failure_count = sum(1 for result in self.results if not result.ok)
+        success_count = len(self.results) - failure_count
+        return {
+            "ok": failure_count == 0,
+            "implemented": True,
+            "command": self.command,
+            "action": self.action,
+            "dry_run": self.dry_run,
+            "reason": self.reason,
+            "result_count": len(self.results),
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "mutation_count": len(self.mutations),
+            "results": [result.to_dict() for result in self.results],
+            "mutations": [mutation.to_dict() for mutation in self.mutations],
+            "citations": self.citations,
+            **(self.details or {}),
+        }
+
+
+@dataclass(frozen=True)
 class ReviewItem:
     """One pending memory that needs human review."""
 
@@ -339,6 +439,38 @@ def mark_status(
         )
 
 
+def approve_memory(
+    config: MemoryConfig,
+    memory_id: str,
+    *,
+    reason: Optional[str] = None,
+) -> LifecycleResult:
+    """Approve a pending memory by making it active."""
+
+    result = mark_status(config, memory_id, LifecycleStatus.ACTIVE, reason=reason, _action="approve")
+    return LifecycleResult(command="approve", mutations=result.mutations, details=result.details)
+
+
+def defer_memory(
+    config: MemoryConfig,
+    memory_id: str,
+    *,
+    reason: Optional[str] = None,
+) -> LifecycleResult:
+    """Keep or return a memory to pending while recording a review audit entry."""
+
+    with vault_lock(config):
+        result = _mark_status_unlocked(
+            config,
+            memory_id,
+            LifecycleStatus.PENDING.value,
+            reason=reason,
+            _action="defer",
+            _record_noop=True,
+        )
+    return LifecycleResult(command="defer", mutations=result.mutations, details=result.details)
+
+
 def _mark_status_unlocked(
     config: MemoryConfig,
     memory_id: str,
@@ -346,10 +478,30 @@ def _mark_status_unlocked(
     *,
     reason: Optional[str],
     _action: str,
+    _record_noop: bool = False,
 ) -> LifecycleResult:
     record = _find_memory(config, memory_id)
     previous_status = str(record.data.get("status"))
     if previous_status == selected_status:
+        if _record_noop:
+            now = _now()
+            record.data["updated_at"] = now.isoformat()
+            _append_history(
+                record.data,
+                action=_action,
+                at=now,
+                previous_status=previous_status,
+                status=selected_status,
+                reason=reason,
+            )
+            rendered = _render_updated(record.data, record.body, path=record.path)
+            _atomic_replace(record.path, rendered)
+            mutation = _mutation(config, record, previous_status, selected_status, _action)
+            return LifecycleResult(
+                command="mark",
+                mutations=(mutation,),
+                details={"id": memory_id, "status": selected_status, "changed": True},
+            )
         return LifecycleResult(
             command="mark",
             mutations=(),
@@ -398,6 +550,328 @@ def reject_memory(
 
     result = mark_status(config, memory_id, LifecycleStatus.REJECTED, reason=reason, _action="reject")
     return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
+
+
+def review_batch_action(
+    config: MemoryConfig,
+    action: str,
+    memory_ids: Sequence[str],
+    *,
+    reason: Optional[str] = None,
+    dry_run: bool = False,
+    override_unsafe: bool = False,
+    by_id: Optional[str] = None,
+) -> ReviewBatchResult:
+    """Apply an explicit batch review action to pending agent-generated memories."""
+
+    selected_action = action.strip().lower()
+    if selected_action not in {"approve", "reject", "defer", "supersede"}:
+        raise ValueError("review action must be approve, reject, defer, or supersede")
+    if not memory_ids:
+        raise ValueError("at least one memory id is required")
+    if selected_action == "supersede":
+        if len(memory_ids) != 1:
+            raise ValueError("review supersede accepts exactly one old memory id")
+        if not by_id:
+            raise ValueError("review supersede requires --by <new_id>")
+    elif by_id:
+        raise ValueError("--by is only supported for review supersede")
+
+    if dry_run:
+        results = _plan_review_batch_action(
+            config,
+            selected_action,
+            memory_ids,
+            override_unsafe=override_unsafe,
+            by_id=by_id,
+        )
+    else:
+        with vault_lock(config):
+            results = _apply_review_batch_action_unlocked(
+                config,
+                selected_action,
+                memory_ids,
+                reason=reason,
+                override_unsafe=override_unsafe,
+                by_id=by_id,
+            )
+
+    details: dict[str, Any] = {"requested_ids": list(memory_ids)}
+    if selected_action == "approve":
+        details["override_unsafe"] = override_unsafe
+    if by_id:
+        details["by_id"] = by_id
+    return ReviewBatchResult(
+        command=f"review {selected_action}",
+        action=selected_action,
+        dry_run=dry_run,
+        reason=reason,
+        results=tuple(results),
+        details=details,
+    )
+
+
+def _plan_review_batch_action(
+    config: MemoryConfig,
+    action: str,
+    memory_ids: Sequence[str],
+    *,
+    override_unsafe: bool,
+    by_id: Optional[str],
+) -> tuple[ReviewBatchItemResult, ...]:
+    review_items = {item.memory_id: item for item in review_queue(config).items}
+    records_by_id = _records_by_id(config)
+    results: list[ReviewBatchItemResult] = []
+    for memory_id in memory_ids:
+        error = _review_item_error(memory_id, review_items=review_items, records_by_id=records_by_id)
+        if error is not None:
+            results.append(_review_error_result(memory_id, action=action, dry_run=True, error=error))
+            continue
+        by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
+        if by_error is not None:
+            results.append(_review_error_result(memory_id, action=action, dry_run=True, error=by_error))
+            continue
+        item = review_items[memory_id]
+        unsafe_error = _unsafe_approval_error(action, item, override_unsafe=override_unsafe)
+        if unsafe_error is not None:
+            results.append(
+                _review_error_result(
+                    memory_id,
+                    action=action,
+                    dry_run=True,
+                    error=unsafe_error,
+                    item=item,
+                )
+            )
+            continue
+        results.append(
+            ReviewBatchItemResult(
+                memory_id=memory_id,
+                action=action,
+                ok=True,
+                dry_run=True,
+                planned=True,
+                previous_status=item.status,
+                status=_review_action_status(action, current_status=item.status),
+                path=item.path,
+                relative_path=item.relative_path,
+                risk_flags=item.risk_flags,
+            )
+        )
+    return tuple(results)
+
+
+def _apply_review_batch_action_unlocked(
+    config: MemoryConfig,
+    action: str,
+    memory_ids: Sequence[str],
+    *,
+    reason: Optional[str],
+    override_unsafe: bool,
+    by_id: Optional[str],
+) -> tuple[ReviewBatchItemResult, ...]:
+    review_items = {item.memory_id: item for item in review_queue(config).items}
+    records_by_id = _records_by_id(config)
+    results: list[ReviewBatchItemResult] = []
+    for memory_id in memory_ids:
+        error = _review_item_error(memory_id, review_items=review_items, records_by_id=records_by_id)
+        if error is not None:
+            results.append(_review_error_result(memory_id, action=action, dry_run=False, error=error))
+            continue
+        item = review_items[memory_id]
+        by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
+        if by_error is not None:
+            results.append(
+                _review_error_result(
+                    memory_id,
+                    action=action,
+                    dry_run=False,
+                    error=by_error,
+                    item=item,
+                )
+            )
+            continue
+        unsafe_error = _unsafe_approval_error(action, item, override_unsafe=override_unsafe)
+        if unsafe_error is not None:
+            results.append(
+                _review_error_result(
+                    memory_id,
+                    action=action,
+                    dry_run=False,
+                    error=unsafe_error,
+                    item=item,
+                )
+            )
+            continue
+        try:
+            result = _apply_one_review_action_unlocked(
+                config,
+                action,
+                memory_id,
+                reason=reason,
+                by_id=by_id,
+            )
+        except Exception as exc:
+            results.append(
+                _review_error_result(
+                    memory_id,
+                    action=action,
+                    dry_run=False,
+                    error={"code": "review_action_failed", "message": str(exc)},
+                    item=item,
+                )
+            )
+            continue
+        mutation = result.mutations[0] if result.mutations else None
+        results.append(
+            ReviewBatchItemResult(
+                memory_id=memory_id,
+                action=action,
+                ok=True,
+                dry_run=False,
+                planned=False,
+                previous_status=mutation.previous_status if mutation else item.status,
+                status=mutation.status if mutation else _review_action_status(action, current_status=item.status),
+                path=mutation.path if mutation else item.path,
+                relative_path=mutation.relative_path if mutation else item.relative_path,
+                risk_flags=item.risk_flags,
+                mutation=mutation,
+            )
+        )
+    return tuple(results)
+
+
+def _apply_one_review_action_unlocked(
+    config: MemoryConfig,
+    action: str,
+    memory_id: str,
+    *,
+    reason: Optional[str],
+    by_id: Optional[str],
+) -> LifecycleResult:
+    if action == "approve":
+        result = _mark_status_unlocked(
+            config,
+            memory_id,
+            LifecycleStatus.ACTIVE.value,
+            reason=reason,
+            _action="approve",
+        )
+        return LifecycleResult(command="approve", mutations=result.mutations, details=result.details)
+    if action == "reject":
+        result = _mark_status_unlocked(
+            config,
+            memory_id,
+            LifecycleStatus.REJECTED.value,
+            reason=reason,
+            _action="reject",
+        )
+        return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
+    if action == "defer":
+        result = _mark_status_unlocked(
+            config,
+            memory_id,
+            LifecycleStatus.PENDING.value,
+            reason=reason,
+            _action="defer",
+            _record_noop=True,
+        )
+        return LifecycleResult(command="defer", mutations=result.mutations, details=result.details)
+    if action == "supersede":
+        return _supersede_memory_unlocked(config, memory_id, new_id=str(by_id), reason=reason)
+    raise ValueError(f"unsupported review action: {action}")
+
+
+def _review_item_error(
+    memory_id: str,
+    *,
+    review_items: Mapping[str, ReviewItem],
+    records_by_id: Mapping[str, _MemoryRecord],
+) -> Optional[dict[str, str]]:
+    if memory_id in review_items:
+        return None
+    if memory_id in records_by_id:
+        return {
+            "code": "not_pending_review_item",
+            "message": f"memory is not a pending agent review item: {memory_id}",
+        }
+    return {
+        "code": "memory_not_found",
+        "message": f"memory not found: {memory_id}",
+    }
+
+
+def _unsafe_approval_error(
+    action: str,
+    item: ReviewItem,
+    *,
+    override_unsafe: bool,
+) -> Optional[dict[str, str]]:
+    if action != "approve" or override_unsafe or not has_unsafe_recall_risk(item.risk_flags):
+        return None
+    return {
+        "code": "unsafe_approval_blocked",
+        "message": f"unsafe review item requires --override-unsafe: {item.memory_id}",
+    }
+
+
+def _supersede_by_error(
+    action: str,
+    memory_id: str,
+    *,
+    by_id: Optional[str],
+    records_by_id: Mapping[str, _MemoryRecord],
+) -> Optional[dict[str, str]]:
+    if action != "supersede":
+        return None
+    if not by_id:
+        return {"code": "missing_replacement", "message": "review supersede requires --by <new_id>"}
+    if by_id == memory_id:
+        return {
+            "code": "invalid_replacement",
+            "message": "old_id and new_id must be different",
+        }
+    if by_id not in records_by_id:
+        return {
+            "code": "replacement_not_found",
+            "message": f"replacement memory not found: {by_id}",
+        }
+    return None
+
+
+def _review_error_result(
+    memory_id: str,
+    *,
+    action: str,
+    dry_run: bool,
+    error: dict[str, str],
+    item: Optional[ReviewItem] = None,
+) -> ReviewBatchItemResult:
+    return ReviewBatchItemResult(
+        memory_id=memory_id,
+        action=action,
+        ok=False,
+        dry_run=dry_run,
+        planned=False,
+        previous_status=item.status if item else None,
+        status=item.status if item else None,
+        path=item.path if item else None,
+        relative_path=item.relative_path if item else None,
+        risk_flags=item.risk_flags if item else (),
+        error=error,
+    )
+
+
+def _review_action_status(action: str, *, current_status: str) -> str:
+    if action == "approve":
+        return LifecycleStatus.ACTIVE.value
+    if action == "reject":
+        return LifecycleStatus.REJECTED.value
+    if action == "defer":
+        return LifecycleStatus.PENDING.value
+    if action == "supersede":
+        return LifecycleStatus.SUPERSEDED.value
+    return current_status
 
 
 def supersede_memory(
@@ -1456,9 +1930,13 @@ def _now() -> datetime:
 
 
 __all__ = [
+    "approve_memory",
     "curation_plan",
+    "defer_memory",
     "LifecycleMutation",
     "LifecycleResult",
+    "ReviewBatchItemResult",
+    "ReviewBatchResult",
     "ReviewImportance",
     "ReviewItem",
     "ReviewQueue",
@@ -1466,6 +1944,7 @@ __all__ = [
     "decay_memories",
     "mark_status",
     "reject_memory",
+    "review_batch_action",
     "review_queue",
     "supersede_memory",
     "touch_last_used",

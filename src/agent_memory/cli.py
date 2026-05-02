@@ -23,6 +23,7 @@ from agent_memory.lifecycle import (
     decay_memories,
     mark_status,
     reject_memory,
+    review_batch_action,
     review_queue,
     supersede_memory,
 )
@@ -50,7 +51,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
+review_app = typer.Typer(help="Review pending agent-generated memories.", no_args_is_help=False)
 app.add_typer(raw_app, name="raw")
+app.add_typer(review_app, name="review")
 console = Console()
 AGENT_RULE_FORMATS = {"agents", "cursor", "claude", "codex"}
 AGENT_RULE_CLIENTS = {"agents", "cursor", "claude", "codex"}
@@ -81,6 +84,10 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("remember", "Create a validated Markdown memory."),
             ("review", "List pending agent-generated memories with a diff-style preview."),
+            ("review approve <id...>", "Approve pending agent memories in an explicit batch."),
+            ("review reject <id...>", "Reject pending agent memories in an explicit batch."),
+            ("review defer <id...>", "Defer pending agent memories with audit history."),
+            ("review supersede <old_id>", "Supersede a pending memory by a replacement."),
             ("curate", "Propose conservative review actions without mutating memories."),
             ("mark", "Set a memory lifecycle status."),
             ("reject", "Reject a memory so default retrieval excludes it."),
@@ -1754,13 +1761,17 @@ def decay(
     console.print(f"[green]Decay complete:[/green] {payload['changed']} memory file(s) marked stale")
 
 
-@app.command()
+@review_app.callback(invoke_without_command=True)
 def review(
+    ctx: typer.Context,
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     group_by: Optional[str] = typer.Option(None, "--group-by", help="Group human output by: source."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """List pending agent-generated memories awaiting review."""
+
+    if ctx.invoked_subcommand is not None:
+        return
 
     try:
         group_by = _normalize_review_group_by(group_by)
@@ -1783,6 +1794,94 @@ def review(
         return
     for item in payload["items"]:
         _print_review_diff(item)
+
+
+@review_app.command("approve")
+def review_approve(
+    memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to approve."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for approval."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview approvals without writing files."),
+    override_unsafe: bool = typer.Option(
+        False,
+        "--override-unsafe",
+        help="Approve items with unsafe recall risk flags after explicit review.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Approve pending agent-generated memories by id."""
+
+    _review_action_command(
+        "approve",
+        memory_ids,
+        vault=vault,
+        reason=reason,
+        dry_run=dry_run,
+        override_unsafe=override_unsafe,
+        json_output=json_output,
+    )
+
+
+@review_app.command("reject")
+def review_reject(
+    memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to reject."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for rejection."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview rejections without writing files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Reject pending agent-generated memories by id."""
+
+    _review_action_command(
+        "reject",
+        memory_ids,
+        vault=vault,
+        reason=reason,
+        dry_run=dry_run,
+        json_output=json_output,
+    )
+
+
+@review_app.command("defer")
+def review_defer(
+    memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to leave pending."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for deferral."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview deferrals without writing files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Defer pending agent-generated memories by keeping them pending."""
+
+    _review_action_command(
+        "defer",
+        memory_ids,
+        vault=vault,
+        reason=reason,
+        dry_run=dry_run,
+        json_output=json_output,
+    )
+
+
+@review_app.command("supersede")
+def review_supersede(
+    old_id: str = typer.Argument(..., help="Pending memory id to supersede."),
+    by_id: str = typer.Option(..., "--by", help="Replacement memory id."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for superseding."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview supersede without writing files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Supersede one pending memory by a replacement memory."""
+
+    _review_action_command(
+        "supersede",
+        [old_id],
+        vault=vault,
+        reason=reason,
+        dry_run=dry_run,
+        by_id=by_id,
+        json_output=json_output,
+    )
 
 
 @app.command()
@@ -1886,6 +1985,62 @@ def _print_graph_links(title: str, links: list[dict[str, Any]]) -> None:
         other_id = other.get("id") or (link["to_id"] if link["direction"] == "outgoing" else link["from_id"])
         path = other.get("path") or "-"
         console.print(f"  - {link['relation']}: {other_id} [dim]{path}[/dim]")
+
+
+def _review_action_command(
+    action: str,
+    memory_ids: list[str],
+    *,
+    vault: Optional[Path],
+    reason: Optional[str],
+    dry_run: bool,
+    json_output: bool,
+    override_unsafe: bool = False,
+    by_id: Optional[str] = None,
+) -> None:
+    try:
+        config = load_config(vault)
+        payload = review_batch_action(
+            config,
+            action,
+            memory_ids,
+            reason=reason,
+            dry_run=dry_run,
+            override_unsafe=override_unsafe,
+            by_id=by_id,
+        ).to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code=f"review_{action}_failed")
+
+    if json_output:
+        _print_json(payload)
+        if not payload["ok"]:
+            raise typer.Exit(1)
+        return
+
+    _print_review_action_result(payload)
+    if not payload["ok"]:
+        raise typer.Exit(1)
+
+
+def _print_review_action_result(payload: dict[str, Any]) -> None:
+    action = payload["action"]
+    label = "Planned" if payload["dry_run"] else "Applied"
+    console.print(
+        f"[green]{label} review {action}:[/green] "
+        f"{payload['success_count']} succeeded, {payload['failure_count']} failed"
+    )
+    for result in payload["results"]:
+        if result["ok"]:
+            status = result.get("status") or "-"
+            previous = result.get("previous_status") or "-"
+            marker = "would update" if payload["dry_run"] else "updated"
+            console.print(f"- {marker} {result['id']}: {previous} -> {status}")
+            continue
+        error = result.get("error") or {}
+        code = error.get("code") or "review_action_failed"
+        message = error.get("message") or "review action failed"
+        console.print(f"- [red]{result['id']}[/red]: {code}: {message}")
 
 
 def _print_review_diff(item: dict[str, Any]) -> None:

@@ -40,6 +40,10 @@ memory contradict <id1> <id2>
 memory mark <id> --status stale
 memory decay
 memory review
+memory review approve <id> [<id>...] --reason "verified source"
+memory review reject <id> [<id>...] --reason "not durable"
+memory review defer <id> [<id>...] --reason "needs later review"
+memory review supersede <old_id> --by <new_id> --reason "merged into replacement"
 memory reject <id>
 memory raw list
 memory raw inspect raw/inbox/webclips/article.md
@@ -743,6 +747,19 @@ pending memory remains excluded from default recall/search/brief behavior unless
 requested with `--status pending`. Human output now includes a diff-style preview
 of pending metadata, source, status, and body text while JSON output keeps the
 stable Stage 9 review payload.
+
+Review also supports explicit batch actions over user-provided ids:
+
+```bash
+memory review approve mem_a mem_b --reason "verified source" --json
+memory review reject mem_a mem_b --reason "not durable" --dry-run --json
+memory review defer mem_a --reason "needs later review"
+memory review supersede mem_old --by mem_new --reason "merged into replacement"
+```
+
+Batch actions support `--dry-run` and return per-item JSON results. Approving a
+pending item with unsafe recall risk flags is blocked unless
+`--override-unsafe` is passed explicitly.
 
 ### `memory import-source`
 
