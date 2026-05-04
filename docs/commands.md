@@ -3,9 +3,9 @@
 ## Principles
 
 The CLI is the primary development, maintenance, and coding-agent interface.
-Agents should prefer CLI JSON commands from any project directory. MCP is paused
-as an outdated optional adapter for now; do not expand MCP-specific contracts
-unless the product direction explicitly reopens that decision.
+Agents should prefer CLI JSON commands from any project directory. There is no
+separate agent protocol surface; generated agent instructions should route all
+memory work through `memory ... --json`.
 
 Agent-facing operations should support structured JSON responses, stable error
 codes, and citations. Mutating commands must not silently promote agent-written
@@ -65,7 +65,6 @@ memory scheduled ingest --kind email --source-file ./email-digest.md --extract-f
 memory agent-rules --format cursor
 memory agent-install-commands --client all --vault ~/MemoryVault
 memory install-agent-rules --client cursor --project <path> --dry-run
-memory mcp-config
 memory remember --type decision --text "..."
 memory reindex
 memory search "query"
@@ -338,41 +337,6 @@ memory install-agent-rules --client claude --project ./my-repo --force
 memory install-agent-rules --client codex --project ./my-repo --dry-run
 ```
 
-### `memory mcp-config`
-
-Prints MCP client configuration for Agent Memory. This is the easiest way to
-redisplay the `memory-mcp` setup snippet after installation.
-
-Examples:
-
-```bash
-memory mcp-config
-memory mcp-config --format claude
-memory mcp-config --format cursor
-memory mcp-config --vault ~/MemoryVault --command ~/.local/bin/memory-mcp
-memory mcp-config --json
-```
-
-Human output is the JSON snippet agents expect in MCP client settings:
-
-```json
-{
-  "mcpServers": {
-    "agent-memory": {
-      "command": "/Users/you/.local/bin/memory-mcp",
-      "env": {
-        "AGENT_MEMORY_VAULT": "/Users/you/MemoryVault"
-      }
-    }
-  }
-}
-```
-
-`--json` wraps that snippet with metadata such as selected format, command path,
-and vault path. Supported formats are `generic`, `claude`, and `cursor`; the
-current generated config shape is intentionally the same for all three because
-they use compatible MCP server declarations.
-
 ### `memory remember`
 
 Implemented in Stage 2.
@@ -537,10 +501,10 @@ memory search "recent decision" --vault ./memory-vault --refresh
 ```
 
 Semantic search is disabled by default. Under the current same-session
-constraint, the standalone CLI and MCP server cannot access Cursor's active AI
-session embeddings, so normal production `auto` searches should remain text
-search plus deterministic query planning. If an approved same-session embedding
-bridge is explicitly configured, `auto` can use hybrid search. JSON output includes
+constraint, the standalone CLI cannot access Cursor's active AI session
+embeddings, so normal production `auto` searches should remain text search plus
+deterministic query planning. If an approved same-session embedding bridge is
+explicitly configured, `auto` can use hybrid search. JSON output includes
 `mode`, `requested_mode`, `query_plan`, `attempted_searches`, `trace`,
 `semantic.enabled`, `semantic.provider`, and `semantic.model`; see
 `docs/semantic-search.md` for the current limitation, provider hook, generic
@@ -911,12 +875,12 @@ automatic recall policy.
 
 Implemented in Stage 9 and polished in Stage 13.
 
-Lists pending agent-generated memory that needs human review. Agent-created MCP
-memories still default to `pending` unless config opts into direct writes, and
-pending memory remains excluded from default recall/search/brief behavior unless
-requested with `--status pending`. Human output now includes a diff-style preview
-of pending metadata, source, status, and body text while JSON output keeps the
-stable Stage 9 review payload.
+Lists pending agent-generated memory that needs human review. Agent-created
+memories default to `pending` unless config opts into direct writes, and pending
+memory remains excluded from default recall/search/brief behavior unless
+requested with `--status pending`. Human output includes a diff-style preview of
+pending metadata, source, status, and body text while JSON output keeps the
+stable review payload.
 
 Review also supports explicit batch actions over user-provided ids:
 
@@ -1237,13 +1201,12 @@ agent-memory-service restart
 ```
 
 `scripts/install.sh` creates a managed virtual environment and stable wrapper
-commands for `memory`, `memory-mcp`, and `agent-memory-service`. The wrapper
-commands mean users do not need to activate a venv manually after installation.
+commands for `memory` and `agent-memory-service`. The wrapper commands mean
+users do not need to activate a venv manually after installation.
 
 `agent-memory-service` manages a user-level maintenance service on macOS
-(`launchd`) and Linux (`systemd --user`). The service is intentionally not the
-stdio MCP daemon; MCP clients should launch `memory-mcp` on demand. See
-`docs/local-install.md` for full setup, service, upgrade, and uninstall details.
+(`launchd`) and Linux (`systemd --user`). See `docs/local-install.md` for full
+setup, service, upgrade, and uninstall details.
 
 ## JSON Output
 
@@ -1251,80 +1214,6 @@ All CLI commands support `--json` so coding agents can consume stable,
 structured responses. Retrieval and lifecycle commands that are not yet
 implemented return `implemented: false` while preserving the intended command
 signatures.
-
-## MCP Tools
-
-Initial MCP tools:
-
-```text
-remember(memory)
-save_source(source)
-save_source_with_memories(source, memories, author_name)
-ingest_url(url, title, content, extract, project, tags)
-search(query, filters)
-recall(query, budget, filters)
-brief(query, budget, filters)
-should_recall(message)
-build_context(task, budget, filters)
-inspect(id)
-explain_recall(query, budget, filters)
-review()
-approve(id, reason)
-reject(id, reason)
-mark_status(id, status)
-mark_superseded(old_id, by_id, reason)
-```
-
-MCP responses should include:
-
-- Structured JSON payloads.
-- Obsidian-style path citations.
-- Lifecycle status for returned memories.
-- Enough scoring or selection metadata to support `explain_recall`.
-
-`search(query, filters)` is implemented in Stage 5 and accepts the same filter
-keys as the CLI using snake_case names, plus `include_related`, `mode`,
-`semantic`, and `limit`.
-`recall(query, budget, filters)` is implemented in Stage 7 and accepts the same
-filter keys, plus `include_related`, `mode`, and `semantic`. `brief(query,
-budget, filters)` is implemented in Stage 8 and returns `markdown`, `sections`,
-`citations`, `budget`, `used_tokens_estimate`, and retrieval trace metadata in
-JSON.
-
-`should_recall(message)` is implemented in Stage 10 and returns the same
-deterministic recall policy payload as `memory should-recall --json`.
-`build_context(task, budget, filters)` applies that policy first. When recall is
-recommended, it returns a Memory Brief under `brief` plus top-level `markdown`
-and `citations`; when recall is not recommended, it returns `memory_needed:
-false`, empty Markdown, no citations, and does not require a vault or index.
-All `build_context` responses include a compact `trace` object for MCP clients:
-`policy_query`, `planned_query_variants`, `mode`, `requested_mode`, semantic
-status/provider/model, `attempted_searches`, `selected_count`, and `empty_reason`
-when no context was selected.
-
-`save_source(source)` and `ingest_url(url, ...)` save raw/source material under
-`Sources/YYYY-MM-DD_slug/`. They intentionally do not perform AI analysis or
-promote content into canonical memory. Agents should fetch/read/analyze material,
-save source plus extract, then call `remember(memory)` for durable atomic facts,
-decisions, preferences, project context, or tasks.
-
-`save_source_with_memories(source, memories, author_name)` is the combined
-agent workflow for already-structured material. It saves `source.md` and optional
-`extract.md`, then creates only explicit atomic durable memories as `pending`.
-It rejects `source_extract` memory promotion so raw summaries remain in
-`Sources/` rather than canonical `Memories/`.
-
-`explain_recall(query, budget, filters)` is implemented in Stage 13 and returns
-the same structured explanation payload as `memory explain-recall --json`.
-`review()` lists pending agent-generated memories for review. `approve(id,
-reason)` marks a pending memory active, and `reject(id, reason)` marks it
-rejected. Review payloads include both flat `items` and `source_groups` so
-agents can present pending memories grouped by their originating source. These
-tools allow agents to process review queues entirely through MCP.
-`mark_status(id, status)` is implemented in Stage 9 and mutates Markdown
-frontmatter through the lifecycle service. `mark_superseded(old_id, by_id,
-reason)` is a Stage 10 MCP wrapper around the Stage 9 supersede lifecycle
-service.
 
 ## Mutation Policy
 

@@ -13,7 +13,8 @@ The system should:
 - Build concise, citation-preserving memory briefs for agents.
 - Support memory lifecycle states: `pending`, `active`, `stale`, `superseded`, `rejected`.
 - Sync across devices by syncing Markdown, not SQLite or embeddings.
-- Provide MCP tools as a first-class interface for coding agents.
+- Provide CLI JSON commands and generated agent instructions as the first-class
+  interface for coding agents.
 
 ## Competitive Baseline
 
@@ -21,7 +22,7 @@ Basic Memory already covers much of the generic local-first memory space:
 
 - File-first Markdown architecture.
 - Obsidian-compatible notes.
-- CLI and MCP interfaces.
+- CLI interface.
 - Local indexing and reindexing.
 - Semantic search with local embeddings.
 - Typed observations and relations.
@@ -103,7 +104,7 @@ Estimated time: 1 day.
 
 Decisions:
 
-- Start with CLI for development and MCP for real agent usage.
+- Start with CLI JSON commands for both development and real agent usage.
 - Use Obsidian Markdown as the source of truth.
 - Use SQLite FTS5 as the first search backend.
 - Add semantic search through a provider interface.
@@ -125,7 +126,7 @@ Target integrations:
 - Claude Code.
 - Codex.
 - Cursor.
-- Custom MCP-compatible agents.
+- Agents that can run shell commands and consume JSON output.
 
 Compatibility targets:
 
@@ -228,7 +229,7 @@ Recommended stack:
 
 - Python + Typer + Rich for fast CLI implementation.
 - SQLite for local index.
-- Shared service layer for CLI and MCP.
+- Shared service layer behind CLI commands.
 
 Deliverables:
 
@@ -238,34 +239,33 @@ Deliverables:
 - JSON mode for every command that agents may call.
 - Tests for schema and config.
 
-## Stage 3: MCP Server Skeleton
+## Stage 3: Agent CLI Integration Skeleton
 
 Estimated time: 1-2 days.
 
-MCP tools:
+Agent-facing commands:
 
 ```text
-remember(memory)
-search(query, filters)
-recall(query, budget, filters)
-brief(query, budget, filters)
-inspect(id)
-explain_recall(query, budget, filters)
-mark_status(id, status)
+memory remember --json
+memory search --json
+memory recall --json
+memory brief --json
+memory inspect --json
+memory explain-recall --json
+memory mark --json
 ```
 
 Rules:
 
-- MCP tools return structured JSON plus citations.
+- Agent-facing commands return structured JSON plus citations.
 - Agent-facing tools never mutate active memory silently unless explicitly configured.
 - `remember` defaults to creating a pending/reviewable memory when called by an agent.
-- CLI and MCP use the same validation, retrieval, and packing code.
+- CLI commands use the same validation, retrieval, and packing code.
 
 Deliverables:
 
-- Minimal MCP server.
-- Codex, Claude Code, and Cursor setup docs.
-- Golden tests for MCP JSON responses.
+- Generated Codex, Claude Code, and Cursor setup docs.
+- Golden tests for CLI JSON responses.
 
 ## Stage 4: Markdown Parser, Graph, And Indexer
 
@@ -355,7 +355,7 @@ Embedding constraints:
   is interacting with.
 - Do not add first-class local, public/open, or separate API embedding providers
   as the default project path.
-- Keep a pluggable provider interface so a future MCP/client bridge can inject
+- Keep a pluggable provider interface so a future agent/client bridge can inject
   same-session embeddings.
 - Preserve deterministic embeddings only for tests and fixtures.
 
@@ -546,20 +546,19 @@ memory should-recall "<user message>"
 memory brief "<user message>"
 ```
 
-MCP tools:
+Agent-facing commands:
 
 ```text
-should_recall(message)
-brief(query, budget, filters)
-build_context(task, budget)
-remember(memory)
-mark_superseded(...)
+memory should-recall "<message>" --json
+memory brief "<query>" --json
+memory build-context "<task>" --json
+memory remember ... --json
+memory supersede ... --json
 ```
 
 Deliverables:
 
 - Recall policy.
-- MCP integration docs.
 - Claude Code and Codex usage docs.
 - False-positive and false-negative recall tests.
 
@@ -669,7 +668,6 @@ Prototype:
 4-6 days
 - Markdown schema
 - CLI
-- minimal MCP server
 - indexer
 - FTS search
 - simple recall
@@ -695,7 +693,6 @@ Competitive v1:
 4-6 weeks
 - semantic search
 - rerank
-- MCP integration docs
 - contradiction/supersede tools
 - automatic recall policy
 - import/export compatibility
@@ -725,7 +722,7 @@ Implementation order:
 
 1. Schema and sample vault.
 2. CLI: `init`, `remember`, `reindex`, `search`.
-3. Minimal MCP server: `search`, `recall`, `brief`.
+3. Agent-facing CLI JSON commands: `search`, `recall`, `brief`.
 4. Chunking for extracts, memories, observations, and relations.
 5. Recall with strict token budget.
 6. Memory brief with citations.

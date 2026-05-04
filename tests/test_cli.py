@@ -122,7 +122,6 @@ def test_help_command_lists_grouped_commands():
     assert human_result.exit_code == 0, human_result.output
     assert "Agent Memory commands" in human_result.output
     assert "Setup and health" in human_result.output
-    assert "mcp-config" in human_result.output
     assert "agent-rules" in human_result.output
     assert "explain-recall" in human_result.output
     assert "memory <command> --help" in human_result.output
@@ -142,7 +141,6 @@ def test_help_command_lists_grouped_commands():
         "agent-rules",
         "install-agent-rules",
         "agent-install-commands",
-        "mcp-config",
         "remember",
         "curate",
         "import-source <path>",
@@ -547,49 +545,6 @@ def test_agent_group_update_blocks_unmanaged_existing_target(tmp_path):
     assert payload["results"][0]["needs_manual_merge"] is True
     assert payload["results"][0]["would_write"] is False
     assert target.read_text(encoding="utf-8") == "existing user instructions\n"
-
-
-def test_mcp_config_command_prints_client_config(tmp_path):
-    vault = tmp_path / "memory-vault"
-    runner.invoke(app, ["init", str(vault), "--json"])
-    command = tmp_path / "bin" / "memory-mcp"
-    command.parent.mkdir()
-    command.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-
-    result = runner.invoke(
-        app,
-        [
-            "mcp-config",
-            "--vault",
-            str(vault),
-            "--command",
-            str(command),
-        ],
-    )
-    json_result = runner.invoke(
-        app,
-        [
-            "mcp-config",
-            "--vault",
-            str(vault),
-            "--command",
-            str(command),
-            "--format",
-            "claude",
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    config = json.loads(result.output)
-    assert config["mcpServers"]["agent-memory"]["command"] == str(command.resolve())
-    assert config["mcpServers"]["agent-memory"]["env"]["AGENT_MEMORY_VAULT"] == str(vault.resolve())
-
-    assert json_result.exit_code == 0, json_result.output
-    payload = json.loads(json_result.output)
-    assert payload["ok"] is True
-    assert payload["format"] == "claude"
-    assert payload["config"] == config
 
 
 def test_placeholder_commands_have_stable_json_signatures(tmp_path):

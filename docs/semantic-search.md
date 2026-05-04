@@ -2,14 +2,14 @@
 
 Semantic search is optional and disabled by default. Keyword FTS search and
 deterministic query planning continue to work without embeddings and are the safe
-default for the standalone CLI and MCP server.
+default for the standalone CLI.
 
 ## Current Constraint
 
 Production embeddings must come from the same AI model/session that the user is
-interacting with. The standalone `memory` CLI and `memory-mcp` server do not
-currently have technical access to Cursor's active AI session embeddings, so they
-must not claim that same-session semantic search is available.
+interacting with. The standalone `memory` CLI does not currently have technical
+access to Cursor's active AI session embeddings, so it must not claim that
+same-session semantic search is available.
 
 Agent Memory therefore does not include first-class OpenAI, Ollama, FastEmbed, or
 other public/open/local model providers. Under this constraint, normal production

@@ -79,7 +79,7 @@ class ProfileItem:
 
 @dataclass(frozen=True)
 class ProfileResult:
-    """Structured result for CLI and MCP surfaces."""
+    """Structured result for CLI surfaces."""
 
     config: MemoryConfig
     path: Path

@@ -59,7 +59,7 @@ class BriefItem:
 
 @dataclass(frozen=True)
 class BriefResponse:
-    """Structured brief response returned by CLI and MCP surfaces."""
+    """Structured brief response returned by CLI surfaces."""
 
     config: MemoryConfig
     query: str

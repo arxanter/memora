@@ -1,16 +1,15 @@
 # Local Install And Service Management
 
-This guide installs Agent Memory on a local machine so you can run `memory` and,
-when needed, compatibility commands such as `memory-mcp` without activating a
-virtual environment by hand.
+This guide installs Agent Memory on a local machine so you can run `memory`
+without activating a virtual environment by hand.
 
 The installer targets macOS, Linux, and WSL2. It keeps the current Python
 implementation, but hides the venv behind stable wrapper commands.
 
-The installer installs the MCP extra by default. The upstream `mcp` package
-requires Python 3.10 or newer, so `scripts/install.sh` automatically searches for
-`python3.12`, `python3.11`, `python3.10`, then `python3`. If it only finds
-Python 3.9, install a newer Python or pass `--python /path/to/python3.10`.
+Agent Memory requires Python 3.10 or newer. `scripts/install.sh` automatically
+searches for `python3.12`, `python3.11`, `python3.10`, then `python3`. If it
+only finds Python 3.9, install a newer Python or pass
+`--python /path/to/python3.10`.
 
 ## What Gets Installed
 
@@ -23,7 +22,6 @@ By default:
 
 ~/.local/bin/
   memory
-  memory-mcp
   agent-memory-service
 ```
 
@@ -41,7 +39,7 @@ The vault is not stored in the install directory. You choose the vault path with
 For a packaged install, prefer `pipx`:
 
 ```bash
-pipx install "agent-memory[mcp]"
+pipx install "agent-memory"
 memory setup ~/MemoryVault
 ```
 
@@ -66,11 +64,10 @@ From the repository root:
 This will:
 
 - Create a managed Python venv.
-- Install Agent Memory with the MCP extra.
+- Install Agent Memory.
 - Install wrapper commands in `~/.local/bin`.
 - Initialize the vault if `--vault` is provided.
-- Print next steps for `memory setup`, `memory agent-rules`, and optional MCP
-  compatibility config.
+- Print next steps for `memory setup` and generated agent instructions.
 
 If needed, add wrappers to your shell path:
 
@@ -133,45 +130,11 @@ memory review approve mem_20260430_example --reason "verified source"
 memory synthesize "project decisions" --project agent-memory --dry-run --json
 ```
 
-## MCP Activation
-
-Agent Memory currently exposes a stdio MCP server. MCP clients such as Claude
-Code and Cursor should launch `memory-mcp` on demand. Do not run `memory-mcp` as
-a background daemon unless the client explicitly asks you to provide a stdio
-process.
-
-Example client config:
-
-```json
-{
-  "mcpServers": {
-    "agent-memory": {
-      "command": "/Users/you/.local/bin/memory-mcp",
-      "env": {
-        "AGENT_MEMORY_VAULT": "/Users/you/MemoryVault"
-      }
-    }
-  }
-}
-```
-
-If the client cannot find the wrapper, use the absolute path printed by
-`./scripts/install.sh`.
-
-You can print the config again at any time:
-
-```bash
-memory mcp-config
-memory mcp-config --format claude
-memory mcp-config --format cursor
-```
-
 ## Service Manager
 
-The service manager is for local maintenance and index freshness. It is not the
-stdio MCP server. Its loop polls durable vault files, runs `memory refresh-index`
-when Markdown/config/schema inputs changed, periodically runs `memory doctor`,
-and writes logs.
+The service manager is for local maintenance and index freshness. Its loop polls
+durable vault files, runs `memory refresh-index` when Markdown/config/schema
+inputs changed, periodically runs `memory doctor`, and writes logs.
 
 Install and start:
 
@@ -311,12 +274,6 @@ No vault configured:
 export AGENT_MEMORY_VAULT=~/MemoryVault
 memory status
 ```
-
-MCP client cannot start the server:
-
-- Use an absolute `command` path such as `/Users/you/.local/bin/memory-mcp`.
-- Confirm the vault path in the MCP config is absolute.
-- Run `memory-mcp` from a terminal to confirm imports work.
 
 Service starts but reports errors:
 

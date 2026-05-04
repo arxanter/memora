@@ -1,4 +1,4 @@
-"""Shared vault operations used by the CLI and future MCP tools."""
+"""Shared vault operations used by the CLI."""
 
 from __future__ import annotations
 

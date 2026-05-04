@@ -6,11 +6,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-import agent_memory.mcp_server as mcp_server
 from agent_memory.cli import app
 from agent_memory.config import ProfileConfig, load_config
 from agent_memory.indexer import estimate_tokens
-from agent_memory.mcp_server import build_profile_tool
 from agent_memory.profile import build_profile
 from agent_memory.vault import init_vault
 
@@ -300,44 +298,6 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
     assert error_payload["ok"] is False
     assert error_payload["error"]["code"] == "build_profile_failed"
     assert "requires project" in error_payload["error"]["message"]
-
-
-def test_mcp_build_profile_tool_and_registration(tmp_path, monkeypatch):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/facts/mcp.md",
-        memory_id="mem_20260501_mcp_profile",
-        memory_type="fact",
-        body="MCP profile wrapper returns the same generated payload.",
-    )
-
-    payload = build_profile_tool("user", budget=300, vault=vault)
-
-    assert payload["ok"] is True
-    assert payload["tool"] == "build_profile"
-    assert payload["relative_path"] == "Profiles/user.md"
-    assert payload["memory_count"] == 1
-    assert payload["citations"][0]["id"] == "mem_20260501_mcp_profile"
-
-    class FakeFastMCP:
-        def __init__(self, name):
-            self.name = name
-            self.tools = {}
-
-        def tool(self):
-            def register(func):
-                self.tools[func.__name__] = func
-                return func
-
-            return register
-
-    monkeypatch.setattr(mcp_server, "FastMCP", FakeFastMCP)
-
-    server = mcp_server.create_server()
-
-    assert "build_profile" in server.tools
 
 
 def _write_memory(

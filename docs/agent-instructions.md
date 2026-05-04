@@ -55,11 +55,6 @@ through CLI commands into `Sources/`; canonical `Memories/` should receive only
 separate atomic promotions. Agents may cite returned paths, but paths are not an
 invitation to mutate files directly.
 
-If a legacy MCP client is the only available interface, use `save_source`,
-`ingest_url`, and `remember` as compatibility equivalents for the CLI source
-preservation and atomic-memory workflows. Do not expand MCP-specific behavior
-unless the project direction explicitly reopens it.
-
 ## Startup Recall
 
 Do not spend memory context on every user message. Recall is recommended when

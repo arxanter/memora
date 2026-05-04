@@ -132,7 +132,7 @@ class PackingResult:
 
 @dataclass(frozen=True)
 class RecallResponse:
-    """Structured response returned by CLI and MCP recall surfaces."""
+    """Structured response returned by CLI recall surfaces."""
 
     config: MemoryConfig
     query: str

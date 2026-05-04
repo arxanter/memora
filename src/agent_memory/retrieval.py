@@ -124,7 +124,7 @@ class RetrievalIndexError(RuntimeError):
 
 @dataclass(frozen=True)
 class SearchFilters:
-    """Metadata filters accepted by CLI and MCP search surfaces."""
+    """Metadata filters accepted by CLI search surfaces."""
 
     project: Optional[str] = None
     memory_type: Optional[str] = None

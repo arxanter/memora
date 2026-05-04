@@ -33,7 +33,7 @@ def normalize_session_recall_state(
     loaded_memory_ids: Any = None,
     loaded_source_ids: Any = None,
 ) -> SessionRecallState:
-    """Normalize CLI/MCP session inputs without persisting state."""
+    """Normalize CLI session inputs without persisting state."""
 
     return SessionRecallState(
         session_id=_optional_string(session_id),

@@ -92,7 +92,6 @@ if [ -x "$BIN_DIR/agent-memory-service" ]; then
 fi
 
 remove_path "$BIN_DIR/memory"
-remove_path "$BIN_DIR/memory-mcp"
 remove_path "$BIN_DIR/agent-memory-service"
 
 if [ "$REMOVE_VENV" = "1" ]; then

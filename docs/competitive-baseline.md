@@ -6,7 +6,7 @@ Basic Memory already covers much of the generic local-first AI memory space:
 
 - File-first Markdown architecture.
 - Obsidian-compatible notes.
-- CLI and MCP interfaces.
+- CLI interface.
 - Local indexing and reindexing.
 - Semantic search with local embeddings.
 - Typed observations and relations.
@@ -21,7 +21,7 @@ The project should support:
 
 - Markdown-first durable storage.
 - Obsidian-compatible vault layout.
-- CLI and MCP access.
+- CLI access.
 - Local rebuildable indexing.
 - Import and export paths for observations and relations where feasible.
 - Project-scoped memory.

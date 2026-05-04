@@ -2,7 +2,7 @@
 
 Agent Memory is a local-first, Obsidian-backed memory engine for coding agents.
 It stores durable memory as human-readable Markdown and builds compact,
-citation-preserving context on demand for CLIs and MCP-compatible agents.
+citation-preserving context on demand through a CLI-first workflow.
 
 The project is aimed at agent context optimization, not generic note taking. The
 important record is the Markdown vault you own and can inspect in Obsidian. Local
@@ -16,9 +16,9 @@ state that can be deleted and rebuilt.
   lifecycle metadata.
 - SQLite FTS5 and embeddings are local cache. `memory reindex` rebuilds the
   cache from Markdown whenever you sync to a new machine or need recovery.
-- CLI and MCP share the same services. Validation, Markdown writes, retrieval,
-  recall, brief generation, lifecycle mutation, and token packing are not
-  separate implementations.
+- CLI commands are the stable agent-facing surface. Validation, Markdown writes,
+  retrieval, recall, brief generation, lifecycle mutation, and token packing all
+  flow through shared services behind `memory ... --json`.
 - Recall is budgeted and citation-first. `memory recall` and `memory brief`
   rank, deduplicate, truncate when needed, and pack chunks under a strict
   estimated token budget. Every packed item includes a vault-relative citation.
@@ -57,8 +57,7 @@ MemoryVault/
 
 Typical data flow:
 
-1. A user or agent writes a memory through `memory remember` or the MCP
-   `remember` tool.
+1. A user or agent writes a memory through `memory remember`.
 2. The shared schema layer validates frontmatter and writes Obsidian-compatible
    Markdown into `Memories/`.
 3. `memory reindex` parses canonical Markdown into `.agent-memory/index.sqlite`,
@@ -71,7 +70,7 @@ Typical data flow:
 6. `memory brief` renders the packed recall output into stable agent-facing
    sections: current facts, current decisions, warnings, open questions, and
    citations.
-7. MCP clients usually call `build_context`, which first runs the deterministic
+7. Coding agents call `memory build-context`, which first runs the deterministic
    `should_recall` policy and only builds a brief when memory is useful.
 
 ## Installation
@@ -80,7 +79,7 @@ The package requires Python 3.10 or newer. For a packaged install, use `pipx` so
 the `memory` CLI lives in an isolated environment:
 
 ```bash
-pipx install "agent-memory[mcp]"
+pipx install "agent-memory"
 ```
 
 For this repository, the local installer is the quickest machine setup. It
@@ -91,9 +90,9 @@ creates stable wrapper commands without requiring you to activate a venv:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-This creates stable `memory`, `memory-mcp`, and `agent-memory-service` wrapper
-commands. It supports macOS, Linux, and WSL2. See `docs/local-install.md` for
-service management, MCP activation, upgrade, and uninstall details.
+This creates stable `memory` and `agent-memory-service` wrapper commands. It
+supports macOS, Linux, and WSL2. See `docs/local-install.md` for service
+management, upgrade, and uninstall details.
 
 For development and local CLI usage from a clone, use an editable install:
 
@@ -105,18 +104,11 @@ python -m pip install -U pip
 python -m pip install -e '.[test]'
 ```
 
-Install the optional MCP dependency when you want to run the MCP server:
-
-```bash
-python -m pip install -e '.[mcp]'
-```
-
 After installation, these console scripts are available in the active
 environment:
 
 ```bash
 memory --help
-memory-mcp
 ```
 
 ## Quickstart
@@ -199,71 +191,6 @@ behavior. If you keep the vault on the Windows side for Obsidian, pass the WSL
 path form, for example `/mnt/c/Users/you/Documents/MemoryVault`, and avoid mixing
 Windows-style paths in CLI config.
 
-## MCP Usage
-
-Install the MCP extra and point the server at a vault:
-
-```bash
-python -m pip install -e '.[mcp]'
-memory init ~/MemoryVault
-export AGENT_MEMORY_VAULT=~/MemoryVault
-memory-mcp
-```
-
-Compact client configuration example:
-
-```json
-{
-  "mcpServers": {
-    "agent-memory": {
-      "command": "memory-mcp",
-      "env": {
-        "AGENT_MEMORY_VAULT": "/Users/you/MemoryVault"
-      }
-    }
-  }
-}
-```
-
-If `memory-mcp` is not on the client process `PATH`, use the module form:
-
-```json
-{
-  "mcpServers": {
-    "agent-memory": {
-      "command": "python",
-      "args": ["-m", "agent_memory.mcp_server"],
-      "env": {
-        "AGENT_MEMORY_VAULT": "/Users/you/MemoryVault"
-      }
-    }
-  }
-}
-```
-
-Primary MCP tools include `remember`, `search`, `recall`, `brief`,
-`should_recall`, `build_context`, `save_source`, `ingest_url`, `inspect`,
-`explain_recall`, `mark_status`, and `mark_superseded`. `build_context` is the
-recommended entry point for agents: it avoids spending context when memory is not
-relevant, and otherwise returns a citation-preserving Memory Brief.
-
-`save_source` and `ingest_url` preserve raw material and the agent-written
-extract under `Sources/`; the AI agent still fetches, reads, and calls
-`remember` only for separate durable atomic facts, decisions, preferences,
-project context, or tasks.
-See `docs/agent-instructions.md` for Claude/Cursor/Codex instruction templates.
-
-To print the MCP client snippet again:
-
-```bash
-memory mcp-config
-memory mcp-config --format claude
-memory mcp-config --format cursor
-```
-
-See `docs/mcp-integrations.md` for client-specific notes for Codex, Claude Code,
-Cursor, and custom MCP clients.
-
 ## Semantic Search
 
 Semantic search is optional and disabled by default. Keyword FTS search works
@@ -273,9 +200,9 @@ search otherwise.
 
 For production use under the current project constraint, embeddings must come
 from the same AI model/session that the user is interacting with. The standalone
-CLI and MCP server cannot currently access Cursor's active session embeddings,
-so the recommended path is to leave semantic search disabled and use `auto`
-mode's text/query-planning fallback.
+CLI cannot currently access Cursor's active session embeddings, so the
+recommended path is to leave semantic search disabled and use `auto` mode's
+text/query-planning fallback.
 
 Agent Memory does not ship first-class OpenAI, Ollama, FastEmbed, or other
 public/open/local model providers. It keeps a pre-existing generic command
@@ -305,10 +232,11 @@ memory search --vault ./memory-vault "agent memory retrieval" --no-semantic
 
 Available modes are `auto`, `text`, `vector`, and `hybrid`. The legacy
 `--semantic/--no-semantic` switch still works, mapping to `hybrid` and `text`.
-`memory search --json`, `memory recall --json`, `memory brief --json`, and MCP
-`build_context` include compact trace metadata with planned query variants,
-attempted searches, mode, semantic status/provider/model, selected count, and an
-empty reason when no context was selected. See `docs/semantic-search.md` for
+`memory search --json`, `memory recall --json`, `memory brief --json`, and
+`memory build-context --json` include compact trace metadata with planned query
+variants, attempted searches, mode, semantic status/provider/model, selected
+count, and an empty reason when no context was selected. See
+`docs/semantic-search.md` for
 the current-session limitation, the generic provider hook, environment overrides,
 and the deterministic test-only provider.
 
@@ -471,15 +399,6 @@ No config found:
 - Or set `AGENT_MEMORY_VAULT=/path/to/vault`.
 - Or run commands from inside a vault containing `.agent-memory/config.yaml`.
 
-MCP dependency errors:
-
-```bash
-python -m pip install -e '.[mcp]'
-```
-
-Then restart the agent client so it launches the MCP server from the updated
-environment.
-
 Sync conflicts or duplicate IDs:
 
 ```bash
@@ -501,6 +420,5 @@ pytest
 ```
 
 For deeper design docs, start with `docs/spec.md`, `docs/schema.md`,
-`docs/commands.md`, `docs/local-install.md`, `docs/mcp-integrations.md`,
-`docs/agent-instructions.md`, `docs/semantic-search.md`, `docs/sync.md`, and
-`docs/evaluation.md`.
+`docs/commands.md`, `docs/local-install.md`, `docs/agent-instructions.md`,
+`docs/semantic-search.md`, `docs/sync.md`, and `docs/evaluation.md`.

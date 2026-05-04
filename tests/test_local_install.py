@@ -53,8 +53,7 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "would write" in result.stdout
-    assert "memory-mcp" in result.stdout
-    assert "AGENT_MEMORY_VAULT" in result.stdout
+    assert "memory agent commands --client all" in result.stdout
     assert not install_dir.exists()
     assert not bin_dir.exists()
     assert not vault.exists()
@@ -71,7 +70,7 @@ def test_install_help_documents_python_selection():
 
     assert result.returncode == 0, result.stderr
     assert "python3.12/3.11/3.10/python3" in result.stdout
-    assert "MCP requirement" in result.stdout
+    assert "Python interpreter to use" in result.stdout
 
 
 def test_cli_module_invocation_runs_typer_app():
@@ -99,7 +98,7 @@ def test_local_install_docs_reference_existing_scripts():
         assert script_name in docs or script_name in commands
 
     assert "./scripts/install.sh --vault ~/MemoryVault" in readme
-    assert 'pipx install "agent-memory[mcp]"' in readme
+    assert 'pipx install "agent-memory"' in readme
     assert "Windows And WSL" in readme
     assert "Python 3.10" in readme and "newer" in readme
     assert "agent-memory-service install" in docs
@@ -107,6 +106,4 @@ def test_local_install_docs_reference_existing_scripts():
     assert "systemd --user" in docs
     assert "launchd" in docs
     assert "WSL2" in docs
-    assert "save_source" in agent_docs
-    assert "ingest_url" in agent_docs
     assert "remember" in agent_docs

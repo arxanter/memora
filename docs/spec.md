@@ -18,12 +18,12 @@ The core wedge is better agent context, not generic note taking:
 
 ## Primary Interfaces
 
-The first implementation targets two interfaces:
+The implementation targets one primary interface:
 
 - CLI for development, inspection, repair, imports, exports, and local workflows.
-- MCP tools for real coding-agent usage from Claude Code, Codex, Cursor, and other MCP-compatible agents.
 
-Both interfaces should share the same validation, retrieval, lifecycle, and context-packing services.
+Generated agent instructions for Claude Code, Codex, Cursor, and similar tools
+should call the CLI instead of relying on a separate protocol surface.
 
 ## Source Of Truth
 

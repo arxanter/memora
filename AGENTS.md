@@ -2,17 +2,14 @@
 
 This project uses Agent Memory. The preferred current interface is CLI-first.
 
-Current project direction is CLI-first. Treat the existing MCP path as
-outdated/paused unless the user explicitly reopens it. Prefer `memory ... --json`
-commands and generated agent instructions/skills for future workflows. Existing
-MCP tools may be used as a legacy fallback when they are already available, but
-do not expand MCP-specific behavior by default.
+Current project direction is CLI-only for agents. Prefer `memory ... --json`
+commands and generated agent instructions/skills for all memory workflows.
 
 ## Toby / Agent Memory Policy
 
 Treat `Toby`, `Тоби`, and `tb` as explicit Agent Memory triggers. When the user
-addresses Toby, classify the request as memory work and route it through the MCP
-memory tools instead of treating it as a generic chat request.
+addresses Toby, classify the request as memory work and route it through the CLI
+instead of treating it as a generic chat request.
 
 The vault may define `.agent-memory/config.yaml` `agent_policy` settings:
 
@@ -36,33 +33,23 @@ Do not run memory review on every turn. Check the pending review queue once at
 the beginning of a new session when memory work is relevant, or when the user
 asks Toby to review memory.
 
-Preferred path:
-
-1. Use MCP `review()` when it is available.
-2. If `review()` is not exposed by the current MCP client, run
-   `memory review --json`.
-3. If pending items exist, summarize them in a compact review queue and ask the
+Use `memory review --json`. If pending items exist, summarize them in a compact
+review queue and ask the
    user whether to inspect, approve, reject, or defer them.
-4. Do not approve or reject memory without explicit user confirmation unless the
-   vault policy is `autonomous` and the change is source-backed with a reason.
+Do not approve or reject memory without explicit user confirmation unless the
+vault policy is `autonomous` and the change is source-backed with a reason.
 
-For approval, use MCP `approve(id, reason)` when available, or
-`mark_status(id, "active")` / `memory mark <id> --status active` otherwise. For
-rejection, use MCP `reject(id, reason)` when available, or `memory reject <id>`
-otherwise.
+For approval, use `memory review approve <id> --reason "<reason>" --json`. For
+rejection, use `memory review reject <id> --reason "<reason>" --json`.
 
 Do not run `build_context()` for generic coding or shell tasks. For normal user
 requests, first decide whether memory is relevant. Recall is relevant when the
 request uses a Toby alias, asks about previous decisions, earlier work, stored
 preferences, project history/status, or project-specific memory.
 
-When recall is relevant, prefer CLI:
+When recall is relevant, run:
 
 `memory build-context "<task>" --project "<project-name>" --task-class planning --json`
-
-If the CLI is not available and MCP tools are already configured, call:
-
-`build_context(task, budget=1200, filters={ "project": "<project-name>" })`
 
 Use returned memory only when `memory_needed` is true.
 
@@ -75,14 +62,6 @@ When the user asks to find information in the knowledge base, prefer CLI:
 3. `memory brief "<query>" --budget 1200 --project "<project>" --json` when the
    user wants a synthesized, citation-preserving summary.
 
-MCP equivalents remain fallback options:
-
-1. `search(query, filters)` for direct lookup and citations.
-2. `recall(query, budget=1200, filters)` when the agent needs compact source
-   chunks to answer a question.
-3. `brief(query, budget=1200, filters)` when the user wants a synthesized,
-   citation-preserving summary.
-
 Useful filters include `project`, `type`, `status`, `scope`, `limit`,
 `include_related`, and `semantic`.
 
@@ -94,8 +73,7 @@ When the user asks to save a URL, article, notes, transcript, document, or raw m
 2. Create a concise extract from the material.
 3. If material is unprocessed, place it in `raw/` or use
    `memory raw process ... --json` to normalize it into `Sources/...`.
-   Otherwise preserve the source and extract with `memory import-source`,
-   `save_source`, `ingest_url`, or `save_source_with_memories`.
+   Otherwise preserve the source and extract with `memory import-source`.
 4. Promote only durable atomic facts, decisions, preferences, tasks, or project
    context into canonical `Memories/...` items.
 5. Leave inferred agent-created memories `pending` for review unless policy
@@ -115,16 +93,18 @@ Do not expect Agent Memory to fetch or analyze URLs by itself. The AI agent is
 responsible for reading the material, producing the extract, and deciding which
 facts/decisions/preferences are durable enough to remember.
 
-## Reviewing Pending Memory Through MCP
+## Reviewing Pending Memory
 
-Use MCP review tools when the user asks to process pending memory:
+Use CLI review commands when the user asks to process pending memory:
 
-1. Call `review()` to list pending agent-generated memories.
-2. Call `inspect(id)` when an item needs more detail.
+1. Call `memory review --json` to list pending agent-generated memories.
+2. Call `memory inspect <id> --json` when an item needs more detail.
 3. Present each item with id, type, confidence, source, summary, risk flags, and
    recommended action.
-4. Call `approve(id, reason)` for durable, correct memory.
-5. Call `reject(id, reason)` for incorrect, transient, duplicated, or low-value memory.
+4. Call `memory review approve <id> --reason "<reason>" --json` for durable,
+   correct memory.
+5. Call `memory review reject <id> --reason "<reason>" --json` for incorrect,
+   transient, duplicated, or low-value memory.
 
 Use `mark_status(id, status)` only when you need a lifecycle state other than
 `active` or `rejected`, such as `stale`.
@@ -161,7 +141,7 @@ Example source capture:
       "tags": ["memory", "architecture"]
     }
   ],
-  "author_name": "MCP agent"
+  "author_name": "CLI agent"
 }
 ```
 

@@ -499,7 +499,7 @@ def save_source_with_memories(
     *,
     source: Mapping[str, Any],
     memories: Iterable[Mapping[str, Any]],
-    author_name: str = "MCP agent",
+    author_name: str = "CLI agent",
 ) -> SourcePromotionResult:
     """Save source material and promote agent-supplied atomic memories for review."""
 
