@@ -76,8 +76,8 @@ Typical data flow:
 
 ## Installation
 
-The core package requires Python 3.9 or newer. The local installer installs the
-MCP extra by default, and the upstream `mcp` package requires Python 3.10 or
+The package requires Python 3.10 or newer. The local installer installs the MCP
+extra by default, and the upstream `mcp` package also requires Python 3.10 or
 newer. On macOS, if `/usr/bin/python3` is 3.9, install a newer Python first or
 pass `--python /path/to/python3.10`.
 
@@ -91,6 +91,13 @@ export PATH="$HOME/.local/bin:$PATH"
 This creates stable `memory`, `memory-mcp`, and `agent-memory-service` wrapper
 commands. It supports macOS and Linux. See `docs/local-install.md` for service
 management, MCP activation, upgrade, and uninstall details.
+
+For a PyPI or internal package index install, use `pipx` for an isolated CLI
+environment:
+
+```bash
+pipx install "agent-memory[mcp]"
+```
 
 For development and local CLI usage from a clone:
 

@@ -5,8 +5,24 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-memory"
 version = "0.1.0"
-description = "Local-first Obsidian-backed memory schema and validation helpers."
-requires-python = ">=3.9"
+description = "CLI-first local memory engine for coding agents backed by Obsidian Markdown."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+  "Topic :: Utilities",
+]
 dependencies = [
   "pydantic>=2.7",
   "PyYAML>=6.0",
@@ -17,6 +33,11 @@ dependencies = [
 [project.scripts]
 memory = "agent_memory.cli:app"
 memory-mcp = "agent_memory.mcp_server:main"
+
+[project.urls]
+Documentation = "https://github.com/anton-zhedik/memory-project#readme"
+Source = "https://github.com/anton-zhedik/memory-project"
+Issues = "https://github.com/anton-zhedik/memory-project/issues"
 
 [project.optional-dependencies]
 mcp = [
