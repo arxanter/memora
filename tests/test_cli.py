@@ -185,10 +185,16 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(
         assert payload["ok"] is True
         assert payload["format"] == rule_format
         assert "CLI-first" in content
+        assert "CLI-only for agents" in content
         assert "memory build-context" in content
         assert "--json" in content
         assert '--project "agent-memory"' in content
-        assert "Treat MCP as legacy compatibility only" in content
+        assert "Do not read, write, edit, delete, or migrate Agent Memory vault files directly" in content
+        assert "`.agent-memory/index.sqlite`" in content
+        assert "Toby intent routing examples" in content
+        assert "Toby, review pending memory" in content
+        assert "Тоби, актуализируй память" in content
+        assert "If the CLI lacks an operation, stop and report the missing command" in content
         if rule_format == "cursor":
             assert content.startswith("---\ndescription:")
 
@@ -243,6 +249,32 @@ def test_install_agent_rules_dry_run_and_no_overwrite_behavior(tmp_path):
     assert target.read_text(encoding="utf-8") == "existing"
 
 
+def test_install_agent_rules_codex_targets_agents_file(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "install-agent-rules",
+            "--client",
+            "codex",
+            "--project",
+            str(project),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["client"] == "codex"
+    assert payload["target_path"] == str(project / "AGENTS.md")
+    assert "Agent Memory Instructions For Codex" in payload["content"]
+    assert not (project / "AGENTS.md").exists()
+
+
 def test_agent_install_commands_default_to_current_project(tmp_path):
     project = tmp_path / "project"
     vault = tmp_path / "memory-vault"
@@ -262,11 +294,13 @@ def test_agent_install_commands_default_to_current_project(tmp_path):
     assert result.exit_code == 0, result.output
     assert "memory install-agent-rules --client cursor" in result.output
     assert "memory install-agent-rules --client claude" in result.output
+    assert "memory install-agent-rules --client codex" in result.output
     assert f"--project {project}" in result.output
     assert f"--vault {vault}" in result.output
     assert "--dry-run" in result.output
     assert str(project / ".cursor" / "rules" / "agent-memory.mdc") in result.output
     assert str(project / "CLAUDE.md") in result.output
+    assert str(project / "AGENTS.md") in result.output
 
     json_result = runner.invoke(
         app,
@@ -288,11 +322,231 @@ def test_agent_install_commands_default_to_current_project(tmp_path):
     assert payload["command"] == "agent-install-commands"
     assert payload["project_path"] == str(project)
     assert payload["vault_path"] == str(vault)
+    assert payload["client"] == "all"
     assert payload["force"] is True
     assert payload["dry_run_first"] is False
-    assert [command["client"] for command in payload["commands"]] == ["cursor", "claude"]
+    assert [command["client"] for command in payload["commands"]] == ["cursor", "claude", "codex"]
     assert all(command["dry_run_command"] is None for command in payload["commands"])
     assert all("--force" in command["install_command"] for command in payload["commands"])
+
+
+def test_agent_install_commands_client_codex_emits_only_codex(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "agent-install-commands",
+            "--project",
+            str(project),
+            "--client",
+            "codex",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["client"] == "codex"
+    assert [command["client"] for command in payload["commands"]] == ["codex"]
+    assert payload["commands"][0]["target_path"] == str(project / "AGENTS.md")
+    assert " --client codex " in payload["commands"][0]["install_command"]
+
+    human_result = runner.invoke(app, ["agent-install-commands", "--project", str(project), "--client", "codex"])
+
+    assert human_result.exit_code == 0, human_result.output
+    assert "memory install-agent-rules --client codex" in human_result.output
+    assert "memory install-agent-rules --client cursor" not in human_result.output
+    assert "memory install-agent-rules --client claude" not in human_result.output
+
+
+def test_agent_install_commands_client_all_includes_rule_clients_without_agents(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(app, ["agent-install-commands", "--project", str(project), "--client", "all", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["client"] == "all"
+    assert [command["client"] for command in payload["commands"]] == ["cursor", "claude", "codex"]
+    assert all(command["client"] != "agents" for command in payload["commands"])
+
+
+def test_agent_group_rules_command_prefers_client_option(tmp_path):
+    vault = tmp_path / "memory-vault"
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "rules",
+            "--client",
+            "codex",
+            "--scope",
+            "project",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent rules"
+    assert payload["client"] == "codex"
+    assert payload["scope"] == "project"
+    assert "Agent Memory Instructions For Codex" in payload["content"]
+    assert '--project "agent-memory"' in payload["content"]
+
+
+def test_agent_group_targets_all_excludes_agents_duplicate(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(app, ["agent", "targets", "--client", "all", "--project", str(project), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent targets"
+    assert [target["client"] for target in payload["targets"]] == ["cursor", "claude", "codex"]
+    assert all(target["client"] != "agents" for target in payload["targets"])
+    assert payload["targets"][2]["path"] == str(project / "AGENTS.md")
+
+
+def test_agent_group_integrate_dry_run_returns_per_client_results(tmp_path):
+    project = tmp_path / "project"
+    vault = tmp_path / "memory-vault"
+    project.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "integrate",
+            "--client",
+            "all",
+            "--project",
+            str(project),
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent integrate"
+    assert payload["dry_run"] is True
+    assert payload["blocked_count"] == 0
+    assert payload["written_count"] == 0
+    assert payload["would_write_count"] == 3
+    assert [result["client"] for result in payload["results"]] == ["cursor", "claude", "codex"]
+    assert not (project / "AGENTS.md").exists()
+
+
+def test_agent_group_commands_routes_through_existing_payload(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    result = runner.invoke(app, ["agent", "commands", "--client", "codex", "--project", str(project), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent commands"
+    assert payload["compatibility_command"] == "agent-install-commands"
+    assert [command["client"] for command in payload["commands"]] == ["codex"]
+    assert "memory install-agent-rules --client codex" in payload["commands"][0]["install_command"]
+
+
+def test_agent_scheduled_template_human_email_includes_boundaries_safety_and_project():
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "scheduled-template",
+            "--kind",
+            "email",
+            "--client",
+            "cursor",
+            "--project",
+            "agent-memory",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "# Scheduled Agent Memory Task" in result.output
+    assert "Client: cursor" in result.output
+    assert "Source kind: email" in result.output
+    assert "Source channel: scheduled_email" in result.output
+    assert "Project: agent-memory" in result.output
+    assert "Source boundaries:" in result.output
+    assert "Allowed accounts/workspaces:" in result.output
+    assert "mailbox folders/labels" in result.output
+    assert "Do not store secrets" in result.output
+    assert "private dumps" in result.output
+    assert "memory scheduled ingest --kind email" in result.output
+
+
+def test_agent_scheduled_template_json_includes_template_steps_and_safety():
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "scheduled-template",
+            "--kind",
+            "slack",
+            "--client",
+            "codex",
+            "--project",
+            "agent-memory",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent scheduled-template"
+    assert payload["kind"] == "slack"
+    assert payload["client"] == "codex"
+    assert payload["project"] == "agent-memory"
+    assert payload["template"] == payload["content"]
+    assert "Source channel: scheduled_slack" in payload["template"]
+    assert any("normal client tools" in step for step in payload["steps"])
+    assert any("pending" in item for item in payload["safety"])
+
+
+def test_agent_group_update_blocks_unmanaged_existing_target(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "AGENTS.md"
+    target.write_text("existing user instructions\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "update",
+            "--client",
+            "codex",
+            "--project",
+            str(project),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent update"
+    assert payload["blocked_count"] == 1
+    assert payload["results"][0]["blocked"] is True
+    assert payload["results"][0]["needs_manual_merge"] is True
+    assert payload["results"][0]["would_write"] is False
+    assert target.read_text(encoding="utf-8") == "existing user instructions\n"
 
 
 def test_mcp_config_command_prints_client_config(tmp_path):
@@ -1576,6 +1830,425 @@ def test_import_session_command_can_create_pending_summary_memory(tmp_path):
     assert document.frontmatter.source_links == [
         f"[[{payload['source']['relative_extract_path'][:-3]}|session]]"
     ]
+
+
+def test_agent_capture_dry_run_json_validates_without_writing(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "task-source.md"
+    summary = tmp_path / "task-summary.md"
+    memories = tmp_path / "memories.json"
+    source.write_text("# Task Source\n\nRaw source content.", encoding="utf-8")
+    summary.write_text("Agent summarized the durable task outcome.", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            [
+                {"type": "decision", "text": "Use batch capture for agent-authored memory."},
+                {"type": "fact", "text": "Batch capture leaves proposed memories pending.", "tag": "phase5"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "capture",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--source-title",
+            "Phase 5 Task",
+            "--source-file",
+            str(source),
+            "--summary-file",
+            str(summary),
+            "--memories-file",
+            str(memories),
+            "--tag",
+            "agent",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent capture"
+    assert payload["dry_run"] is True
+    assert payload["would_write"] is True
+    assert payload["written"] is False
+    assert payload["source"]["title"] == "Phase 5 Task"
+    assert payload["source"]["relative_extract_path"] == "Sources/<source_id>/extract.md"
+    assert payload["memory_count"] == 2
+    assert payload["pending_count"] == 2
+    assert payload["rejected_proposals"] == []
+    assert [memory["type"] for memory in payload["memories"]] == ["decision", "fact"]
+    assert all(memory["status"] == "pending" for memory in payload["memories"])
+    assert all(memory["source"]["path"] == "Sources/<source_id>/extract.md" for memory in payload["memories"])
+    assert not list((vault / "Sources").glob("*"))
+    assert not list((vault / "Memories").rglob("*.md"))
+
+
+def test_agent_capture_json_saves_source_and_pending_atomic_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "task-source.md"
+    summary = tmp_path / "task-summary.md"
+    memories = tmp_path / "memories.json"
+    source.write_text("# Task Source\n\nRaw source content.", encoding="utf-8")
+    summary.write_text("Agent summarized source-backed decisions.", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            {
+                "memories": [
+                    {"type": "decision", "text": "Batch capture stores source-backed pending decisions."},
+                    {"type": "project_context", "text": "Phase 5 adds grouped agent review payloads."},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "capture",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--source-title",
+            "Phase 5 Capture",
+            "--source-file",
+            str(source),
+            "--summary-file",
+            str(summary),
+            "--memories-file",
+            str(memories),
+            "--confidence",
+            "0.82",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["dry_run"] is False
+    assert payload["written"] is True
+    assert payload["review_required"] is True
+    assert payload["source"]["channel"] == "file"
+    assert payload["source"]["source_quality"] == "agent_fetched"
+    assert payload["source"]["relative_source_path"].endswith("/source.md")
+    assert payload["source"]["relative_extract_path"].endswith("/extract.md")
+    assert payload["memory_count"] == 2
+    assert payload["pending_count"] == 2
+
+    source_text = (vault / payload["source"]["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["origin"]["provider"] == "agent_capture"
+    assert "Raw source content." in source_text
+
+    first_memory = payload["memories"][0]
+    document = validate_markdown_file(vault / first_memory["relative_path"])
+    assert document.frontmatter.type == "decision"
+    assert document.frontmatter.status == "pending"
+    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.author.kind == "agent"
+    assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+    assert document.frontmatter.confidence == 0.82
+
+
+def test_agent_capture_reports_unsupported_proposal_types(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "source.md"
+    summary = tmp_path / "summary.md"
+    memories = tmp_path / "memories.json"
+    source.write_text("Raw source", encoding="utf-8")
+    summary.write_text("Source summary", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            [
+                {"type": "source_extract", "text": "Do not promote source extracts through capture."},
+                {"type": "conversation_summary", "text": "Conversation summaries are session finalize only."},
+                {"type": "task", "text": "Review Phase 5 batch capture."},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "capture",
+            "--vault",
+            str(vault),
+            "--source-file",
+            str(source),
+            "--summary-file",
+            str(summary),
+            "--memories-file",
+            str(memories),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["memory_count"] == 1
+    assert payload["memories"][0]["type"] == "task"
+    assert payload["rejected_count"] == 2
+    assert [item["type"] for item in payload["rejected_proposals"]] == [
+        "source_extract",
+        "conversation_summary",
+    ]
+    assert all("unsupported memory type" in item["error"]["message"] for item in payload["rejected_proposals"])
+
+
+def test_scheduled_ingest_dry_run_writes_nothing_and_reports_plan(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "email-digest.md"
+    extract = tmp_path / "email-extract.md"
+    memories = tmp_path / "email-memories.json"
+    source.write_text("# Email digest\n\nRaw exported digest.", encoding="utf-8")
+    extract.write_text("Summary: selected durable email items.", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            [
+                {"type": "fact", "text": "The scheduled digest found one durable project fact."},
+                {"type": "task", "text": "Review pending memory created from scheduled email digest."},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "scheduled",
+            "ingest",
+            "--kind",
+            "email",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--source-file",
+            str(source),
+            "--extract-file",
+            str(extract),
+            "--memories-file",
+            str(memories),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "scheduled ingest"
+    assert payload["kind"] == "email"
+    assert payload["channel"] == "scheduled_email"
+    assert payload["dry_run"] is True
+    assert payload["written"] is False
+    assert payload["source"]["channel"] == "scheduled_email"
+    assert payload["source"]["origin"]["provider"] == "scheduled_ingest"
+    assert payload["source"]["origin"]["kind"] == "email"
+    assert payload["source"]["relative_extract_path"] == "Sources/<source_id>/extract.md"
+    assert payload["memory_count"] == 2
+    assert payload["pending_count"] == 2
+    assert payload["planned_memories"] == payload["memories"]
+    assert payload["created_memories"] == []
+    assert not list((vault / "Sources").glob("*"))
+    assert not list((vault / "Memories").rglob("*.md"))
+
+
+def test_scheduled_ingest_saves_source_and_pending_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "email-digest.md"
+    extract = tmp_path / "email-extract.md"
+    memories = tmp_path / "email-memories.json"
+    source.write_text("# Email digest\n\nProject launch moved to Friday.", encoding="utf-8")
+    extract.write_text("Decision: launch date moved to Friday.", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            {
+                "memories": [
+                    {"type": "decision", "text": "Project launch date moved to Friday."},
+                    {"type": "project_context", "text": "Scheduled email digests can create pending project context."},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "scheduled",
+            "ingest",
+            "--kind",
+            "email",
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--source-file",
+            str(source),
+            "--extract-file",
+            str(extract),
+            "--memories-file",
+            str(memories),
+            "--tag",
+            "scheduled",
+            "--confidence",
+            "0.81",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["dry_run"] is False
+    assert payload["written"] is True
+    assert payload["source"]["channel"] == "scheduled_email"
+    assert payload["source"]["source_quality"] == "imported_export"
+    assert payload["source"]["relative_source_path"].endswith("/source.md")
+    assert payload["source"]["relative_extract_path"].endswith("/extract.md")
+    assert payload["memory_count"] == 2
+    assert payload["pending_count"] == 2
+    assert payload["created_memories"] == payload["memories"]
+
+    source_text = (vault / payload["source"]["relative_source_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["channel"] == "scheduled_email"
+    assert source_frontmatter["origin"]["provider"] == "scheduled_ingest"
+    assert source_frontmatter["origin"]["kind"] == "email"
+    assert source_frontmatter["tags"] == ["scheduled"]
+    assert "Project launch moved to Friday." in source_text
+
+    first_memory = payload["memories"][0]
+    document = validate_markdown_file(vault / first_memory["relative_path"])
+    assert document.frontmatter.type == "decision"
+    assert document.frontmatter.status == "pending"
+    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.author.kind == "agent"
+    assert document.frontmatter.author.name == "scheduled ingest"
+    assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+    assert document.frontmatter.confidence == 0.81
+
+
+def test_session_finalize_json_saves_source_summary_and_atomic_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    transcript = tmp_path / "session.jsonl"
+    summary = tmp_path / "session-summary.md"
+    memories = tmp_path / "session-memories.json"
+    transcript.write_text('{"role":"user","content":"Finalize session"}\n', encoding="utf-8")
+    summary.write_text("The session finalized batch memory capture.", encoding="utf-8")
+    memories.write_text(
+        json.dumps(
+            [
+                {"type": "decision", "text": "Session finalize creates grouped review payloads."},
+                {"type": "preference", "text": "Prefer dry-run JSON before writing session memory."},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "finalize",
+            str(transcript),
+            "--vault",
+            str(vault),
+            "--format",
+            "cursor-jsonl",
+            "--summary-file",
+            str(summary),
+            "--memories-file",
+            str(memories),
+            "--project",
+            "agent-memory",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "session finalize"
+    assert payload["format"] == "cursor-jsonl"
+    assert payload["source"]["channel"] == "ai_session"
+    assert payload["source"]["origin"]["format"] == "cursor-jsonl"
+    assert payload["summary_memory"]["type"] == "conversation_summary"
+    assert payload["summary_memory"]["status"] == "pending"
+    assert payload["atomic_memory_count"] == 2
+    assert payload["memory_count"] == 3
+    assert payload["pending_count"] == 3
+
+    summary_document = validate_markdown_file(vault / payload["summary_memory"]["relative_path"])
+    assert summary_document.frontmatter.type == "conversation_summary"
+    assert summary_document.frontmatter.status == "pending"
+    assert summary_document.frontmatter.author.kind == "agent"
+    assert summary_document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+
+    atomic_document = validate_markdown_file(vault / payload["atomic_memories"][0]["relative_path"])
+    assert atomic_document.frontmatter.type == "decision"
+    assert atomic_document.frontmatter.status == "pending"
+    assert atomic_document.frontmatter.source.path == payload["source"]["relative_extract_path"]
+
+
+def test_session_finalize_dry_run_writes_nothing(tmp_path):
+    vault = tmp_path / "memory-vault"
+    transcript = tmp_path / "session.jsonl"
+    summary = tmp_path / "session-summary.md"
+    memories = tmp_path / "session-memories.json"
+    transcript.write_text('{"role":"assistant","content":"Done"}\n', encoding="utf-8")
+    summary.write_text("Dry-run session summary.", encoding="utf-8")
+    memories.write_text(
+        json.dumps([{"type": "fact", "text": "Dry-run session finalize writes nothing."}]),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "finalize",
+            "--transcript",
+            str(transcript),
+            "--vault",
+            str(vault),
+            "--summary-file",
+            str(summary),
+            "--memories-file",
+            str(memories),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["dry_run"] is True
+    assert payload["written"] is False
+    assert payload["source"]["relative_source_path"] == "Sources/<source_id>/source.md"
+    assert payload["summary_memory"]["type"] == "conversation_summary"
+    assert payload["atomic_memory_count"] == 1
+    assert payload["pending_count"] == 2
+    assert not list((vault / "Sources").glob("*"))
+    assert not list((vault / "Memories").rglob("*.md"))
 
 
 def test_lookup_source_command_emits_service_json_without_mutating_sources(tmp_path):

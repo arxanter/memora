@@ -50,6 +50,7 @@ SOURCE_QUALITIES = {
 }
 SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
 PROMOTION_BLOCKED_SENSITIVITIES = {"secret", "unsafe"}
+_SCHEDULED_CHANNEL_RE = re.compile(r"^scheduled_[a-z0-9_]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -951,7 +952,7 @@ def _clean_mapping(value: Optional[Mapping[str, Any]]) -> dict[str, str]:
 
 def _normalized_choice(value: Optional[str], allowed: set[str], *, default: str) -> str:
     selected = (_optional_string(value) or default).strip().lower()
-    if selected not in allowed:
+    if selected not in allowed and not (allowed is SOURCE_CHANNELS and _SCHEDULED_CHANNEL_RE.fullmatch(selected)):
         raise ValueError(f"value must be one of: {', '.join(sorted(allowed))}")
     return selected
 

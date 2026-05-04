@@ -16,9 +16,10 @@ memory to active durable truth unless explicitly configured.
 ```bash
 memory setup ~/MemoryVault --dry-run --json
 memory setup ~/MemoryVault --json
-memory agent-rules --format cursor --vault ~/MemoryVault --project agent-memory
-memory agent-install-commands --vault ~/MemoryVault
-memory install-agent-rules --client cursor --project /path/to/repo --dry-run --json
+memory agent rules --client cursor --vault ~/MemoryVault --project agent-memory
+memory agent targets --client all --project /path/to/repo --json
+memory agent integrate --client all --vault ~/MemoryVault --project /path/to/repo --dry-run --json
+memory agent status --client all --project /path/to/repo --json
 ```
 
 Preserve material first, then promote durable atomic memories:
@@ -49,8 +50,20 @@ memory build-context "Plan storage work" --vault ~/MemoryVault --project agent-m
 memory init <vault>
 memory setup [vault] --dry-run
 memory help
+memory agent rules --client cursor
+memory agent targets --client all --project <path>
+memory agent integrate --client cursor --project <path> --dry-run
+memory agent update --client all --project <path> --dry-run
+memory agent status --client all --project <path>
+memory agent doctor --client all --project <path>
+memory agent commands --client all --vault ~/MemoryVault
+memory agent scheduled-template --kind email
+memory agent session-template --client cursor
+memory agent capture --source-file ./source.md --summary-file ./summary.md --memories-file ./memories.json --json
+memory session finalize ./cursor-session.jsonl --summary-file ./summary.md --memories-file ./memories.json --json
+memory scheduled ingest --kind email --source-file ./email-digest.md --extract-file ./email-extract.md --memories-file ./email-memories.json --json
 memory agent-rules --format cursor
-memory agent-install-commands --vault ~/MemoryVault
+memory agent-install-commands --client all --vault ~/MemoryVault
 memory install-agent-rules --client cursor --project <path> --dry-run
 memory mcp-config
 memory remember --type decision --text "..."
@@ -90,6 +103,7 @@ memory import-pdf <path> --text-file <path> --dry-run
 memory import-zoom <path> --meeting-id <id> --dry-run
 memory import-slack <path> --channel <name-or-id> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
+memory session finalize <path> --summary-file <path> --memories-file <path>
 memory import <path>
 memory export --format markdown
 ```
@@ -169,9 +183,9 @@ groups and descriptions.
 
 ### `memory agent-rules`
 
-Generates CLI-first agent instructions for `AGENTS.md`, Cursor rules, Claude, or
-Codex. Human output writes the rule text to stdout; `--json` wraps the same text
-as `content` with metadata.
+Compatibility alias for `memory agent rules`. It generates CLI-first agent
+instructions for `AGENTS.md`, Cursor rules, Claude, or Codex. Human output writes
+the rule text to stdout; `--json` wraps the same text as `content` with metadata.
 
 Examples:
 
@@ -186,19 +200,110 @@ Generated rules tell agents to prefer `memory ... --json`, use
 `memory build-context` only when recall is relevant, preserve citations, and
 save raw material as `Sources/` before promoting atomic memories.
 
+### `memory agent ...`
+
+Preferred grouped command surface for coding-agent integration. The old
+top-level commands remain supported as compatibility aliases, but new automation
+should prefer the grouped form.
+
+Examples:
+
+```bash
+memory agent rules --client cursor --scope project --vault ~/MemoryVault --project agent-memory
+memory agent targets --client all --scope project --project ./my-repo --json
+memory agent integrate --client all --scope project --project ./my-repo --vault ~/MemoryVault --dry-run --json
+memory agent update --client codex --scope project --project ./my-repo --json
+memory agent status --client all --scope project --project ./my-repo --json
+memory agent doctor --client all --scope project --project ./my-repo --vault ~/MemoryVault --json
+memory agent commands --client all --project ./my-repo --vault ~/MemoryVault
+memory agent scheduled-template --kind email --client cursor --project agent-memory
+memory agent scheduled-template --kind slack --client codex --project agent-memory --json
+memory agent session-template --client codex --project agent-memory
+memory agent capture \
+  --vault ~/MemoryVault \
+  --project agent-memory \
+  --source-title "Agent task summary" \
+  --source-file ./source.md \
+  --summary-file ./summary.md \
+  --memories-file ./memories.json \
+  --json
+```
+
+`memory agent rules` is equivalent to `memory agent-rules`, but uses `--client`
+instead of `--format`. `--scope project|user` is accepted for examples and future
+scope-specific content.
+
+`memory agent targets` resolves target files without writing them. For
+`--client all`, it reports Cursor, Claude, and Codex only; generic `agents` is
+excluded because Codex and `agents` both target `AGENTS.md` in project scope.
+
+`memory agent integrate` installs generated rules for the selected client(s).
+It writes managed blocks with template metadata, supports `--dry-run`, and
+accepts `--target` only when one client is selected. Existing unmanaged files are
+blocked unless `--force` is passed.
+
+`memory agent update` conservatively refreshes existing integrations. If a
+managed block exists, only that block is replaced. If the target exists without a
+managed block, JSON reports `blocked: true` and `needs_manual_merge: true` unless
+`--force` is passed.
+
+`memory agent status` and `memory agent doctor` do not mutate files. Status
+reports missing, installed, outdated, or manual targets from file existence,
+content hashes, and managed metadata. Doctor adds lightweight checks for the
+external `memory` command, target status, and vault loadability.
+
+`memory agent commands` is equivalent to `memory agent-install-commands` and
+currently routes through the same command-generation payload. The scheduled and
+session template commands render safe prompt templates for agent workflows.
+
+`memory agent scheduled-template` renders a practical scheduled-agent prompt for
+bounded workflows such as email digests, calendar summaries, Slack thread
+exports, web status scans, or custom prepared sources. The template records run
+frequency, source boundaries, allowed accounts/workspaces, sensitivity, project,
+agent steps, and safety guidance. JSON output includes `template`, `kind`,
+`client`, `project`, `steps`, and `safety`.
+
+Examples:
+
+```bash
+memory agent scheduled-template --kind email --client cursor --project agent-memory
+memory agent scheduled-template --kind calendar --client claude --project agent-memory --json
+memory agent scheduled-template --kind web --client codex
+```
+
+`memory agent capture` is the deterministic batch write path for an LLM agent
+that has already analyzed source material. It reads a raw source file, uses
+`--summary-file` as the source extract, saves the material under `Sources/`
+unless `--dry-run` is passed, and creates pending agent-authored memories from
+`--memories-file`. The memories JSON can be either a list or an object with a
+`memories` list. Supported proposal types are `fact`, `decision`, `preference`,
+`task`, and `project_context`; `source_extract`, `conversation_summary`, and
+unknown types are reported under `rejected_proposals` rather than promoted.
+
+JSON output groups the saved or planned `source`, accepted `memories`,
+`created_memories` or `planned_memories`, `rejected_proposals`, `review_required`,
+`dry_run`, `would_write`, and `written`.
+
 ### `memory agent-install-commands`
 
-Prints copy/paste shell commands for installing Agent Memory rules into the
-current project for Cursor and Claude. The command does not write files; it only
-renders dry-run and install commands that call `memory install-agent-rules`.
+Compatibility alias for `memory agent commands`. It prints copy/paste shell
+commands for installing Agent Memory rules into the current project for Cursor,
+Claude, Codex, or generic `AGENTS.md` clients. The command does not write files;
+it only renders dry-run and install commands that call `memory install-agent-rules`.
 
 Examples:
 
 ```bash
 cd ./my-repo
-memory agent-install-commands --vault ~/MemoryVault
+memory agent-install-commands --client all --vault ~/MemoryVault
+memory agent-install-commands --client codex --vault ~/MemoryVault
 memory agent-install-commands --vault ~/MemoryVault --force --json
 ```
+
+`--client all` is the default and emits Cursor, Claude, and Codex commands. It
+does not include `agents`, because `agents` and `codex` both target
+`<project>/AGENTS.md`. Use `--client agents` when you explicitly want the generic
+`AGENTS.md` command instead of the Codex-labeled command.
 
 Human output is ready to paste into a shell:
 
@@ -207,11 +312,14 @@ memory install-agent-rules --client cursor --project /path/to/my-repo --vault /U
 memory install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault
 memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
 memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault
+memory install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memory install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault
 ```
 
 ### `memory install-agent-rules`
 
-Installs generated instructions into a project file. Defaults are:
+Compatibility wrapper for project-level agent rule installation. The preferred
+new command is `memory agent integrate --scope project`. Defaults are:
 
 - `--client agents`: `<project>/AGENTS.md`
 - `--client cursor`: `<project>/.cursor/rules/agent-memory.mdc`
@@ -227,6 +335,7 @@ Examples:
 memory install-agent-rules --client cursor --project ./my-repo --dry-run --json
 memory install-agent-rules --client agents --project ./my-repo
 memory install-agent-rules --client claude --project ./my-repo --force
+memory install-agent-rules --client codex --project ./my-repo --dry-run
 ```
 
 ### `memory mcp-config`
@@ -1011,6 +1120,93 @@ memory import-session ./cursor-session.jsonl \
   --project agent-memory \
   --json
 ```
+
+### `memory session finalize`
+
+Implemented in Phase 5.
+
+Finalizes an AI-agent session when the agent has already produced a concise
+summary and optional proposed atomic memories. It accepts the transcript either
+as the positional argument or with `--transcript`, saves the transcript under
+`Sources/` with `channel: ai_session` unless `--dry-run` is passed, writes the
+summary file as the source extract, creates a pending `conversation_summary`
+memory, and creates pending agent-authored atomic memories from `--memories-file`.
+
+The memories file uses the same format and validation as `memory agent capture`:
+a JSON list or an object with `memories`, with supported atomic types `fact`,
+`decision`, `preference`, `task`, and `project_context`. Unsupported proposal
+types are reported under `rejected_proposals`.
+
+Examples:
+
+```bash
+memory session finalize ./cursor-session.jsonl \
+  --vault ./memory-vault \
+  --format cursor-jsonl \
+  --summary-file ./cursor-session-summary.md \
+  --memories-file ./session-memories.json \
+  --project agent-memory \
+  --json
+
+memory session finalize \
+  --transcript ./codex-session.jsonl \
+  --summary-file ./summary.md \
+  --memories-file ./memories.json \
+  --dry-run \
+  --json
+```
+
+JSON output groups the saved or planned `source`, the `summary_memory`, accepted
+atomic memories in `atomic_memories`, all review items in `memories`,
+`rejected_proposals`, `review_required`, `dry_run`, `would_write`, and `written`.
+`memory import-session` remains available for the older workflow where only the
+transcript and optional summary memory need to be imported.
+
+### `memory scheduled ingest`
+
+Implemented in Phase 6.
+
+Ingests already exported or prepared scheduled-agent material. This command does
+not fetch email, Slack, calendar, or web data. The scheduled agent remains
+responsible for reading the provider through its normal tools, producing one
+source file, one concise extract file, and a small JSON list of durable proposed
+atomic memories.
+
+The command saves the prepared source/extract under `Sources/` with deterministic
+scheduled source metadata such as `channel: scheduled_email`, then creates
+agent-authored `pending` memories using the same supported atomic types as
+`memory agent capture`: `fact`, `decision`, `preference`, `task`, and
+`project_context`. Unsupported proposal types are reported under
+`rejected_proposals`.
+
+Examples:
+
+```bash
+memory scheduled ingest \
+  --kind email \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --source-file ./email-digest.md \
+  --extract-file ./email-extract.md \
+  --memories-file ./email-memories.json \
+  --tag scheduled \
+  --sensitivity private \
+  --dry-run \
+  --json
+
+memory scheduled ingest \
+  --kind slack \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --source-file ./slack-export.md \
+  --extract-file ./slack-extract.md \
+  --memories-file ./slack-memories.json \
+  --json
+```
+
+JSON output groups the saved or planned `source`, accepted `memories`,
+`created_memories` or `planned_memories`, `rejected_proposals`,
+`review_required`, `dry_run`, `would_write`, and `written`.
 
 ### `memory import`
 

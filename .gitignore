@@ -36,3 +36,6 @@ dist/
 **/.agent-memory/cache/
 **/.agent-memory/embeddings/
 **/.agent-memory/locks/
+
+
+.cursor/** 

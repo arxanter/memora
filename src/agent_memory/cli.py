@@ -4,16 +4,31 @@ from __future__ import annotations
 
 import json as json_module
 import os
-import shlex
 import shutil
 import hashlib
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import typer
 from rich.console import Console
 
+from agent_memory.agent_integration import (
+    agent_doctor_payload as _agent_doctor_payload,
+    agent_group_commands_payload as _agent_group_commands_payload,
+    agent_group_rules_payload as _agent_group_rules_payload,
+    agent_install_commands_payload as _agent_install_commands_payload,
+    agent_integrate_payload as _agent_integrate_payload,
+    agent_rules_payload as _agent_rules_payload,
+    agent_scheduled_template_payload as _agent_scheduled_template_payload,
+    agent_session_template_payload as _agent_session_template_payload,
+    agent_status_payload as _agent_status_payload,
+    agent_targets_payload as _agent_targets_payload,
+    agent_update_payload as _agent_update_payload,
+    install_agent_rules_payload as _install_agent_rules_payload,
+    normalize_scheduled_kind,
+    scheduled_source_channel,
+)
 from agent_memory.brief import brief_memory
 from agent_memory.config import ConfigError, load_config
 from agent_memory.evaluation import run_evaluation
@@ -60,16 +75,28 @@ app = typer.Typer(
 raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
 source_inbox_app = typer.Typer(help="Scan opt-in local source inbox files.", no_args_is_help=True)
 review_app = typer.Typer(help="Review pending agent-generated memories.", no_args_is_help=False)
+agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
+session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
+scheduled_app = typer.Typer(help="Ingest prepared scheduled-agent source material.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
 app.add_typer(source_inbox_app, name="source-inbox")
 app.add_typer(review_app, name="review")
+app.add_typer(agent_app, name="agent")
+app.add_typer(session_app, name="session")
+app.add_typer(scheduled_app, name="scheduled")
 console = Console()
-AGENT_RULE_FORMATS = {"agents", "cursor", "claude", "codex"}
-AGENT_RULE_CLIENTS = {"agents", "cursor", "claude", "codex"}
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 SOURCE_INBOX_SCAN_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 SOURCE_INBOX_SCAN_SUPPORTED_SUFFIXES = {*SOURCE_INBOX_SCAN_TEXT_SUFFIXES, ".pdf", ".json"}
+AGENT_CAPTURE_ALLOWED_MEMORY_TYPES = {
+    MemoryType.FACT,
+    MemoryType.DECISION,
+    MemoryType.PREFERENCE,
+    MemoryType.TASK,
+    MemoryType.PROJECT_CONTEXT,
+}
+AGENT_SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Setup and health",
@@ -83,7 +110,11 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("refresh-index", "Reindex only when durable vault files changed."),
             ("agent-rules", "Generate CLI-first instructions for coding agents."),
             ("install-agent-rules", "Install generated agent instructions into a project."),
-            ("agent-install-commands", "Print copy/paste Cursor and Claude install commands."),
+            ("agent-install-commands", "Print copy/paste agent-rule install commands."),
+            ("agent <command>", "Manage grouped coding-agent rules, targets, installs, and status."),
+            ("agent capture", "Batch-save an agent-analyzed source plus pending memories."),
+            ("session finalize", "Save an agent transcript, summary, and proposed memories."),
+            ("scheduled ingest", "Save prepared scheduled-agent source plus pending memories."),
             ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
             ("raw list", "List raw inbox/archive files."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
@@ -114,6 +145,8 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("import-zoom <path>", "Import an explicit local Zoom summary/transcript export."),
             ("import-slack <path>", "Import an explicit local Slack thread/message export."),
             ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
+            ("session finalize <path>", "Finalize an AI-agent session with grouped review metadata."),
+            ("scheduled ingest", "Ingest prepared scheduled-agent source material safely."),
         ),
     ),
     (
@@ -302,6 +335,11 @@ def install_agent_rules_command(
 @app.command("agent-install-commands")
 def agent_install_commands_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory; defaults to the current directory."),
+    client: str = typer.Option(
+        "all",
+        "--client",
+        help="Client command set: all, agents, cursor, claude, or codex.",
+    ),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in generated rules."),
     force: bool = typer.Option(False, "--force", help="Include --force in install commands."),
     dry_run_first: bool = typer.Option(
@@ -311,11 +349,12 @@ def agent_install_commands_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """Print copy/paste commands that install Cursor and Claude agent rules."""
+    """Print copy/paste commands that install generated agent rules."""
 
     try:
         payload = _agent_install_commands_payload(
             project=project,
+            client=client,
             vault=vault,
             force=force,
             dry_run_first=dry_run_first,
@@ -340,6 +379,401 @@ def agent_install_commands_command(
             typer.echo(command["dry_run_command"])
         typer.echo(command["install_command"])
         typer.echo("")
+
+
+@agent_app.command("rules")
+def agent_group_rules_command(
+    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Scope for examples: project or user."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in examples."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Generate CLI-first coding-agent instructions."""
+
+    try:
+        payload = _agent_group_rules_payload(client=client, scope=scope, vault=vault, project=project)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_rules_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo(payload["content"], nl=False)
+
+
+@agent_app.command("targets")
+def agent_targets_command(
+    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Target scope: project or user."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Show resolved coding-agent integration targets."""
+
+    try:
+        payload = _agent_targets_payload(client=client, scope=scope, project=project)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_targets_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    for target in payload["targets"]:
+        console.print(f"{target['client']}: {target['path']} ({target['support']}, {target['reason']})")
+
+
+@agent_app.command("integrate")
+def agent_integrate_command(
+    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
+    force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Install generated coding-agent instructions for one or more clients."""
+
+    try:
+        payload = _agent_integrate_payload(
+            client=client,
+            scope=scope,
+            project=project,
+            target=target,
+            vault=vault,
+            dry_run=dry_run,
+            force=force,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_integrate_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    _print_agent_operation_results(payload, dry_run_label="Dry run")
+
+
+@agent_app.command("update")
+def agent_update_command(
+    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
+    force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Conservatively update managed coding-agent instructions."""
+
+    try:
+        payload = _agent_update_payload(
+            client=client,
+            scope=scope,
+            project=project,
+            target=target,
+            vault=vault,
+            dry_run=dry_run,
+            force=force,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_update_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    _print_agent_operation_results(payload, dry_run_label="Update dry run")
+
+
+@agent_app.command("status")
+def agent_status_command(
+    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path used to calculate expected content."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Report coding-agent integration target status without mutating files."""
+
+    try:
+        payload = _agent_status_payload(client=client, scope=scope, project=project, vault=vault)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_status_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    for result in payload["results"]:
+        console.print(f"{result['client']}: {result['status']} -> {result['target_path']}")
+
+
+@agent_app.command("doctor")
+def agent_doctor_command(
+    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
+    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to validate when available."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Lightly validate agent integration readiness without mutating files."""
+
+    try:
+        payload = _agent_doctor_payload(
+            client=client,
+            scope=scope,
+            project=project,
+            vault=vault,
+            memory_command_path=shutil.which("memory"),
+            vault_probe=_agent_vault_status_probe(vault),
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_doctor_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["ok"]:
+        console.print(f"[green]Agent doctor passed[/green] with {payload['warning_count']} warning(s).")
+    else:
+        console.print(f"[red]Agent doctor found {payload['issue_count']} issue(s).[/red]")
+        raise typer.Exit(1)
+    for warning in payload["warnings"]:
+        console.print(f"- {warning['code']}: {warning['message']}")
+
+
+@agent_app.command("commands")
+def agent_group_commands_command(
+    project: Path = typer.Option(Path("."), "--project", help="Project directory; defaults to the current directory."),
+    client: str = typer.Option("all", "--client", help="Client command set: all, agents, cursor, claude, or codex."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in generated rules."),
+    force: bool = typer.Option(False, "--force", help="Include --force in install commands."),
+    dry_run_first: bool = typer.Option(
+        True,
+        "--dry-run-first/--no-dry-run-first",
+        help="Include dry-run preview commands before install commands.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Print copy/paste commands that install generated agent rules."""
+
+    try:
+        payload = _agent_group_commands_payload(
+            project=project,
+            client=client,
+            vault=vault,
+            force=force,
+            dry_run_first=dry_run_first,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_commands_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo("# Agent Memory agent integration commands")
+    typer.echo(f"# Project: {payload['project_path']}")
+    if payload["vault_path"]:
+        typer.echo(f"# Vault: {payload['vault_path']}")
+    else:
+        typer.echo("# Vault: resolved by --vault, AGENT_MEMORY_VAULT, or nearest .agent-memory/config.yaml")
+    typer.echo("")
+    for command in payload["commands"]:
+        typer.echo(f"# {command['client']} -> {command['target_path']}")
+        if command.get("dry_run_command"):
+            typer.echo(command["dry_run_command"])
+        typer.echo(command["install_command"])
+        typer.echo("")
+
+
+@agent_app.command("scheduled-template")
+def agent_scheduled_template_command(
+    kind: str = typer.Option("custom", "--kind", help="Template kind: email, calendar, slack, web, or custom."),
+    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in the template."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Render a minimal scheduled-memory task template."""
+
+    try:
+        payload = _agent_scheduled_template_payload(client=client, kind=kind, project=project)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_scheduled_template_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo(payload["content"])
+
+
+@agent_app.command("session-template")
+def agent_session_template_command(
+    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in the template."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Render a minimal session-end capture template."""
+
+    try:
+        payload = _agent_session_template_payload(client=client, project=project)
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_session_template_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo(payload["content"])
+
+
+@agent_app.command("capture")
+def agent_capture_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
+    source_title: Optional[str] = typer.Option(None, "--source-title", help="Title for the saved source material."),
+    source_file: Path = typer.Option(..., "--source-file", help="Already-read raw source material file."),
+    summary_file: Path = typer.Option(..., "--summary-file", help="Agent-authored source extract/summary file."),
+    memories_file: Path = typer.Option(..., "--memories-file", help="JSON list or object with proposed memories."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Default confidence for proposals."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview without writing to the vault."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Batch-save an agent-analyzed source and pending atomic memories."""
+
+    try:
+        config = load_config(vault)
+        payload = _agent_capture_payload(
+            config,
+            source_title=source_title,
+            source_file=source_file,
+            summary_file=summary_file,
+            memories_file=memories_file,
+            project=project,
+            tags=tag,
+            sensitivity=sensitivity,
+            confidence=confidence,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_capture_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(
+            f"[yellow]Dry run:[/yellow] would save source and {payload['memory_count']} pending memory proposal(s)."
+        )
+        return
+    console.print(f"[green]Captured source:[/green] {payload['source']['relative_source_path']}")
+    console.print(f"Pending memories: {payload['pending_count']}")
+
+
+@session_app.command("finalize")
+def session_finalize_command(
+    transcript_arg: Optional[Path] = typer.Argument(None, help="AI-agent transcript/session file."),
+    transcript_option: Optional[Path] = typer.Option(None, "--transcript", help="AI-agent transcript/session file."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    summary_file: Path = typer.Option(..., "--summary-file", help="Agent-authored concise session summary file."),
+    memories_file: Optional[Path] = typer.Option(None, "--memories-file", help="JSON list or object with proposed memories."),
+    session_format: str = typer.Option("text", "--format", help="Transcript format metadata."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Default confidence for proposed memories."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview without writing to the vault."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Finalize an AI-agent session with a source, summary memory, and proposals."""
+
+    try:
+        transcript = _resolve_session_transcript(transcript_arg, transcript_option)
+        config = load_config(vault)
+        payload = _session_finalize_payload(
+            config,
+            transcript=transcript,
+            summary_file=summary_file,
+            memories_file=memories_file,
+            session_format=session_format,
+            project=project,
+            tags=tag,
+            sensitivity=sensitivity,
+            confidence=confidence,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="session_finalize_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(
+            f"[yellow]Dry run:[/yellow] would save session and {payload['pending_count']} pending memory item(s)."
+        )
+        return
+    console.print(f"[green]Finalized session source:[/green] {payload['source']['relative_source_path']}")
+    console.print(f"Pending memories: {payload['pending_count']}")
+
+
+@scheduled_app.command("ingest")
+def scheduled_ingest_command(
+    kind: str = typer.Option("custom", "--kind", help="Scheduled source kind, e.g. email, calendar, slack, web, or custom."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
+    source_file: Path = typer.Option(..., "--source-file", help="Already exported scheduled source material file."),
+    extract_file: Path = typer.Option(..., "--extract-file", help="Agent-authored source extract/summary file."),
+    memories_file: Path = typer.Option(..., "--memories-file", help="JSON list or object with proposed memories."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Default confidence for proposed memories."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview without writing to the vault."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Ingest prepared scheduled-agent material without fetching provider data."""
+
+    try:
+        config = load_config(vault)
+        payload = _scheduled_ingest_payload(
+            config,
+            kind=kind,
+            project=project,
+            source_file=source_file,
+            extract_file=extract_file,
+            memories_file=memories_file,
+            tags=tag,
+            sensitivity=sensitivity,
+            confidence=confidence,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="scheduled_ingest_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(
+            f"[yellow]Dry run:[/yellow] would ingest scheduled {payload['kind']} source "
+            f"and {payload['memory_count']} pending memory proposal(s)."
+        )
+        return
+    console.print(f"[green]Ingested scheduled source:[/green] {payload['source']['relative_source_path']}")
+    console.print(f"Pending memories: {payload['pending_count']}")
 
 
 @app.command("mcp-config")
@@ -3466,6 +3900,700 @@ def _build_context_trace(
     return payload
 
 
+def _agent_capture_payload(
+    config: Any,
+    *,
+    source_title: Optional[str],
+    source_file: Path,
+    summary_file: Path,
+    memories_file: Path,
+    project: Optional[str],
+    tags: list[str],
+    sensitivity: str,
+    confidence: float,
+    dry_run: bool,
+) -> dict[str, Any]:
+    source_path = source_file.expanduser()
+    summary_path = summary_file.expanduser()
+    source_content = source_path.read_text(encoding="utf-8")
+    summary = summary_path.read_text(encoding="utf-8")
+    proposals = _load_memory_proposals(memories_file)
+    selected_sensitivity = _agent_sensitivity(sensitivity)
+    selected_tags = _unique_strings(tags)
+    title = (source_title or source_path.stem).strip() or source_path.stem
+    origin = {
+        "provider": "agent_capture",
+        "file_name": source_path.name,
+        "path": str(source_path),
+        "summary_file_name": summary_path.name,
+        "summary_path": str(summary_path),
+    }
+
+    if dry_run:
+        source_payload = _planned_agent_source_payload(
+            title=title,
+            content=source_content,
+            extract=summary,
+            project=project,
+            tags=selected_tags,
+            channel="file",
+            source_quality="agent_fetched",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_ref = _source_ref_payload(source_payload)
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=selected_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="agent capture",
+            dry_run=True,
+        )
+    else:
+        saved_source = save_source_material(
+            config,
+            title=title,
+            content=source_content,
+            extract=summary,
+            project=project,
+            tags=selected_tags,
+            channel="file",
+            source_quality="agent_fetched",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_payload = saved_source.to_dict()
+        source_ref = _source_ref_payload(source_payload)
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=selected_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="agent capture",
+            dry_run=False,
+        )
+
+    memories = proposal_result["memories"]
+    pending_count = sum(1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value)
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "agent capture",
+        "dry_run": dry_run,
+        "would_write": True,
+        "written": not dry_run,
+        "review_required": pending_count > 0,
+        "source": source_payload,
+        "memories": memories,
+        "planned_memories": memories if dry_run else [],
+        "created_memories": [] if dry_run else memories,
+        "rejected_proposals": proposal_result["rejected_proposals"],
+        "errors": proposal_result["rejected_proposals"],
+        "memory_count": len(memories),
+        "pending_count": pending_count,
+        "rejected_count": len(proposal_result["rejected_proposals"]),
+    }
+
+
+def _scheduled_ingest_payload(
+    config: Any,
+    *,
+    kind: str,
+    project: Optional[str],
+    source_file: Path,
+    extract_file: Path,
+    memories_file: Path,
+    tags: list[str],
+    sensitivity: str,
+    confidence: float,
+    dry_run: bool,
+) -> dict[str, Any]:
+    source_path = source_file.expanduser()
+    extract_path = extract_file.expanduser()
+    source_content = source_path.read_text(encoding="utf-8")
+    extract = extract_path.read_text(encoding="utf-8")
+    proposals = _load_memory_proposals(memories_file)
+    selected_kind = normalize_scheduled_kind(kind)
+    channel = scheduled_source_channel(selected_kind)
+    selected_sensitivity = _agent_sensitivity(sensitivity)
+    selected_tags = _unique_strings(tags)
+    origin = {
+        "provider": "scheduled_ingest",
+        "kind": selected_kind,
+        "file_name": source_path.name,
+        "path": str(source_path),
+        "extract_file_name": extract_path.name,
+        "extract_path": str(extract_path),
+    }
+
+    if dry_run:
+        source_payload = _planned_agent_source_payload(
+            title=source_path.stem,
+            content=source_content,
+            extract=extract,
+            project=project,
+            tags=selected_tags,
+            channel=channel,
+            source_quality="imported_export",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_ref = _source_ref_payload(source_payload)
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=selected_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="scheduled ingest",
+            dry_run=True,
+        )
+    else:
+        saved_source = save_source_material(
+            config,
+            title=source_path.stem,
+            content=source_content,
+            extract=extract,
+            project=project,
+            tags=selected_tags,
+            channel=channel,
+            source_quality="imported_export",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_payload = saved_source.to_dict()
+        source_ref = _source_ref_payload(source_payload)
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=selected_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="scheduled ingest",
+            dry_run=False,
+        )
+
+    memories = proposal_result["memories"]
+    pending_count = sum(1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value)
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "scheduled ingest",
+        "kind": selected_kind,
+        "channel": channel,
+        "dry_run": dry_run,
+        "would_write": True,
+        "written": not dry_run,
+        "review_required": pending_count > 0,
+        "source": source_payload,
+        "memories": memories,
+        "planned_memories": memories if dry_run else [],
+        "created_memories": [] if dry_run else memories,
+        "rejected_proposals": proposal_result["rejected_proposals"],
+        "errors": proposal_result["rejected_proposals"],
+        "memory_count": len(memories),
+        "pending_count": pending_count,
+        "rejected_count": len(proposal_result["rejected_proposals"]),
+    }
+
+
+def _session_finalize_payload(
+    config: Any,
+    *,
+    transcript: Path,
+    summary_file: Path,
+    memories_file: Optional[Path],
+    session_format: str,
+    project: Optional[str],
+    tags: list[str],
+    sensitivity: str,
+    confidence: float,
+    dry_run: bool,
+) -> dict[str, Any]:
+    transcript_path = transcript.expanduser()
+    summary_path = summary_file.expanduser()
+    transcript_content = transcript_path.read_text(encoding="utf-8")
+    summary = summary_path.read_text(encoding="utf-8")
+    proposals = _load_memory_proposals(memories_file) if memories_file is not None else []
+    selected_sensitivity = _agent_sensitivity(sensitivity)
+    session_tags = _unique_strings([*tags, "ai-session"])
+    origin = {
+        "provider": "file",
+        "file_name": transcript_path.name,
+        "path": str(transcript_path),
+        "format": session_format,
+        "summary_file_name": summary_path.name,
+        "summary_path": str(summary_path),
+    }
+
+    if dry_run:
+        source_payload = _planned_agent_source_payload(
+            title=transcript_path.stem,
+            content=transcript_content,
+            extract=summary,
+            project=project,
+            tags=session_tags,
+            channel="ai_session",
+            source_quality="imported_export",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_ref = _source_ref_payload(source_payload)
+        summary_memory = _planned_memory_payload(
+            proposal_index=None,
+            memory_type=MemoryType.CONVERSATION_SUMMARY,
+            text=summary,
+            scope=MemoryScope.PROJECT if project else None,
+            project=project,
+            tags=session_tags,
+            confidence=confidence,
+            source_ref=source_ref,
+            author_name="session finalize",
+            risk_flags=source_payload["risk_flags"],
+        )
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=session_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="session finalize",
+            dry_run=True,
+        )
+    else:
+        saved_source = save_source_material(
+            config,
+            title=transcript_path.stem,
+            content=transcript_content,
+            extract=summary,
+            project=project,
+            tags=session_tags,
+            channel="ai_session",
+            source_quality="imported_export",
+            sensitivity=selected_sensitivity,
+            origin=origin,
+        )
+        source_payload = saved_source.to_dict()
+        source_ref = _source_ref_payload(source_payload)
+        summary_result = remember_memory(
+            config,
+            memory_type=MemoryType.CONVERSATION_SUMMARY,
+            text=summary,
+            scope=MemoryScope.PROJECT if project else None,
+            project=project,
+            status=LifecycleStatus.PENDING,
+            tags=session_tags,
+            author_kind=AuthorKind.AGENT,
+            author_name="session finalize",
+            source=source_ref,
+            confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+        )
+        summary_memory = _created_agent_memory_payload(
+            summary_result,
+            proposal_index=None,
+            source_ref=source_ref,
+            author_name="session finalize",
+            confidence=confidence,
+        )
+        proposal_result = _process_agent_memory_proposals(
+            config,
+            proposals,
+            source_ref=source_ref,
+            default_project=project,
+            default_tags=session_tags,
+            default_confidence=confidence,
+            risk_flags=source_payload["risk_flags"],
+            author_name="session finalize",
+            dry_run=False,
+        )
+
+    atomic_memories = proposal_result["memories"]
+    memories = [summary_memory, *atomic_memories]
+    pending_count = sum(1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value)
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "session finalize",
+        "dry_run": dry_run,
+        "would_write": True,
+        "written": not dry_run,
+        "review_required": pending_count > 0,
+        "format": session_format,
+        "source": source_payload,
+        "summary_memory": summary_memory,
+        "memories": memories,
+        "atomic_memories": atomic_memories,
+        "planned_memories": memories if dry_run else [],
+        "created_memories": [] if dry_run else memories,
+        "rejected_proposals": proposal_result["rejected_proposals"],
+        "errors": proposal_result["rejected_proposals"],
+        "memory_count": len(memories),
+        "atomic_memory_count": len(atomic_memories),
+        "pending_count": pending_count,
+        "rejected_count": len(proposal_result["rejected_proposals"]),
+    }
+
+
+def _process_agent_memory_proposals(
+    config: Any,
+    proposals: list[Any],
+    *,
+    source_ref: dict[str, Any],
+    default_project: Optional[str],
+    default_tags: list[str],
+    default_confidence: float,
+    risk_flags: Iterable[str],
+    author_name: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    memories: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, proposal in enumerate(proposals):
+        try:
+            planned = _normalize_agent_memory_proposal(
+                proposal,
+                index=index,
+                source_ref=source_ref,
+                default_project=default_project,
+                default_tags=default_tags,
+                default_confidence=default_confidence,
+            )
+        except Exception as exc:
+            rejected.append(_proposal_error(index, proposal, "invalid_proposal", str(exc)))
+            continue
+
+        if dry_run:
+            memories.append(
+                _planned_memory_payload(
+                    proposal_index=index,
+                    memory_type=planned["memory_type"],
+                    text=planned["text"],
+                    scope=planned["scope"],
+                    project=planned["project"],
+                    tags=planned["tags"],
+                    confidence=planned["confidence"],
+                    source_ref=planned["source_ref"],
+                    author_name=author_name,
+                    risk_flags=risk_flags,
+                )
+            )
+            continue
+
+        result = remember_memory(
+            config,
+            memory_type=planned["memory_type"],
+            text=planned["text"],
+            scope=planned["scope"],
+            project=planned["project"],
+            status=LifecycleStatus.PENDING,
+            tags=planned["tags"],
+            author_kind=AuthorKind.AGENT,
+            author_name=author_name,
+            source=planned["source_ref"],
+            confidence=planned["confidence"],
+            risk_flags=risk_flags,
+        )
+        memories.append(
+            _created_agent_memory_payload(
+                result,
+                proposal_index=index,
+                source_ref=planned["source_ref"],
+                author_name=author_name,
+                confidence=planned["confidence"],
+            )
+        )
+    return {"memories": memories, "rejected_proposals": rejected}
+
+
+def _normalize_agent_memory_proposal(
+    proposal: Any,
+    *,
+    index: int,
+    source_ref: dict[str, Any],
+    default_project: Optional[str],
+    default_tags: list[str],
+    default_confidence: float,
+) -> dict[str, Any]:
+    if not isinstance(proposal, Mapping):
+        raise ValueError("proposal must be a JSON object")
+
+    raw_type = _clean_optional_string(proposal.get("type")) or MemoryType.FACT.value
+    try:
+        memory_type = MemoryType(raw_type)
+    except ValueError as exc:
+        raise ValueError(f"unsupported memory type: {raw_type}") from exc
+    if memory_type not in AGENT_CAPTURE_ALLOWED_MEMORY_TYPES:
+        allowed = ", ".join(sorted(memory_type.value for memory_type in AGENT_CAPTURE_ALLOWED_MEMORY_TYPES))
+        raise ValueError(f"unsupported memory type for batch capture: {memory_type.value}; allowed: {allowed}")
+
+    text = _memory_text_from_proposal(proposal)
+    raw_confidence = proposal.get("confidence", default_confidence)
+    try:
+        selected_confidence = float(raw_confidence)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("confidence must be a number between 0 and 1") from exc
+    if selected_confidence < 0 or selected_confidence > 1:
+        raise ValueError("confidence must be between 0 and 1")
+
+    scope = _proposal_scope(proposal, default_project=default_project)
+    project = _clean_optional_string(proposal.get("project")) or default_project
+    tags = _proposal_tags(proposal, default_tags)
+    proposal_source = proposal.get("source")
+    selected_source = dict(source_ref)
+    if proposal_source is not None:
+        if not isinstance(proposal_source, Mapping):
+            raise ValueError("source must be a JSON object when provided")
+        selected_source.update(
+            {
+                str(key): value
+                for key, value in proposal_source.items()
+                if _clean_optional_string(value) is not None
+            }
+        )
+    if not selected_source.get("path") and not selected_source.get("url"):
+        raise ValueError("source must include path or url")
+
+    return {
+        "index": index,
+        "memory_type": memory_type,
+        "text": text,
+        "scope": scope,
+        "project": project,
+        "tags": tags,
+        "confidence": selected_confidence,
+        "source_ref": selected_source,
+    }
+
+
+def _load_memory_proposals(path: Optional[Path]) -> list[Any]:
+    if path is None:
+        return []
+    payload = json_module.loads(path.expanduser().read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, Mapping) and isinstance(payload.get("memories"), list):
+        return list(payload["memories"])
+    raise ValueError("memories-file must be a JSON list or an object with a memories list")
+
+
+def _planned_agent_source_payload(
+    *,
+    title: str,
+    content: str,
+    extract: str,
+    project: Optional[str],
+    tags: list[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    origin: Mapping[str, str],
+) -> dict[str, Any]:
+    safety = scan_source_material(
+        content=content,
+        extract=extract,
+        metadata={
+            "channel": channel,
+            "source_quality": source_quality,
+            "sensitivity": sensitivity,
+            **dict(origin),
+        },
+    )
+    return {
+        "ok": True,
+        "implemented": True,
+        "dry_run": True,
+        "source_id": "<source_id>",
+        "source_dir": "Sources/<source_id>",
+        "relative_dir": "Sources/<source_id>",
+        "source_path": "Sources/<source_id>/source.md",
+        "relative_source_path": "Sources/<source_id>/source.md",
+        "extract_path": "Sources/<source_id>/extract.md",
+        "relative_extract_path": "Sources/<source_id>/extract.md",
+        "url": None,
+        "title": title,
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": dict(origin),
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
+        "citations": [
+            {"id": "<source_id>", "path": "Sources/<source_id>/source.md", "kind": "source"},
+            {"id": "<source_id>", "path": "Sources/<source_id>/extract.md", "kind": "source_extract"},
+        ],
+        "would_write": "Sources/<source_id>/{source.md,extract.md}",
+    }
+
+
+def _planned_memory_payload(
+    *,
+    proposal_index: Optional[int],
+    memory_type: MemoryType,
+    text: str,
+    scope: Optional[MemoryScope],
+    project: Optional[str],
+    tags: list[str],
+    confidence: float,
+    source_ref: dict[str, Any],
+    author_name: str,
+    risk_flags: Iterable[str],
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "planned": True,
+        "proposal_index": proposal_index,
+        "id": "<memory_id>",
+        "path": f"Memories/<{memory_type.value}>/<memory_id>.md",
+        "relative_path": f"Memories/<{memory_type.value}>/<memory_id>.md",
+        "type": memory_type.value,
+        "text": text,
+        "scope": scope.value if scope else None,
+        "project": project,
+        "status": LifecycleStatus.PENDING.value,
+        "confidence": confidence,
+        "tags": tags,
+        "risk_flags": list(risk_flags),
+        "source": dict(source_ref),
+        "author": {"kind": AuthorKind.AGENT.value, "name": author_name},
+        "review_required": True,
+        "would_write": f"Memories/<{memory_type.value}>/<memory_id>.md",
+    }
+
+
+def _created_agent_memory_payload(
+    result: Any,
+    *,
+    proposal_index: Optional[int],
+    source_ref: dict[str, Any],
+    author_name: str,
+    confidence: float,
+) -> dict[str, Any]:
+    payload = result.to_dict()
+    payload.update(
+        {
+            "proposal_index": proposal_index,
+            "source": dict(source_ref),
+            "author": {"kind": AuthorKind.AGENT.value, "name": author_name},
+            "confidence": confidence,
+            "review_required": payload["status"] == LifecycleStatus.PENDING.value,
+        }
+    )
+    return payload
+
+
+def _source_ref_payload(source_payload: Mapping[str, Any]) -> dict[str, Any]:
+    path = source_payload.get("relative_extract_path") or source_payload.get("relative_source_path")
+    return {
+        "path": path,
+        "title": source_payload.get("title"),
+        "source_id": source_payload.get("source_id"),
+    }
+
+
+def _resolve_session_transcript(
+    transcript_arg: Optional[Path],
+    transcript_option: Optional[Path],
+) -> Path:
+    if transcript_arg is None and transcript_option is None:
+        raise ValueError("provide a transcript path as an argument or with --transcript")
+    if transcript_arg is not None and transcript_option is not None:
+        if transcript_arg.expanduser() != transcript_option.expanduser():
+            raise ValueError("provide transcript either as an argument or with --transcript, not both")
+    return transcript_option or transcript_arg  # type: ignore[return-value]
+
+
+def _agent_sensitivity(value: str) -> str:
+    selected = value.strip().lower()
+    if selected not in AGENT_SOURCE_SENSITIVITIES:
+        raise ValueError("sensitivity must be one of: normal, private, secret, unsafe")
+    return selected
+
+
+def _proposal_scope(proposal: Mapping[str, Any], *, default_project: Optional[str]) -> Optional[MemoryScope]:
+    raw_scope = _clean_optional_string(proposal.get("scope"))
+    if raw_scope:
+        return MemoryScope(raw_scope)
+    if default_project:
+        return MemoryScope.PROJECT
+    return None
+
+
+def _proposal_tags(proposal: Mapping[str, Any], default_tags: list[str]) -> list[str]:
+    return _unique_strings(
+        [
+            *default_tags,
+            *_string_list(proposal.get("tags", ())),
+            *_string_list(proposal.get("tag", ())),
+        ]
+    )
+
+
+def _memory_text_from_proposal(proposal: Mapping[str, Any]) -> str:
+    for key in ("text", "body", "content"):
+        value = proposal.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise ValueError("proposal must include non-empty text")
+
+
+def _proposal_error(index: int, proposal: Any, code: str, message: str) -> dict[str, Any]:
+    proposal_type = proposal.get("type") if isinstance(proposal, Mapping) else None
+    return {
+        "index": index,
+        "type": proposal_type,
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+    }
+
+
+def _unique_strings(values: Iterable[Any]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = _clean_optional_string(value)
+        if item is None or item in seen:
+            continue
+        seen.add(item)
+        cleaned.append(item)
+    return cleaned
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Iterable) and not isinstance(value, Mapping):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _clean_optional_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 def _file_content_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -3491,197 +4619,36 @@ def _print_json(payload: dict[str, Any]) -> None:
     typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
 
 
-def _agent_rules_payload(
-    *,
-    rule_format: str,
-    vault: Optional[Path],
-    project: Optional[str],
-) -> dict[str, Any]:
-    selected_format = rule_format.strip().lower()
-    if selected_format not in AGENT_RULE_FORMATS:
-        raise ValueError("format must be one of: agents, cursor, claude, codex")
-    resolved_vault = vault.expanduser().resolve() if vault is not None else None
-    selected_project = project.strip() if project else None
-    content = _render_agent_rules(
-        selected_format,
-        vault_path=resolved_vault,
-        project=selected_project,
-    )
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "agent-rules",
-        "format": selected_format,
-        "vault_path": str(resolved_vault) if resolved_vault else None,
-        "project": selected_project,
-        "content": content,
-    }
+def _print_agent_operation_results(payload: Mapping[str, Any], *, dry_run_label: str) -> None:
+    label = dry_run_label if payload.get("dry_run") else "Agent integration"
+    console.print(f"[green]{label}:[/green] {payload['would_write_count']} writable, {payload['blocked_count']} blocked")
+    for result in payload["results"]:
+        if result["blocked"]:
+            status = "blocked: manual merge needed"
+        elif result["written"]:
+            status = "written"
+        elif result["would_write"]:
+            status = "would write"
+        else:
+            status = str(result["action"])
+        console.print(f"- {result['client']}: {status} -> {result['target_path']}")
 
 
-def _install_agent_rules_payload(
-    *,
-    client: str,
-    project: Path,
-    target: Optional[Path],
-    vault: Optional[Path],
-    dry_run: bool,
-    force: bool,
-) -> dict[str, Any]:
-    selected_client = client.strip().lower()
-    if selected_client not in AGENT_RULE_CLIENTS:
-        raise ValueError("client must be one of: agents, cursor, claude, codex")
-
-    project_path = project.expanduser().resolve()
-    target_path = _agent_rules_target_path(selected_client, project_path, target)
-    target_exists = target_path.exists()
-    blocked = target_exists and not force
-    content = _render_agent_rules(
-        selected_client,
-        vault_path=vault.expanduser().resolve() if vault is not None else None,
-        project=project_path.name,
-    )
-    payload = {
-        "ok": True,
-        "implemented": True,
-        "command": "install-agent-rules",
-        "client": selected_client,
-        "project_path": str(project_path),
-        "target_path": str(target_path),
-        "target_exists": target_exists,
-        "dry_run": dry_run,
-        "force": force,
-        "blocked": blocked,
-        "would_write": not blocked,
-        "written": False,
-        "content": content,
-    }
-
-    if dry_run:
-        return payload
-    if blocked:
-        raise ValueError(f"target exists: {target_path}; pass --force to overwrite")
-
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(content, encoding="utf-8")
-    payload["written"] = True
-    return payload
-
-
-def _agent_install_commands_payload(
-    *,
-    project: Path,
-    vault: Optional[Path],
-    force: bool,
-    dry_run_first: bool,
-) -> dict[str, Any]:
-    project_path = project.expanduser().resolve()
-    resolved_vault = vault.expanduser().resolve() if vault is not None else None
-    commands: list[dict[str, Any]] = []
-    for client in ("cursor", "claude"):
-        target_path = _agent_rules_target_path(client, project_path, None)
-        base_args = [
-            "memory",
-            "install-agent-rules",
-            "--client",
-            client,
-            "--project",
-            str(project_path),
-        ]
-        if resolved_vault is not None:
-            base_args.extend(["--vault", str(resolved_vault)])
-        if force:
-            base_args.append("--force")
-        install_command = _shell_command(base_args)
-        dry_run_command = _shell_command([*base_args, "--dry-run"]) if dry_run_first else None
-        commands.append(
-            {
-                "client": client,
-                "target_path": str(target_path),
-                "dry_run_command": dry_run_command,
-                "install_command": install_command,
-            }
-        )
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "agent-install-commands",
-        "project_path": str(project_path),
-        "vault_path": str(resolved_vault) if resolved_vault is not None else None,
-        "force": force,
-        "dry_run_first": dry_run_first,
-        "commands": commands,
-    }
-
-
-def _agent_rules_target_path(client: str, project_path: Path, target: Optional[Path]) -> Path:
-    if target is not None:
-        candidate = target.expanduser()
-        return candidate.resolve() if candidate.is_absolute() else (project_path / candidate).resolve()
-    if client == "cursor":
-        return project_path / ".cursor" / "rules" / "agent-memory.mdc"
-    if client == "claude":
-        return project_path / "CLAUDE.md"
-    return project_path / "AGENTS.md"
-
-
-def _render_agent_rules(format_name: str, *, vault_path: Optional[Path], project: Optional[str]) -> str:
-    vault_arg = f' --vault "{vault_path}"' if vault_path else ""
-    project_arg = f' --project "{project}"' if project else ' --project "<project-name>"'
-    lines = _agent_rules_body(vault_arg=vault_arg, project_arg=project_arg)
-    if format_name == "cursor":
-        return "\n".join(
-            [
-                "---",
-                "description: Use Agent Memory CLI for durable project memory",
-                "alwaysApply: true",
-                "---",
-                "",
-                *lines,
-            ]
-        )
-    if format_name == "claude":
-        return "\n".join(["# Agent Memory Instructions", "", *lines])
-    if format_name == "codex":
-        return "\n".join(["# Agent Memory Instructions For Codex", "", *lines])
-    return "\n".join(["## Agent Memory Usage", "", *lines])
-
-
-def _shell_command(args: list[str]) -> str:
-    return " ".join(shlex.quote(arg) for arg in args)
-
-
-def _agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
-    build_context = f'memory build-context "<task>"{vault_arg}{project_arg} --task-class planning --json'
-    review = f"memory review{vault_arg} --json"
-    remember = f'memory remember{vault_arg} --type decision --text "<durable decision>" --json'
-    return [
-        "Current product direction is CLI-first. Prefer `memory ... --json` commands from any project directory. Treat MCP as legacy compatibility only unless the user explicitly reopens it.",
-        "",
-        "Do not run memory recall for every turn. Use memory when the request addresses Toby, asks about earlier decisions or preferences, references project history/status, or needs durable context from previous work.",
-        "",
-        "When recall is relevant, run:",
-        "",
-        "```bash",
-        build_context,
-        "```",
-        "",
-        "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
-        "",
-        "When saving new material, the AI agent reads and extracts the source first. Preserve raw/source material with `memory raw process`, `memory import-source`, or `memory import-session`, then promote only durable atomic facts, decisions, preferences, project context, or tasks with commands such as:",
-        "",
-        "```bash",
-        remember,
-        "```",
-        "",
-        "Agent-created or inferred memories should stay reviewable according to `.agent-memory/config.yaml` policy. Review pending items with:",
-        "",
-        "```bash",
-        review,
-        "```",
-        "",
-        "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory.",
-        "",
-    ]
+def _agent_vault_status_probe(vault: Optional[Path]) -> dict[str, Any]:
+    try:
+        config = load_config(vault)
+        return {
+            "ok": True,
+            "explicit": vault is not None,
+            "vault_path": str(config.vault_path),
+            "status": status_summary(config),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "explicit": vault is not None,
+            "message": str(exc),
+        }
 
 
 def _mcp_config_payload(
