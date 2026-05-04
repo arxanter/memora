@@ -45,7 +45,8 @@ and report the CLI gap.
 
 `memora setup [vault] [--dry-run] [--json]`
 
-- Preview or create default vault layout.
+- Preview or create default vault layout. Without `<vault>`, uses the configured
+  default vault (`MEMORA_VAULT`) before falling back to the current directory.
 
 `memora vault show [--wrapper PATH] [--json]`
 
@@ -79,7 +80,9 @@ and report the CLI gap.
 
 `memora agent integrate [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force] [--json]`
 
-- Install generated instructions into a project/user target.
+- Install generated instructions into a project/user target. For project scope,
+  run from the target project or pass `--project PATH`; Memora refuses implicit
+  writes from its own source checkout.
 
 `memora agent update [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force] [--json]`
 

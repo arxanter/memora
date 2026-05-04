@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as json_module
+import os
 import shlex
 import shutil
 import hashlib
@@ -24,7 +25,7 @@ from agent_integration import (
     agent_update_payload as _agent_update_payload,
 )
 from brief import brief_memory
-from config import ConfigError, load_config, set_agent_aliases
+from config import ENV_VAULT_PATH, ConfigError, load_config, set_agent_aliases
 from freshness import refresh_index_if_needed
 from indexer import reindex_vault
 from lifecycle import (
@@ -169,14 +170,14 @@ def init_command(
 
 @app.command("setup")
 def setup_command(
-    vault: Optional[Path] = typer.Argument(None, help="Vault directory; defaults to the current directory."),
+    vault: Optional[Path] = typer.Argument(None, help="Vault directory; defaults to MEMORA_VAULT, then current directory."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview setup actions without writing files."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Preview or create the default CLI-first Memora vault layout."""
 
     try:
-        selected_vault = vault or Path.cwd()
+        selected_vault = _resolve_setup_vault_path(vault)
         payload = setup_vault(selected_vault, dry_run=dry_run).to_dict()
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="setup_failed")
@@ -323,13 +324,14 @@ def agent_group_rules_command(
 def agent_targets_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Target scope: project or user."),
-    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show resolved coding-agent integration targets."""
 
     try:
-        payload = _agent_targets_payload(client=client, scope=scope, project=project)
+        project_path = _resolve_agent_project_path(project, scope=scope, command="agent targets")
+        payload = _agent_targets_payload(client=client, scope=scope, project=project_path)
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_targets_failed")
 
@@ -345,7 +347,7 @@ def agent_targets_command(
 def agent_integrate_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
     target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
     alias: list[str] = typer.Option(
@@ -361,10 +363,11 @@ def agent_integrate_command(
     """Install generated coding-agent instructions for one or more clients."""
 
     try:
+        project_path = _resolve_agent_project_path(project, scope=scope, command="agent integrate")
         payload = _agent_integrate_payload(
             client=client,
             scope=scope,
-            project=project,
+            project=project_path,
             target=target,
             vault=vault,
             dry_run=dry_run,
@@ -385,7 +388,7 @@ def agent_integrate_command(
 def agent_update_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
     target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
     alias: list[str] = typer.Option(
@@ -401,10 +404,11 @@ def agent_update_command(
     """Conservatively update managed coding-agent instructions."""
 
     try:
+        project_path = _resolve_agent_project_path(project, scope=scope, command="agent update")
         payload = _agent_update_payload(
             client=client,
             scope=scope,
-            project=project,
+            project=project_path,
             target=target,
             vault=vault,
             dry_run=dry_run,
@@ -425,7 +429,7 @@ def agent_update_command(
 def agent_status_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path used to calculate expected content."),
     alias: list[str] = typer.Option(
         [],
@@ -438,10 +442,11 @@ def agent_status_command(
     """Report coding-agent integration target status without mutating files."""
 
     try:
+        project_path = _resolve_agent_project_path(project, scope=scope, command="agent status")
         payload = _agent_status_payload(
             client=client,
             scope=scope,
-            project=project,
+            project=project_path,
             vault=vault,
             alias_overrides=alias or None,
         )
@@ -460,7 +465,7 @@ def agent_status_command(
 def agent_doctor_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to validate when available."),
     alias: list[str] = typer.Option(
         [],
@@ -473,10 +478,11 @@ def agent_doctor_command(
     """Lightly validate agent integration readiness without mutating files."""
 
     try:
+        project_path = _resolve_agent_project_path(project, scope=scope, command="agent doctor")
         payload = _agent_doctor_payload(
             client=client,
             scope=scope,
-            project=project,
+            project=project_path,
             vault=vault,
             memora_command_path=shutil.which("memora"),
             vault_probe=_agent_vault_status_probe(vault),
@@ -2914,6 +2920,47 @@ def _resolve_memora_wrapper_path(wrapper: Optional[Path]) -> Path:
     if not discovered:
         raise FileNotFoundError("could not find installed memora wrapper on PATH; pass --wrapper")
     return Path(discovered).resolve()
+
+
+def _resolve_setup_vault_path(vault: Optional[Path]) -> Path:
+    if vault is not None:
+        return vault
+
+    env_vault = os.environ.get(ENV_VAULT_PATH)
+    if env_vault:
+        return Path(env_vault)
+
+    return Path.cwd()
+
+
+def _resolve_agent_project_path(project: Optional[Path], *, scope: str, command: str) -> Path:
+    if project is not None:
+        return project
+
+    current = Path.cwd()
+    if scope.strip().lower() == "project" and _nearest_memora_source_checkout(current) is not None:
+        raise ValueError(
+            f"{command} would target the Memora source checkout. "
+            "Run it from the project you want to configure, pass --project /path/to/project, "
+            "or use --scope user. To target this checkout intentionally, pass --project ."
+        )
+    return current
+
+
+def _nearest_memora_source_checkout(path: Path) -> Optional[Path]:
+    current = path.expanduser().resolve()
+    for candidate in (current, *current.parents):
+        if _looks_like_memora_source_checkout(candidate):
+            return candidate
+    return None
+
+
+def _looks_like_memora_source_checkout(path: Path) -> bool:
+    return (
+        (path / "pyproject.toml").is_file()
+        and (path / "src" / "cli.py").is_file()
+        and (path / "scripts" / "install.sh").is_file()
+    )
 
 
 def _default_vault_payload(wrapper_path: Path) -> dict[str, Any]:

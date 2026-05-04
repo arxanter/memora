@@ -337,7 +337,7 @@ Add this directory to PATH if needed:
 CLI:
   memora status
   memora reindex --clean
-  memora agent integrate --client all --dry-run
+  memora agent integrate --client all --project /path/to/project --dry-run
 
 Change the default vault later:
   memora vault set /path/to/initialized-vault

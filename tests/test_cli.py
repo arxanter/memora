@@ -108,6 +108,20 @@ def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
     assert not vault.exists()
 
 
+def test_setup_without_argument_uses_default_vault_env(tmp_path, monkeypatch):
+    vault = tmp_path / "memory-vault"
+    source_dir = tmp_path / "source-checkout"
+    source_dir.mkdir()
+    monkeypatch.chdir(source_dir)
+
+    result = runner.invoke(app, ["setup", "--dry-run", "--json"], env={"MEMORA_VAULT": str(vault)})
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["vault_path"] == str(vault.resolve())
+    assert payload["would_write"] is True
+
+
 def test_setup_command_creates_vault_layout(tmp_path):
     vault = tmp_path / "memory-vault"
 
@@ -301,6 +315,30 @@ def test_agent_integrate_dry_run_and_no_overwrite_behavior(tmp_path):
     assert payload["blocked_count"] == 1
     assert payload["results"][0]["blocked"] is True
     assert target.read_text(encoding="utf-8") == "existing"
+
+
+def test_agent_integrate_without_project_refuses_memora_source_checkout(tmp_path, monkeypatch):
+    source_checkout = tmp_path / "memora"
+    (source_checkout / "src").mkdir(parents=True)
+    (source_checkout / "scripts").mkdir()
+    (source_checkout / "pyproject.toml").write_text('[project]\nname = "memora"\n', encoding="utf-8")
+    (source_checkout / "src" / "cli.py").write_text("# cli marker\n", encoding="utf-8")
+    (source_checkout / "scripts" / "install.sh").write_text("# install marker\n", encoding="utf-8")
+    monkeypatch.chdir(source_checkout)
+
+    result = runner.invoke(app, ["agent", "integrate", "--client", "cursor", "--dry-run", "--json"])
+    explicit_result = runner.invoke(
+        app,
+        ["agent", "integrate", "--client", "cursor", "--project", ".", "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "agent_integrate_failed"
+    assert "would target the Memora source checkout" in payload["error"]["message"]
+    assert explicit_result.exit_code == 0, explicit_result.output
+    explicit_payload = json.loads(explicit_result.output)
+    assert explicit_payload["results"][0]["target_path"] == str(source_checkout / ".cursor" / "rules" / "memora.mdc")
 
 
 def test_agent_integrate_codex_targets_agents_file(tmp_path):

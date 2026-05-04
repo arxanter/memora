@@ -52,7 +52,7 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "would write" in result.stdout
-    assert "memora agent integrate --client all --dry-run" in result.stdout
+    assert "memora agent integrate --client all --project /path/to/project --dry-run" in result.stdout
     assert "memora vault set /path/to/initialized-vault" in result.stdout
     assert not install_dir.exists()
     assert not bin_dir.exists()
