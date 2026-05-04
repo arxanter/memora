@@ -139,9 +139,8 @@ def test_local_install_docs_reference_existing_scripts():
     assert "Press Enter to use" in readme
     assert "memora init ~/NewMemoryVault --set-default" in readme
     assert "memora vault set ~/ExistingMemoryVault" in readme
-    assert "mkdir -p ~/.local/src" in readme
-    assert "rm -rf ~/.local/src/memora" in readme
-    assert "./scripts/install.sh --force --no-vault" in readme
+    assert "memora self update --remote-url https://github.com/arxanter/memora.git" in readme
+    assert "https://github.com/arxanter/memora.git" in readme
     assert "./scripts/uninstall.sh --remove-venv" in readme
     assert "normal commands do not need `--vault`" in readme
     assert "Python 3.10" in readme and "newer" in readme

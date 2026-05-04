@@ -7,6 +7,7 @@ import os
 import shlex
 import shutil
 import hashlib
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -63,6 +64,7 @@ memory_app = typer.Typer(help="Update existing canonical memories.", no_args_is_
 agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
 session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage the installed default vault.", no_args_is_help=True)
+self_app = typer.Typer(help="Manage the installed Memora checkout.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
 app.add_typer(source_app, name="source")
 app.add_typer(review_app, name="review")
@@ -70,6 +72,7 @@ app.add_typer(memory_app, name="memory")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
 app.add_typer(vault_app, name="vault")
+app.add_typer(self_app, name="self")
 agent_aliases_app = typer.Typer(
     help="Configure assistant names for recall routing and generated agent rules.",
     no_args_is_help=True,
@@ -100,6 +103,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("reindex", "Rebuild the disposable SQLite index from Markdown."),
             ("vault show", "Show the default vault configured in the installed wrapper."),
             ("vault set <vault>", "Set the installed wrapper's default vault."),
+            ("self update", "Soft-update the Memora source checkout with git stash/pull/pop."),
             ("agent rules", "Generate CLI-first instructions for coding agents."),
             ("agent integrate", "Install generated agent instructions into a project."),
             ("agent update", "Update managed agent instructions."),
@@ -262,6 +266,55 @@ def vault_set_command(
 
     console.print(f"[green]Default vault updated:[/green] {payload['vault_path']}")
     console.print(f"Wrapper: {payload['wrapper_path']}")
+
+
+@self_app.command("update")
+def self_update_command(
+    checkout: Optional[Path] = typer.Option(
+        None,
+        "--checkout",
+        help="Memora source checkout to update; defaults to this installation checkout.",
+    ),
+    remote: str = typer.Option("origin", "--remote", help="Git remote to pull from."),
+    remote_url: Optional[str] = typer.Option(
+        None,
+        "--remote-url",
+        help="Remote URL to add if the selected remote is missing.",
+    ),
+    branch: Optional[str] = typer.Option(
+        None, "--branch", help="Branch to pull; defaults to the current branch."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview git actions without running them."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Soft-update the Memora source checkout with git stash, pull, and stash pop."""
+
+    try:
+        payload = _self_update_payload(
+            checkout=checkout,
+            remote=remote,
+            remote_url=remote_url,
+            branch=branch,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="self_update_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    label = "Self update dry run" if payload["dry_run"] else "Self update complete"
+    console.print(f"[green]{label}:[/green] {payload['checkout_path']}")
+    for action in payload["actions"]:
+        status = "skipped" if action.get("skipped") else "ok"
+        if action.get("dry_run"):
+            status = "would run"
+        console.print(f"- {status}: {action['description']}")
+    if payload.get("stash_created") and payload.get("stash_restored"):
+        console.print("[green]Local changes were restored from stash.[/green]")
 
 
 @app.command("help")
@@ -3384,6 +3437,249 @@ def _looks_like_memora_source_checkout(path: Path) -> bool:
         and (path / "src" / "cli.py").is_file()
         and (path / "scripts" / "install.sh").is_file()
     )
+
+
+def _self_update_payload(
+    *,
+    checkout: Optional[Path],
+    remote: str,
+    remote_url: Optional[str],
+    branch: Optional[str],
+    dry_run: bool,
+) -> dict[str, Any]:
+    checkout_path = _resolve_memora_update_checkout(checkout)
+    git_bin = _resolve_git_binary()
+    selected_remote = remote.strip() or "origin"
+    selected_branch = (branch.strip() if branch else None) or _current_git_branch(
+        git_bin, checkout_path
+    )
+    if not selected_branch:
+        raise ValueError("could not determine the current git branch; pass --branch")
+
+    dirty = bool(_git_output(git_bin, checkout_path, ["status", "--porcelain"]).strip())
+    remote_exists = _git_succeeds(git_bin, checkout_path, ["remote", "get-url", selected_remote])
+    upstream_exists = _git_succeeds(
+        git_bin,
+        checkout_path,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    remote_added = False
+    stash_created = False
+    stash_restored = False
+    actions: list[dict[str, Any]] = []
+
+    if not remote_exists and not remote_url:
+        raise ValueError(
+            f"git remote {selected_remote!r} is not configured; pass --remote-url to add it"
+        )
+
+    pull_args = ["pull", "--ff-only"]
+    if branch is not None or not upstream_exists or not remote_exists:
+        pull_args.extend([selected_remote, selected_branch])
+
+    if dry_run:
+        if not remote_exists:
+            actions.append(
+                {
+                    "description": f"add git remote {selected_remote} -> {remote_url}",
+                    "command": _git_command_text(
+                        ["remote", "add", selected_remote, remote_url or ""]
+                    ),
+                    "dry_run": True,
+                }
+            )
+        actions.extend(
+            [
+                {
+                    "description": "stash local changes including untracked files",
+                    "command": _git_command_text(
+                        ["stash", "push", "--include-untracked", "-m", "memora self update"]
+                    ),
+                    "dry_run": True,
+                    "skipped": not dirty,
+                },
+                {
+                    "description": "pull remote changes with fast-forward only",
+                    "command": _git_command_text(pull_args),
+                    "dry_run": True,
+                },
+                {
+                    "description": "reapply the saved stash",
+                    "command": _git_command_text(["stash", "apply", "--index", "stash@{0}"]),
+                    "dry_run": True,
+                    "skipped": not dirty,
+                },
+            ]
+        )
+        return {
+            "ok": True,
+            "implemented": True,
+            "command": "self update",
+            "dry_run": True,
+            "checkout_path": str(checkout_path),
+            "remote": selected_remote,
+            "remote_url": remote_url,
+            "remote_exists": remote_exists,
+            "remote_added": False,
+            "branch": selected_branch,
+            "dirty": dirty,
+            "stash_created": dirty,
+            "stash_restored": dirty,
+            "pull_command": _git_command_text(pull_args),
+            "actions": actions,
+        }
+
+    if not remote_exists:
+        _run_git(git_bin, checkout_path, ["remote", "add", selected_remote, remote_url or ""])
+        remote_added = True
+        actions.append(
+            {
+                "description": f"added git remote {selected_remote}",
+                "command": _git_command_text(["remote", "add", selected_remote, remote_url or ""]),
+            }
+        )
+
+    if dirty:
+        stash_message = f"memora self update {datetime.now(timezone.utc).isoformat()}"
+        _run_git(
+            git_bin,
+            checkout_path,
+            ["stash", "push", "--include-untracked", "-m", stash_message],
+        )
+        stash_created = True
+        actions.append(
+            {
+                "description": "stashed local changes including untracked files",
+                "command": _git_command_text(
+                    ["stash", "push", "--include-untracked", "-m", stash_message]
+                ),
+            }
+        )
+    else:
+        actions.append({"description": "working tree was clean; skipped stash", "skipped": True})
+
+    _run_git(git_bin, checkout_path, pull_args)
+    actions.append(
+        {
+            "description": "pulled remote changes with fast-forward only",
+            "command": _git_command_text(pull_args),
+        }
+    )
+
+    if stash_created:
+        apply_result = _run_git(
+            git_bin,
+            checkout_path,
+            ["stash", "apply", "--index", "stash@{0}"],
+            check=False,
+        )
+        if apply_result.returncode != 0:
+            raise RuntimeError(
+                "pulled changes, but could not reapply the saved stash cleanly; "
+                "the stash is still available as stash@{0}. "
+                f"Git said: {_git_error_text(apply_result)}"
+            )
+        _run_git(git_bin, checkout_path, ["stash", "drop", "stash@{0}"])
+        stash_restored = True
+        actions.append(
+            {
+                "description": "reapplied and dropped the saved stash",
+                "command": _git_command_text(["stash", "apply", "--index", "stash@{0}"]),
+            }
+        )
+    else:
+        actions.append({"description": "no stash to reapply", "skipped": True})
+
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "self update",
+        "dry_run": False,
+        "checkout_path": str(checkout_path),
+        "remote": selected_remote,
+        "remote_url": remote_url,
+        "remote_exists": remote_exists,
+        "remote_added": remote_added,
+        "branch": selected_branch,
+        "dirty": dirty,
+        "stash_created": stash_created,
+        "stash_restored": stash_restored,
+        "pull_command": _git_command_text(pull_args),
+        "actions": actions,
+    }
+
+
+def _resolve_memora_update_checkout(checkout: Optional[Path]) -> Path:
+    if checkout is not None:
+        checkout_path = checkout.expanduser().resolve()
+    else:
+        checkout_path = _module_memora_source_checkout() or _nearest_memora_source_checkout(
+            Path.cwd()
+        )
+        if checkout_path is None:
+            raise ValueError(
+                "could not find the Memora source checkout; run from the checkout or pass --checkout"
+            )
+
+    if not _looks_like_memora_source_checkout(checkout_path):
+        raise ValueError(f"{checkout_path} does not look like a Memora source checkout")
+    if not (checkout_path / ".git").exists():
+        raise ValueError(f"{checkout_path} is not a git checkout")
+    return checkout_path
+
+
+def _module_memora_source_checkout() -> Optional[Path]:
+    module_path = Path(__file__).resolve()
+    for candidate in (module_path.parent, *module_path.parents):
+        if _looks_like_memora_source_checkout(candidate):
+            return candidate
+    return None
+
+
+def _resolve_git_binary() -> str:
+    git_bin = shutil.which("git")
+    if not git_bin:
+        raise FileNotFoundError("git is required for memora self update")
+    return git_bin
+
+
+def _current_git_branch(git_bin: str, checkout_path: Path) -> str:
+    return _git_output(git_bin, checkout_path, ["branch", "--show-current"]).strip()
+
+
+def _git_succeeds(git_bin: str, checkout_path: Path, args: list[str]) -> bool:
+    return _run_git(git_bin, checkout_path, args, check=False).returncode == 0
+
+
+def _git_output(git_bin: str, checkout_path: Path, args: list[str]) -> str:
+    return _run_git(git_bin, checkout_path, args).stdout
+
+
+def _run_git(
+    git_bin: str,
+    checkout_path: Path,
+    args: list[str],
+    *,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [git_bin, *args],
+        cwd=checkout_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(f"git {_git_command_text(args)} failed: {_git_error_text(result)}")
+    return result
+
+
+def _git_command_text(args: list[str]) -> str:
+    return "git " + " ".join(shlex.quote(part) for part in args)
+
+
+def _git_error_text(result: subprocess.CompletedProcess[str]) -> str:
+    return (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
 
 
 def _default_vault_payload(wrapper_path: Path) -> dict[str, Any]:

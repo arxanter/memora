@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import yaml
 from typer.testing import CliRunner
@@ -11,6 +12,18 @@ from sources import lookup_source
 
 
 runner = CliRunner()
+
+
+def _git(cwd, *args):
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    return result.stdout.strip()
 
 
 def _write_memora_wrapper(path):
@@ -29,6 +42,21 @@ def _write_memora_wrapper(path):
         encoding="utf-8",
     )
     path.chmod(0o755)
+
+
+def _write_memora_source_markers(path):
+    (path / "src").mkdir(parents=True, exist_ok=True)
+    (path / "scripts").mkdir(parents=True, exist_ok=True)
+    (path / "pyproject.toml").write_text('[project]\nname = "memora"\n', encoding="utf-8")
+    (path / "src" / "cli.py").write_text("# cli marker\n", encoding="utf-8")
+    (path / "scripts" / "install.sh").write_text("# install marker\n", encoding="utf-8")
+
+
+def _init_git_repo(path):
+    _git(path, "init")
+    _git(path, "checkout", "-b", "main")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Memora Test")
 
 
 def test_init_command_creates_vault_layout(tmp_path):
@@ -93,6 +121,75 @@ def test_vault_set_requires_initialized_vault(tmp_path):
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "config_error"
     assert "config not found" in payload["error"]["message"]
+
+
+def test_self_update_stashes_pulls_and_restores_local_changes(tmp_path):
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    checkout = tmp_path / "checkout"
+
+    seed.mkdir()
+    _write_memora_source_markers(seed)
+    _init_git_repo(seed)
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "initial")
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "main")
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(tmp_path, "clone", str(remote), str(checkout))
+
+    (seed / "scripts" / "install.sh").write_text("# updated install marker\n", encoding="utf-8")
+    _git(seed, "add", "scripts/install.sh")
+    _git(seed, "commit", "-m", "update install script")
+    _git(seed, "push")
+    (checkout / "local-note.txt").write_text("keep me\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["self", "update", "--checkout", str(checkout), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["dirty"] is True
+    assert payload["stash_created"] is True
+    assert payload["stash_restored"] is True
+    assert (checkout / "local-note.txt").read_text(encoding="utf-8") == "keep me\n"
+    assert (checkout / "scripts" / "install.sh").read_text(
+        encoding="utf-8"
+    ) == "# updated install marker\n"
+
+
+def test_self_update_dry_run_adds_remote_url_when_missing(tmp_path):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _write_memora_source_markers(checkout)
+    _init_git_repo(checkout)
+    _git(checkout, "add", ".")
+    _git(checkout, "commit", "-m", "initial")
+
+    result = runner.invoke(
+        app,
+        [
+            "self",
+            "update",
+            "--checkout",
+            str(checkout),
+            "--remote-url",
+            "https://github.com/arxanter/memora.git",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["remote_exists"] is False
+    assert payload["remote_added"] is False
+    assert payload["remote_url"] == "https://github.com/arxanter/memora.git"
+    assert (
+        payload["actions"][0]["command"]
+        == "git remote add origin https://github.com/arxanter/memora.git"
+    )
 
 
 def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):

@@ -38,19 +38,16 @@ memora init ~/NewMemoryVault --set-default
 memora vault set ~/ExistingMemoryVault
 ```
 
-To force-refresh the Memora source checkout and reinstall the local wrapper:
+To softly update the Memora source checkout without deleting local files:
 
 ```bash
-cd ~
-mkdir -p ~/.local/src
-rm -rf ~/.local/src/memora
-git clone https://github.com/arxanter/memora.git ~/.local/src/memora
 cd ~/.local/src/memora
-./scripts/install.sh --force --no-vault
+memora self update --remote-url https://github.com/arxanter/memora.git
 ```
 
-This replaces only the source checkout and wrapper install. It does not remove
-or modify your vault.
+This stashes local checkout changes, pulls fast-forward updates, and reapplies
+the saved stash. The `--remote-url` value is only used when the checkout is
+missing an `origin` remote. It does not remove or modify your vault.
 
 <details>
 <summary>Advanced install options</summary>
