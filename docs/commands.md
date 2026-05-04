@@ -54,6 +54,7 @@ memory import-source-inbox <path> --dry-run
 memory import-url <url> --dry-run
 memory import-pdf <path> --text-file <path> --dry-run
 memory import-zoom <path> --meeting-id <id> --dry-run
+memory import-slack <path> --channel <name-or-id> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
 memory import <path>
 memory export --format markdown
@@ -876,6 +877,34 @@ memory import-zoom ./weekly-summary.md \
   --project agent-memory \
   --meeting-id 123456789 \
   --tag meeting \
+  --json
+```
+
+### `memory import-slack`
+
+Implemented in Phase 4 as an optional explicit connector.
+
+Imports one local Slack thread or message export (`.md`/`.txt`/`.json`) into
+`Sources/`. The command is opt-in, reads only the file path provided by the user,
+does not call Slack APIs, and does not create canonical memories by itself. It
+records `channel: slack`, `source_quality: chat_thread`, file origin, Slack
+metadata such as channel/thread timestamp/permalink when provided or present in a
+simple JSON export, project, tags, sensitivity, and safety risk flags.
+
+Use `--dry-run` to preview the planned source payload and safety scan without
+writing files.
+
+Examples:
+
+```bash
+memory import-slack ./thread.md --vault ./memory-vault --dry-run --json
+memory import-slack ./thread.json \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --channel "#agent-memory" \
+  --thread-ts 1714550400.000100 \
+  --permalink https://example.slack.com/archives/C123/p1714550400000100 \
+  --tag slack \
   --json
 ```
 

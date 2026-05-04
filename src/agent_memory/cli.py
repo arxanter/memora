@@ -35,6 +35,7 @@ from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_me
 from agent_memory.safety import scan_source_material
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.session import normalize_session_recall_state, session_trace
+from agent_memory.slack_import import load_slack_content
 from agent_memory.sources import lookup_source, save_source_material
 from agent_memory.synthesis import plan_synthesis, write_synthesis
 from agent_memory.sync import detect_sync_conflicts
@@ -103,6 +104,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
             ("import-pdf <path>", "Import explicit local PDF text into Sources/."),
             ("import-zoom <path>", "Import an explicit local Zoom summary/transcript export."),
+            ("import-slack <path>", "Import an explicit local Slack thread/message export."),
             ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
         ),
     ),
@@ -886,6 +888,84 @@ def import_zoom_command(
         return
 
     console.print(f"[green]Imported Zoom source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
+
+
+@app.command("import-slack")
+def import_slack_command(
+    path: Path = typer.Argument(..., help="Explicit local Slack thread/message export to import into Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to Slack metadata or file stem."),
+    slack_channel: Optional[str] = typer.Option(None, "--channel", help="Slack channel name or ID metadata."),
+    thread_ts: Optional[str] = typer.Option(None, "--thread-ts", help="Slack thread timestamp metadata."),
+    permalink: Optional[str] = typer.Option(None, "--permalink", help="Slack message or thread permalink metadata."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    source_quality: str = typer.Option("chat_thread", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the Slack import plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Import an explicit local Slack thread/message export."""
+
+    try:
+        config = load_config(vault)
+        imported = load_slack_content(
+            path,
+            title=title,
+            channel=slack_channel,
+            thread_ts=thread_ts,
+            permalink=permalink,
+        )
+        if dry_run:
+            payload = _slack_import_plan_payload(
+                config,
+                imported=imported,
+                project=project,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                tags=tag,
+            )
+        else:
+            result = save_source_material(
+                config,
+                title=imported.title,
+                url=_thread_permalink(imported.thread),
+                content=imported.content,
+                extract=imported.extract,
+                project=project,
+                tags=tag,
+                channel="slack",
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                origin=imported.origin,
+            )
+            payload = result.to_dict()
+            payload.update(
+                {
+                    "command": "import-slack",
+                    "dry_run": False,
+                    "content": imported.summary(),
+                    "thread": imported.thread,
+                    "next_steps": [
+                        "Review the saved Slack source and extract before promoting canonical memory.",
+                        "Create pending source-backed memories only for durable facts, decisions, preferences, project context, or tasks.",
+                    ],
+                }
+            )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_slack_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] Slack source would be imported: {payload['path']}")
+        return
+
+    console.print(f"[green]Imported Slack source:[/green] {payload['relative_source_path']}")
     if payload.get("relative_extract_path"):
         console.print(f"Extract: {payload['relative_extract_path']}")
 
@@ -2582,8 +2662,77 @@ def _zoom_import_plan_payload(
     }
 
 
+def _slack_import_plan_payload(
+    config: Any,
+    *,
+    imported: Any,
+    project: Optional[str],
+    source_quality: str,
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    safety = scan_source_material(
+        content=imported.content,
+        extract=imported.extract,
+        metadata={
+            "channel": "slack",
+            "source_quality": source_quality,
+            "sensitivity": sensitivity,
+            **imported.origin,
+        },
+    )
+    planned_source = {
+        "title": imported.title,
+        "url": _thread_permalink(imported.thread),
+        "project": project,
+        "tags": tags,
+        "channel": "slack",
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": dict(imported.origin),
+        "thread": dict(imported.thread),
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
+    }
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "import-slack",
+        "dry_run": True,
+        "vault_path": str(config.vault_path),
+        "path": str(imported.path),
+        "title": imported.title,
+        "url": _thread_permalink(imported.thread),
+        "project": project,
+        "tags": tags,
+        "channel": "slack",
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": dict(imported.origin),
+        "thread": dict(imported.thread),
+        "content": imported.summary(),
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
+        "planned_source": planned_source,
+        "would_read_file": str(imported.path),
+        "would_write": "Sources/<source_id>/{source.md,extract.md}",
+        "next_steps": [
+            "Run without --dry-run to save the Slack export under Sources/.",
+            "Review the saved extract before creating pending source-backed memories.",
+        ],
+    }
+
+
 def _meeting_url(meeting: Mapping[str, object]) -> Optional[str]:
     value = meeting.get("meeting_url")
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
+def _thread_permalink(thread: Mapping[str, object]) -> Optional[str]:
+    value = thread.get("permalink")
     if value is None:
         return None
     cleaned = str(value).strip()
