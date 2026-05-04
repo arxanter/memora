@@ -226,8 +226,6 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
             "--json",
         ],
     )
-    help_result = runner.invoke(app, ["help", "--json"])
-
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     relative_path = Path(payload["relative_path"])
@@ -242,14 +240,6 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
     assert relative_path.parent == Path("Synthesis")
     assert relative_path.name.endswith("_cli-synthesis.md")
     assert (vault / relative_path).exists()
-
-    assert help_result.exit_code == 0, help_result.output
-    command_usages = {
-        command["usage"]
-        for group in json.loads(help_result.output)["groups"]
-        for command in group["commands"]
-    }
-    assert "synthesize" in command_usages
 
 
 def test_synthesize_cli_dry_run_query_json_does_not_write(tmp_path):

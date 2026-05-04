@@ -28,6 +28,9 @@ ENV_FRESHNESS_REFRESH_BEFORE_SEARCH = "MEMORA_FRESHNESS_REFRESH_BEFORE_SEARCH"
 ENV_FRESHNESS_REFRESH_BEFORE_RECALL = "MEMORA_FRESHNESS_REFRESH_BEFORE_RECALL"
 ENV_AGENT_TRUST_LEVEL = "MEMORA_TRUST_LEVEL"
 ENV_AGENT_DEFAULT_RECALL_BUDGET = "MEMORA_DEFAULT_RECALL_BUDGET"
+ENV_AGENT_MEMORY_ENABLED = "MEMORA_AGENT_MEMORY_ENABLED"
+ENV_AGENT_AUTO_RECALL = "MEMORA_AGENT_AUTO_RECALL"
+ENV_AGENT_SESSION_CAPTURE = "MEMORA_AGENT_SESSION_CAPTURE"
 ENV_PROFILE_ENABLED = "MEMORA_PROFILE_ENABLED"
 ENV_PROFILE_USER_BUDGET = "MEMORA_PROFILE_USER_BUDGET"
 ENV_PROFILE_PROJECT_BUDGET = "MEMORA_PROFILE_PROJECT_BUDGET"
@@ -185,6 +188,9 @@ class AgentPolicyConfig(BaseModel):
     model_config = ConfigDict(use_enum_values=True, validate_default=True)
 
     aliases: list[str] = Field(default_factory=lambda: ["Remi", "Рэми", "Реми"])
+    enabled: bool = True
+    auto_recall: bool = True
+    session_capture: bool = True
     trust_level: AgentTrustLevel = AgentTrustLevel.REVIEW
     default_recall_budget: int = Field(default=1200, ge=1)
     min_active_confidence: float = Field(default=0.85, ge=0, le=1)
@@ -495,6 +501,9 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
     for env_name, field_name in (
         (ENV_AGENT_TRUST_LEVEL, "trust_level"),
         (ENV_AGENT_DEFAULT_RECALL_BUDGET, "default_recall_budget"),
+        (ENV_AGENT_MEMORY_ENABLED, "enabled"),
+        (ENV_AGENT_AUTO_RECALL, "auto_recall"),
+        (ENV_AGENT_SESSION_CAPTURE, "session_capture"),
     ):
         value = os.environ.get(env_name)
         if value not in (None, ""):

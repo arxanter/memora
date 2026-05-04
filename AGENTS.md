@@ -72,9 +72,9 @@ When the user asks to save a URL, article, notes, transcript, document, or raw m
 
 1. Read or fetch the source material.
 2. Create a concise extract from the material.
-3. If material is unprocessed, place it in `raw/` or use
-   `memora raw process ... --json` to normalize it into `Sources/...`.
-   Otherwise preserve the source and extract with `memora import-source`.
+3. If material is unprocessed, stage it with
+   `memora raw add <path> --kind <kind> --format <format> --json`.
+   Preserve curated source text and the extract with `memora source add`.
 4. Promote only durable atomic facts, decisions, preferences, tasks, or project
    context into canonical `Memories/...` items.
 5. Leave inferred agent-created memories `pending` for review unless policy
@@ -107,8 +107,8 @@ Use CLI review commands when the user asks to process pending memory:
 5. Call `memora review reject <id> --reason "<reason>" --json` for incorrect,
    transient, duplicated, or low-value memory.
 
-Use `mark_status(id, status)` only when you need a lifecycle state other than
-`active` or `rejected`, such as `stale`.
+Use lifecycle helpers only for internal maintenance; the public review flow is
+`review`, `review approve`, and `review reject`.
 
 Canonical memories should be small and atomic:
 

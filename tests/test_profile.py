@@ -264,7 +264,6 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
             "--json",
         ],
     )
-    help_result = runner.invoke(app, ["help", "--json"])
     missing_project = runner.invoke(
         app,
         [
@@ -284,14 +283,6 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
     assert payload["relative_path"] == "Profiles/projects/memora.md"
     assert payload["memory_count"] == 1
     assert (vault / payload["relative_path"]).exists()
-
-    assert help_result.exit_code == 0, help_result.output
-    command_usages = {
-        command["usage"]
-        for group in json.loads(help_result.output)["groups"]
-        for command in group["commands"]
-    }
-    assert "build-profile" in command_usages
 
     assert missing_project.exit_code == 1
     error_payload = json.loads(missing_project.output)

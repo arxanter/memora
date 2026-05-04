@@ -1,27 +1,16 @@
 # Memora
 
-Memora is a local-first memory tool for coding agents. It keeps durable
-facts, decisions, preferences, tasks, source extracts, and session summaries in
-an Obsidian-compatible Markdown vault, then gives agents compact cited context
-through the `memora` CLI.
+Memora is a small CLI-first memory core for coding agents. It keeps durable
+facts, decisions, preferences, tasks, curated source evidence, and raw staging
+files in an Obsidian-compatible Markdown vault, then gives agents compact cited
+context through `memora ... --json`.
 
-The CLI is the stable interface. Agents should use `memora ... --json` instead
-of editing vault files directly.
-
-## Why Use It
-
-- Keep project decisions and preferences outside a single chat session.
-- Give agents only relevant context with `memora build-context`.
-- Preserve source material before promoting durable memories.
-- Review agent-written memory before it becomes active truth.
-- Sync plain Markdown while treating SQLite, embeddings, locks, and caches as
-  rebuildable local state.
+Agents should treat the CLI as the interface. They should not edit `Memories/`,
+`Sources/`, `raw/`, or `.memora/` files directly.
 
 ## Install
 
 Memora requires Python 3.10 or newer.
-
-For a packaged install:
 
 ```bash
 pipx install "memora"
@@ -35,10 +24,6 @@ From this repository:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Without cloning first, use a one-liner that `git clone`s into a directory you
-keep (recommended under `$HOME`) or into `/tmp`; details and copy-paste commands
-are in `docs/local-install.md` (section **One-liner: clone and install**).
-
 For development:
 
 ```bash
@@ -48,17 +33,11 @@ python -m pip install -U pip
 python -m pip install -e '.[test]'
 ```
 
-### Windows And WSL
-
-Memora is developed for macOS/Linux shells. On Windows, use WSL2 with Python
-3.10 or newer and run the same install commands from the Linux environment.
-
-Vault lookup order is `--vault`, then `MEMORA_VAULT`, then the nearest
-`.memora/config.yaml`.
+On Windows, use WSL2 with Python 3.10 or newer and run the same commands from
+the Linux environment. Vault lookup order is `--vault`, then `MEMORA_VAULT`,
+then the nearest `.memora/config.yaml`.
 
 ## Quickstart
-
-Create a vault, connect an agent, save a decision, and recall it:
 
 ```bash
 memora setup ~/MemoryVault --json
@@ -69,11 +48,6 @@ memora agent integrate \
   --vault ~/MemoryVault \
   --dry-run \
   --json
-
-memora agent integrate \
-  --client all \
-  --project /path/to/repo \
-  --vault ~/MemoryVault
 
 memora remember \
   --vault ~/MemoryVault \
@@ -90,57 +64,91 @@ memora build-context \
   --json
 ```
 
-`memora agent integrate --client all` installs generated rules for Cursor,
-Claude, and Codex targets. Existing unmanaged instruction files are not
-overwritten unless `--force` is passed.
+## Core Workflow
 
-## How Agents Use It
+Memora is intentionally narrow:
 
-Generated agent rules teach coding agents to:
-
-- call `memora build-context "<task>" --project "<project>" --json` only when
-  memory is useful;
-- use returned context only when `memory_needed` is `true`;
-- preserve citations when memory affects an answer or decision;
-- save raw/source material before creating atomic memories;
-- leave inferred agent-created memories pending for review;
-- avoid storing secrets, raw logs, and temporary implementation chatter.
-
-Useful agent setup commands:
-
-```bash
-memora agent targets --client all --project /path/to/repo --json
-memora agent status --client all --project /path/to/repo --json
-memora agent update --client all --project /path/to/repo --dry-run --json
-memora agent doctor --client all --project /path/to/repo --vault ~/MemoryVault --json
+```text
+raw files -> memora raw add -> agent reads/analyzes
+agent extract -> memora source add -> Sources/
+durable atomic claim -> memora remember -> Memories/
+user task -> memora build-context -> cited context
 ```
 
-## Save Knowledge
+Use `raw/` for staging unprocessed files. Raw files are traceable input and may
+be cleaned later.
 
-Use `remember` for small durable facts, decisions, preferences, tasks, or project
-context:
+```bash
+memora raw add ./paper.pdf --kind pdf --format pdf --project my-project --json
+memora raw add ./thread.json --kind slack --format json --project my-project --json
+memora raw list --vault ~/MemoryVault --json
+memora raw inspect raw/inbox/slack/thread.json --vault ~/MemoryVault --json
+```
+
+Use `Sources/` only for curated durable evidence worth keeping long-term. The
+agent, not Memora, reads the raw material and writes the extract.
+
+```bash
+memora source add ./source.md \
+  --extract ./extract.md \
+  --kind text \
+  --project my-project \
+  --json
+```
+
+Use `remember` for small durable facts, decisions, preferences, tasks, or
+project context.
 
 ```bash
 memora remember --type preference --text "Prefer concise code review summaries." --json
 memora remember --type task --project my-project --text "Document the session capture workflow." --json
 ```
 
-For larger material, save the source first and promote only durable atomic
-memories:
+## Find Context
+
+Use `build-context` for normal agent recall. It first applies the recall policy
+and returns no context when memory is not needed.
 
 ```bash
-memora import-source ./notes.md \
-  --extract-file ./notes-extract.md \
-  --project my-project \
-  --json
-
-memora import-url https://example.com/article --dry-run --json
-memora import-pdf ./paper.pdf --text-file ./paper.txt --json
-memora import-slack ./thread.json --channel "#project" --json
+memora build-context "Plan the storage refactor" --project my-project --task-class planning --json
 ```
 
-For end-of-session capture, let the agent write a concise summary and optional
-memory proposals, then finalize:
+Use lower-level retrieval commands for explicit searches:
+
+```bash
+memora search "storage decision" --project my-project --json
+memora recall "What did we decide about storage?" --project my-project --budget 1200 --json
+memora brief "Prepare context for storage work" --project my-project --budget 1200 --json
+memora lookup-source 2026-05-04_design-notes --query storage --json
+```
+
+## Agent Integration
+
+Configure Remi aliases:
+
+```bash
+memora agent-aliases list --vault ~/MemoryVault --json
+memora agent-aliases set Remi Рэми Реми --vault ~/MemoryVault --json
+```
+
+Generate or install rules for Cursor, Claude, Codex, or generic `AGENTS.md`:
+
+```bash
+memora agent rules --client cursor --vault ~/MemoryVault --project my-project
+memora agent integrate --client all --project /path/to/repo --vault ~/MemoryVault --json
+memora agent update --client all --project /path/to/repo --vault ~/MemoryVault --dry-run --json
+memora agent status --client all --project /path/to/repo --json
+```
+
+When the user addresses the assistant as `Remi`, `Рэми`, or `Реми`, generated
+rules route the request through Memora. The main toggles live in
+`.memora/config.yaml` under `agent_policy`: `aliases`, `enabled`,
+`auto_recall`, `session_capture`, `trust_level`, and recall budget.
+
+## Session And Scheduled Capture
+
+At the end of substantial work, an agent can save a transcript, a concise
+summary, and proposed atomic memories:
 
 ```bash
 memora session finalize ./cursor-session.jsonl \
@@ -150,27 +158,13 @@ memora session finalize ./cursor-session.jsonl \
   --json
 ```
 
-## Find Context
+Scheduled agents follow the same protocol: fetch with their own tools, call
+`raw add`, write a concise extract, call `source add`, then save only durable
+atomic memories with `remember`.
 
-Use `build-context` for normal agent recall. It first runs the automatic recall
-policy and returns no context when memory is not needed:
+## Review
 
-```bash
-memora build-context "Plan the storage refactor" --project my-project --task-class planning --json
-```
-
-Use lower-level retrieval commands when you are explicitly searching:
-
-```bash
-memora search "storage decision" --project my-project --json
-memora recall "What did we decide about storage?" --project my-project --budget 1200 --json
-memora brief "Prepare context for storage work" --project my-project --budget 1200 --json
-```
-
-## Review Memory
-
-Agent-authored memories default to `pending`. Review them before they become
-active durable context:
+Agent-authored memories default to `pending`. Review them explicitly:
 
 ```bash
 memora review --json
@@ -179,75 +173,23 @@ memora review approve mem_20260430_example --reason "verified source" --json
 memora review reject mem_20260430_bad --reason "not durable" --json
 ```
 
-Lifecycle commands keep old or conflicting memory explicit:
-
-```bash
-memora supersede mem_old --by mem_new --reason "decision changed" --json
-memora contradict mem_a mem_b --reason "conflicting guidance" --json
-memora mark mem_old --status stale --json
-```
-
-## Vault And Sync
-
-The Markdown vault is durable state:
+## Vault Layout
 
 ```text
 MemoryVault/
-  Memories/
+  raw/
   Sources/
-  Briefs/
-  Profiles/
-  Synthesis/
+  Memories/
   .memora/config.yaml
 ```
 
-Do not sync or commit generated local state:
-
-```gitignore
-.memora/index.sqlite
-.memora/cache/
-.memora/embeddings/
-.memora/locks/
-```
-
-After syncing a vault or resolving conflicts, rebuild local state:
+SQLite indexes, embeddings, caches, and locks under `.memora/` are rebuildable
+local state. Do not sync or commit them.
 
 ```bash
-memora conflicts --vault ~/MemoryVault
 memora doctor --vault ~/MemoryVault
 memora reindex --vault ~/MemoryVault --clean
+memora status --vault ~/MemoryVault --json
 ```
 
-## Sample Vault
-
-Try the included fixture:
-
-```bash
-memora status --vault examples/sample-vault
-memora review --vault examples/sample-vault --json
-memora brief "What is the storage decision?" --vault examples/sample-vault --project memora --json
-```
-
-## Development
-
-Run tests:
-
-```bash
-pytest
-```
-
-Run deterministic evaluation:
-
-```bash
-memora eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
-```
-
-More detailed docs:
-
-- `docs/commands.md`
-- `docs/local-install.md`
-- `docs/agent-instructions.md`
-- `docs/schema.md`
-- `docs/semantic-search.md`
-- `docs/sync.md`
-- `docs/evaluation.md`
+For technical details, see `docs/architecture.md`.

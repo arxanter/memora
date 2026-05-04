@@ -89,6 +89,9 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
     config = load_config(vault)
 
     assert config.agent_policy.aliases == ["Remi", "Рэми", "Реми"]
+    assert config.agent_policy.enabled is True
+    assert config.agent_policy.auto_recall is True
+    assert config.agent_policy.session_capture is True
     assert config.agent_policy.trust_level == "autonomous"
     assert config.agent_policy.default_recall_budget == 1800
     assert config.agent_policy.min_active_confidence == 0.85

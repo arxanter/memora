@@ -122,8 +122,8 @@ def test_help_command_lists_grouped_commands():
     assert human_result.exit_code == 0, human_result.output
     assert "Memora commands" in human_result.output
     assert "Setup and health" in human_result.output
-    assert "agent-rules" in human_result.output
-    assert "explain-recall" in human_result.output
+    assert "agent rules" in human_result.output
+    assert "source add" in human_result.output
     assert "memora <command> --help" in human_result.output
 
     assert json_result.exit_code == 0, json_result.output
@@ -138,24 +138,18 @@ def test_help_command_lists_grouped_commands():
     assert {
         "init <vault>",
         "setup [vault]",
-        "agent-rules",
-        "install-agent-rules",
-        "agent-install-commands",
+        "agent rules",
+        "agent integrate",
+        "agent update",
+        "agent status",
         "remember",
-        "curate",
-        "import-source <path>",
-        "import-source-inbox <path>",
-        "source-inbox scan",
-        "import-url <url>",
-        "import-pdf <path>",
-        "import-zoom <path>",
-        "import-slack <path>",
-        "import-session <path>",
+        "review",
+        "raw add <path>",
+        "source add <source.md>",
         "lookup-source <source_id>",
         "brief",
         "build-context",
         "raw list",
-        "eval <fixture-or-file>",
     } <= command_usages
 
 
@@ -487,7 +481,8 @@ def test_agent_scheduled_template_human_email_includes_boundaries_safety_and_pro
     assert "mailbox folders/labels" in result.output
     assert "Do not store secrets" in result.output
     assert "private dumps" in result.output
-    assert "memora scheduled ingest --kind email" in result.output
+    assert "memora raw add" in result.output
+    assert "memora source add" in result.output
 
 
 def test_agent_scheduled_template_json_includes_template_steps_and_safety():
@@ -515,6 +510,7 @@ def test_agent_scheduled_template_json_includes_template_steps_and_safety():
     assert payload["template"] == payload["content"]
     assert "Source channel: scheduled_slack" in payload["template"]
     assert any("normal client tools" in step for step in payload["steps"])
+    assert any("memora raw add" in step for step in payload["steps"])
     assert any("pending" in item for item in payload["safety"])
 
 
@@ -1629,6 +1625,93 @@ def test_raw_list_and_inspect_report_inbox_files(tmp_path):
     assert inspect_payload["relative_path"] == "raw/inbox/webclips/article.md"
     assert inspect_payload["content_hash"].startswith("sha256:")
     assert "Raw clip content." in inspect_payload["preview"]
+
+
+def test_raw_add_stages_file_with_metadata_only(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "article.md"
+    source.write_text("# Article\n\nRaw clip content.", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "raw",
+            "add",
+            str(source),
+            "--vault",
+            str(vault),
+            "--kind",
+            "text",
+            "--format",
+            "markdown",
+            "--project",
+            "memora",
+            "--tag",
+            "clip",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "raw add"
+    assert payload["metadata"]["kind"] == "text"
+    assert payload["metadata"]["format"] == "markdown"
+    assert payload["metadata"]["project"] == "memora"
+    assert payload["metadata"]["tags"] == ["clip"]
+    assert (vault / payload["relative_path"]).read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+    assert (vault / payload["relative_metadata_path"]).is_file()
+    assert not any((vault / "Sources").iterdir())
+
+    list_result = runner.invoke(app, ["raw", "list", "--vault", str(vault), "--json"])
+    list_payload = json.loads(list_result.output)
+    assert list_payload["file_count"] == 1
+    assert list_payload["files"][0]["metadata"]["raw_id"] == payload["raw_id"]
+
+
+def test_source_add_saves_curated_source_and_extract(tmp_path):
+    vault = tmp_path / "memory-vault"
+    source = tmp_path / "source.md"
+    extract = tmp_path / "extract.md"
+    source.write_text("# Source\n\nDurable evidence.", encoding="utf-8")
+    extract.write_text("Summary\n\n- Durable fact.", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "source",
+            "add",
+            str(source),
+            "--extract",
+            str(extract),
+            "--vault",
+            str(vault),
+            "--kind",
+            "text",
+            "--format",
+            "markdown",
+            "--project",
+            "memora",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "source add"
+    assert payload["kind"] == "text"
+    source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
+    extract_text = (vault / payload["relative_extract_path"]).read_text(encoding="utf-8")
+    source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
+    assert source_frontmatter["channel"] == "file"
+    assert source_frontmatter["origin"]["provider"] == "source_add"
+    assert source_frontmatter["origin"]["format"] == "markdown"
+    assert "Durable evidence." in source_text
+    assert "Durable fact." in extract_text
 
 
 def test_raw_process_normalizes_raw_file_into_sources(tmp_path):

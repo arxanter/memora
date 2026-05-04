@@ -89,21 +89,15 @@ def test_cli_module_invocation_runs_typer_app():
 
 def test_local_install_docs_reference_existing_scripts():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    docs = (ROOT / "docs" / "local-install.md").read_text(encoding="utf-8")
-    commands = (ROOT / "docs" / "commands.md").read_text(encoding="utf-8")
-    agent_docs = (ROOT / "docs" / "agent-instructions.md").read_text(encoding="utf-8")
+    architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 
     for script_name in ("install.sh", "memora-service.sh", "uninstall.sh"):
         assert (SCRIPTS / script_name).exists()
-        assert script_name in docs or script_name in commands
 
     assert "./scripts/install.sh --vault ~/MemoryVault" in readme
     assert 'pipx install "memora"' in readme
-    assert "Windows And WSL" in readme
     assert "Python 3.10" in readme and "newer" in readme
-    assert "memora-service install" in docs
-    assert "python3.12" in docs
-    assert "systemd --user" in docs
-    assert "launchd" in docs
-    assert "WSL2" in docs
-    assert "remember" in agent_docs
+    assert "WSL2" in readme
+    assert "raw add" in readme
+    assert "source add" in readme
+    assert "remember" in architecture

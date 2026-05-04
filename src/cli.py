@@ -5,6 +5,7 @@ from __future__ import annotations
 import json as json_module
 import shutil
 import hashlib
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -71,18 +72,20 @@ app = typer.Typer(
     help="Local-first Obsidian-backed Memora CLI.",
     no_args_is_help=True,
 )
-raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
+raw_app = typer.Typer(help="Stage and inspect raw source material.", no_args_is_help=True)
+source_app = typer.Typer(help="Save curated durable source evidence.", no_args_is_help=True)
 source_inbox_app = typer.Typer(help="Scan opt-in local source inbox files.", no_args_is_help=True)
 review_app = typer.Typer(help="Review pending agent-generated memories.", no_args_is_help=False)
 agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
 session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
 scheduled_app = typer.Typer(help="Ingest prepared scheduled-agent source material.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
-app.add_typer(source_inbox_app, name="source-inbox")
+app.add_typer(source_app, name="source")
+app.add_typer(source_inbox_app, name="source-inbox", hidden=True)
 app.add_typer(review_app, name="review")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
-app.add_typer(scheduled_app, name="scheduled")
+app.add_typer(scheduled_app, name="scheduled", hidden=True)
 agent_aliases_app = typer.Typer(
     help="Configure assistant names for recall routing and generated agent rules.",
     no_args_is_help=True,
@@ -92,6 +95,9 @@ console = Console()
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 SOURCE_INBOX_SCAN_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 SOURCE_INBOX_SCAN_SUPPORTED_SUFFIXES = {*SOURCE_INBOX_SCAN_TEXT_SUFFIXES, ".pdf", ".json"}
+RAW_KINDS = {"pdf", "zoom", "slack", "text"}
+RAW_FORMATS = {"pdf", "markdown", "json", "txt"}
+RAW_READABLE_SUFFIXES = {".md", ".markdown", ".txt", ".json"}
 AGENT_CAPTURE_ALLOWED_MEMORY_TYPES = {
     MemoryType.FACT,
     MemoryType.DECISION,
@@ -108,49 +114,27 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("setup [vault]", "Preview or create the vault layout and next setup steps."),
             ("status", "Show vault health and local index state."),
             ("doctor", "Validate Markdown schema, graph links, and conflicts."),
-            ("conflicts", "Detect sync conflict markers, duplicate IDs, and invalid frontmatter."),
             ("reindex", "Rebuild the disposable SQLite index from Markdown."),
-            ("refresh-index", "Reindex only when durable vault files changed."),
-            ("agent-rules", "Generate CLI-first instructions for coding agents."),
-            ("install-agent-rules", "Install generated agent instructions into a project."),
-            ("agent-install-commands", "Print copy/paste agent-rule install commands."),
+            ("agent rules", "Generate CLI-first instructions for coding agents."),
+            ("agent integrate", "Install generated agent instructions into a project."),
+            ("agent update", "Update managed agent instructions."),
+            ("agent status", "Show installed agent instruction status."),
             ("agent-aliases list", "Show assistant names used for recall routing and agent rules."),
             ("agent-aliases set …", "Save assistant names to the vault config."),
-            ("agent <command>", "Manage grouped coding-agent rules, targets, installs, and status."),
-            ("agent capture", "Batch-save an agent-analyzed source plus pending memories."),
             ("session finalize", "Save an agent transcript, summary, and proposed memories."),
-            ("scheduled ingest", "Save prepared scheduled-agent source plus pending memories."),
+            ("raw add <path>", "Copy one raw file into raw staging with sidecar metadata."),
             ("raw list", "List raw inbox/archive files."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
-            ("raw process <path>", "Normalize one raw file into Sources/."),
-            ("raw process-inbox <path>", "Normalize raw inbox files into Sources/."),
+            ("source add <source.md>", "Save curated source text and optional extract under Sources/."),
         ),
     ),
     (
-        "Write and lifecycle",
+        "Write and review",
         (
             ("remember", "Create a validated Markdown memory."),
             ("review", "List pending agent-generated memories with a diff-style preview."),
             ("review approve <id...>", "Approve pending agent memories in an explicit batch."),
             ("review reject <id...>", "Reject pending agent memories in an explicit batch."),
-            ("review defer <id...>", "Defer pending agent memories with audit history."),
-            ("review supersede <old_id>", "Supersede a pending memory by a replacement."),
-            ("curate", "Propose conservative review actions without mutating memories."),
-            ("mark", "Set a memory lifecycle status."),
-            ("reject", "Reject a memory so default retrieval excludes it."),
-            ("supersede", "Mark an old memory replaced by a newer one."),
-            ("contradict", "Record a contradiction relation between memories."),
-            ("decay", "Mark expired active memories stale."),
-            ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
-            ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
-            ("source-inbox scan", "One-shot scan of opt-in local source inbox files."),
-            ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
-            ("import-pdf <path>", "Import explicit local PDF text into Sources/."),
-            ("import-zoom <path>", "Import an explicit local Zoom summary/transcript export."),
-            ("import-slack <path>", "Import an explicit local Slack thread/message export."),
-            ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
-            ("session finalize <path>", "Finalize an AI-agent session with grouped review metadata."),
-            ("scheduled ingest", "Ingest prepared scheduled-agent source material safely."),
         ),
     ),
     (
@@ -158,24 +142,16 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         (
             ("search", "Return ranked memory results with snippets and citations."),
             ("recall", "Pack ranked chunks under a strict token budget."),
-            ("explain-recall", "Explain selected and skipped recall candidates."),
             ("lookup-source <source_id>", "Return compact evidence from a saved source."),
             ("brief", "Render a citation-preserving Memora Brief."),
             ("build-context", "Apply recall policy and return agent-ready context."),
-            ("build-profile", "Write a generated user or project profile under Profiles/."),
-            ("synthesize", "Write a deterministic generated synthesis under Synthesis/."),
-            ("should-recall", "Decide whether a user request should use memory."),
         ),
     ),
     (
-        "Inspect, evaluation, and compatibility",
+        "Inspect",
         (
             ("inspect <id>", "Show one memory by ID."),
             ("open <id>", "Print a memory Markdown path and Obsidian URI."),
-            ("graph <id>", "Show incoming and outgoing graph links."),
-            ("eval <fixture-or-file>", "Run deterministic fixture-backed evaluation cases."),
-            ("import <path>", "Placeholder for Markdown/Basic Memory import."),
-            ("export", "Placeholder for Markdown export."),
         ),
     ),
 )
@@ -260,7 +236,7 @@ def help_command(
         "tips": [
             "Run `memora <command> --help` for command-specific options.",
             "Most commands support `--json` for agent-friendly output.",
-            "Use `memora agent-rules --format cursor` to generate project agent instructions.",
+            "Use `memora agent rules --client cursor` to generate project agent instructions.",
         ],
     }
     if json_output:
@@ -275,10 +251,10 @@ def help_command(
         for command in group["commands"]:
             console.print(f"  [cyan]{command['usage']:<24}[/cyan] {command['description']}")
         console.print("")
-    console.print("Agent setup: [cyan]memora agent-rules --format cursor[/cyan]")
+    console.print("Agent setup: [cyan]memora agent rules --client cursor[/cyan]")
 
 
-@app.command("agent-rules")
+@app.command("agent-rules", hidden=True)
 def agent_rules_command(
     rule_format: str = typer.Option("agents", "--format", help="Rule format: agents, cursor, claude, or codex."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
@@ -310,7 +286,7 @@ def agent_rules_command(
     typer.echo(payload["content"], nl=False)
 
 
-@app.command("install-agent-rules")
+@app.command("install-agent-rules", hidden=True)
 def install_agent_rules_command(
     client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
     project: Path = typer.Option(Path("."), "--project", help="Project directory that should receive the rules."),
@@ -354,7 +330,7 @@ def install_agent_rules_command(
     console.print(f"[green]Installed agent rules:[/green] {payload['target_path']}")
 
 
-@app.command("agent-install-commands")
+@app.command("agent-install-commands", hidden=True)
 def agent_install_commands_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory; defaults to the current directory."),
     client: str = typer.Option(
@@ -437,7 +413,7 @@ def agent_group_rules_command(
     typer.echo(payload["content"], nl=False)
 
 
-@agent_app.command("targets")
+@agent_app.command("targets", hidden=True)
 def agent_targets_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Target scope: project or user."),
@@ -574,7 +550,7 @@ def agent_status_command(
         console.print(f"{result['client']}: {result['status']} -> {result['target_path']}")
 
 
-@agent_app.command("doctor")
+@agent_app.command("doctor", hidden=True)
 def agent_doctor_command(
     client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
@@ -680,7 +656,7 @@ def agent_aliases_set_command(
         console.print(f"  - {name}")
 
 
-@agent_app.command("commands")
+@agent_app.command("commands", hidden=True)
 def agent_group_commands_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory; defaults to the current directory."),
     client: str = typer.Option("all", "--client", help="Client command set: all, agents, cursor, claude, or codex."),
@@ -725,7 +701,7 @@ def agent_group_commands_command(
         typer.echo("")
 
 
-@agent_app.command("scheduled-template")
+@agent_app.command("scheduled-template", hidden=True)
 def agent_scheduled_template_command(
     kind: str = typer.Option("custom", "--kind", help="Template kind: email, calendar, slack, web, or custom."),
     client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
@@ -746,7 +722,7 @@ def agent_scheduled_template_command(
     typer.echo(payload["content"])
 
 
-@agent_app.command("session-template")
+@agent_app.command("session-template", hidden=True)
 def agent_session_template_command(
     client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
     project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in the template."),
@@ -766,7 +742,7 @@ def agent_session_template_command(
     typer.echo(payload["content"])
 
 
-@agent_app.command("capture")
+@agent_app.command("capture", hidden=True)
 def agent_capture_command(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
@@ -860,7 +836,7 @@ def session_finalize_command(
     console.print(f"Pending memories: {payload['pending_count']}")
 
 
-@scheduled_app.command("ingest")
+@scheduled_app.command("ingest", hidden=True)
 def scheduled_ingest_command(
     kind: str = typer.Option("custom", "--kind", help="Scheduled source kind, e.g. email, calendar, slack, web, or custom."),
     project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
@@ -941,6 +917,48 @@ def raw_list_command(
         console.print(f"- {item['relative_path']}{marker}")
 
 
+@raw_app.command("add")
+def raw_add_command(
+    path: Path = typer.Argument(..., help="Local file to copy into raw staging."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    kind: str = typer.Option(..., "--kind", help="Raw source kind: pdf, zoom, slack, or text."),
+    source_format: str = typer.Option(..., "--format", help="Raw file format: pdf, markdown, json, or txt."),
+    title: Optional[str] = typer.Option(None, "--title", help="Optional human title for the raw material."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the raw material."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the staging plan without copying files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Copy one raw file into raw staging with metadata only."""
+
+    try:
+        config = load_config(vault)
+        payload = _raw_add_payload(
+            config,
+            path,
+            kind=kind,
+            source_format=source_format,
+            title=title,
+            project=project,
+            sensitivity=sensitivity,
+            tags=tag,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="raw_add_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if payload["dry_run"]:
+        console.print(f"[yellow]Dry run:[/yellow] would stage raw file at {payload['relative_path']}")
+        return
+    console.print(f"[green]Staged raw file:[/green] {payload['relative_path']}")
+    console.print(f"Metadata: {payload['relative_metadata_path']}")
+
+
 @raw_app.command("inspect")
 def raw_inspect_command(
     path: Path = typer.Argument(..., help="Raw file to inspect."),
@@ -976,7 +994,7 @@ def raw_inspect_command(
         console.print(payload["preview"], markup=False, soft_wrap=True)
 
 
-@raw_app.command("process")
+@raw_app.command("process", hidden=True)
 def raw_process_command(
     path: Path = typer.Argument(..., help="Raw Markdown/text file to normalize into Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1021,7 +1039,7 @@ def raw_process_command(
     console.print(f"[green]Saved source:[/green] {payload['relative_source_path']}")
 
 
-@raw_app.command("process-inbox")
+@raw_app.command("process-inbox", hidden=True)
 def raw_process_inbox_command(
     path: Optional[Path] = typer.Argument(None, help="Raw inbox directory; defaults to <vault>/raw/inbox."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1090,6 +1108,48 @@ def raw_process_inbox_command(
     console.print(f"[green]{action} {payload['source_count']} raw file(s)[/green]")
 
 
+@source_app.command("add")
+def source_add_command(
+    path: Path = typer.Argument(..., help="Markdown/text source file to save under Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    extract: Optional[Path] = typer.Option(None, "--extract", "--extract-file", help="Optional extract Markdown/text file."),
+    kind: str = typer.Option("text", "--kind", help="Source kind: pdf, zoom, slack, or text."),
+    source_format: str = typer.Option("markdown", "--format", help="Source format: markdown, json, txt, or pdf."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to file stem."),
+    url: Optional[str] = typer.Option(None, "--url", help="Optional source URL or permalink."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Save curated source text and optional agent-authored extract."""
+
+    try:
+        config = load_config(vault)
+        payload = _source_add_payload(
+            config,
+            path,
+            extract=extract,
+            kind=kind,
+            source_format=source_format,
+            title=title,
+            url=url,
+            project=project,
+            sensitivity=sensitivity,
+            tags=tag,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="source_add_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Saved source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
+
+
 @app.command()
 def remember(
     memory_type: MemoryType = typer.Option(..., "--type", help="Memory type."),
@@ -1125,7 +1185,7 @@ def remember(
     console.print(f"[green]Created memory:[/green] {payload['relative_path']}")
 
 
-@app.command("import-source")
+@app.command("import-source", hidden=True)
 def import_source_command(
     path: Path = typer.Argument(..., help="Markdown or text file to save under Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1174,7 +1234,7 @@ def import_source_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
-@app.command("import-source-inbox")
+@app.command("import-source-inbox", hidden=True)
 def import_source_inbox_command(
     path: Path = typer.Argument(..., help="Directory containing Markdown/text source files."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1242,7 +1302,7 @@ def import_source_inbox_command(
         console.print(f"- {source['relative_source_path']}")
 
 
-@source_inbox_app.command("scan")
+@source_inbox_app.command("scan", hidden=True)
 def source_inbox_scan_command(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     path: Optional[Path] = typer.Option(None, "--path", "--inbox", help="Override configured source inbox path."),
@@ -1304,7 +1364,7 @@ def source_inbox_scan_command(
         raise typer.Exit(1)
 
 
-@app.command("import-url")
+@app.command("import-url", hidden=True)
 def import_url_command(
     url: str = typer.Argument(..., help="Explicit http(s) URL to import into Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1387,7 +1447,7 @@ def import_url_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
-@app.command("import-pdf")
+@app.command("import-pdf", hidden=True)
 def import_pdf_command(
     path: Path = typer.Argument(..., help="Explicit local PDF file to import into Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1464,7 +1524,7 @@ def import_pdf_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
-@app.command("import-zoom")
+@app.command("import-zoom", hidden=True)
 def import_zoom_command(
     path: Path = typer.Argument(..., help="Explicit local Zoom summary/transcript export to import into Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1546,7 +1606,7 @@ def import_zoom_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
-@app.command("import-slack")
+@app.command("import-slack", hidden=True)
 def import_slack_command(
     path: Path = typer.Argument(..., help="Explicit local Slack thread/message export to import into Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1624,7 +1684,7 @@ def import_slack_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
-@app.command("import-session")
+@app.command("import-session", hidden=True)
 def import_session_command(
     path: Path = typer.Argument(..., help="AI-agent transcript/session file."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -1731,7 +1791,7 @@ def reindex(
         console.print(f"[yellow]Graph warnings:[/yellow] {payload['orphan_count']} orphan relation(s)")
 
 
-@app.command("refresh-index")
+@app.command("refresh-index", hidden=True)
 def refresh_index(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     debounce_seconds: Optional[float] = typer.Option(
@@ -1962,7 +2022,7 @@ def recall(
         console.print(f"   {chunk['text']}")
 
 
-@app.command("explain-recall")
+@app.command("explain-recall", hidden=True)
 def explain_recall_command(
     query: str = typer.Argument(..., help="Recall query to explain."),
     budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
@@ -2229,7 +2289,17 @@ def build_context_command(
             task_policy,
             include_profile,
         )
-        decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
+        if not config.agent_policy.enabled or not config.agent_policy.auto_recall:
+            decision = {
+                "should_recall": False,
+                "query": task,
+                "confidence": 0.0,
+                "trigger_count": 0,
+                "triggers": [],
+                "reason": "agent memory is disabled" if not config.agent_policy.enabled else "agent auto recall is disabled",
+            }
+        else:
+            decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
         if not decision["should_recall"]:
             session_payload = session_trace(
                 normalize_session_recall_state(
@@ -2339,7 +2409,7 @@ def build_context_command(
     console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
 
 
-@app.command("synthesize")
+@app.command("synthesize", hidden=True)
 def synthesize_command(
     query: Optional[str] = typer.Argument(None, help="Optional topic/query filter."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -2378,7 +2448,7 @@ def synthesize_command(
     console.print(f"Memories: {payload['memory_count']}")
 
 
-@app.command("build-profile")
+@app.command("build-profile", hidden=True)
 def build_profile_command(
     profile_type: str = typer.Option("user", "--type", help="Profile type: user or project."),
     project: Optional[str] = typer.Option(None, "--project", help="Project name for project profiles."),
@@ -2408,7 +2478,7 @@ def build_profile_command(
     console.print("[dim]Generated context; not canonical memory.[/dim]")
 
 
-@app.command("should-recall")
+@app.command("should-recall", hidden=True)
 def should_recall_command(
     message: str = typer.Argument(..., help="User message to classify."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -2525,7 +2595,7 @@ def open_command(
             console.print(f"[yellow]Launch failed:[/yellow] {payload['launch_error']}")
 
 
-@app.command()
+@app.command(hidden=True)
 def graph(
     memory_id: str = typer.Argument(..., help="Memory id to graph."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -2589,7 +2659,7 @@ def doctor(
         raise typer.Exit(1)
 
 
-@app.command()
+@app.command(hidden=True)
 def conflicts(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -2623,7 +2693,7 @@ def conflicts(
     raise typer.Exit(1)
 
 
-@app.command()
+@app.command(hidden=True)
 def mark(
     memory_id: str = typer.Argument(..., help="Memory id to update."),
     status: LifecycleStatus = typer.Option(..., "--status", help="Lifecycle status to set."),
@@ -2653,7 +2723,7 @@ def mark(
     )
 
 
-@app.command()
+@app.command(hidden=True)
 def reject(
     memory_id: str = typer.Argument(..., help="Memory id to reject."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -2678,7 +2748,7 @@ def reject(
     console.print(f"[green]Rejected memory:[/green] {memory_id}")
 
 
-@app.command()
+@app.command(hidden=True)
 def supersede(
     old_id: str = typer.Argument(..., help="Superseded memory id."),
     by_id: str = typer.Option(..., "--by", help="Replacement memory id."),
@@ -2701,7 +2771,7 @@ def supersede(
     console.print(f"[green]Superseded memory:[/green] {old_id} by {by_id}")
 
 
-@app.command()
+@app.command(hidden=True)
 def contradict(
     id1: str = typer.Argument(..., help="First memory id."),
     id2: str = typer.Argument(..., help="Second memory id."),
@@ -2724,7 +2794,7 @@ def contradict(
     console.print(f"[green]Recorded contradiction:[/green] {id1} contradicts {id2}")
 
 
-@app.command()
+@app.command(hidden=True)
 def decay(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -2825,7 +2895,7 @@ def review_reject(
     )
 
 
-@review_app.command("defer")
+@review_app.command("defer", hidden=True)
 def review_defer(
     memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to leave pending."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -2845,7 +2915,7 @@ def review_defer(
     )
 
 
-@review_app.command("supersede")
+@review_app.command("supersede", hidden=True)
 def review_supersede(
     old_id: str = typer.Argument(..., help="Pending memory id to supersede."),
     by_id: str = typer.Option(..., "--by", help="Replacement memory id."),
@@ -2867,7 +2937,7 @@ def review_supersede(
     )
 
 
-@app.command()
+@app.command(hidden=True)
 def curate(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
@@ -2897,7 +2967,7 @@ def curate(
         _print_curation_proposal(item)
 
 
-@app.command("eval")
+@app.command("eval", hidden=True)
 def eval_command(
     fixture_or_file: Path = typer.Argument(..., help="Evaluation fixture directory or YAML spec."),
     keep_working_vault: bool = typer.Option(
@@ -2936,7 +3006,7 @@ def eval_command(
         raise typer.Exit(1)
 
 
-@app.command("import")
+@app.command("import", hidden=True)
 def import_command(
     path: Path = typer.Argument(..., help="Path to import later."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -2947,7 +3017,7 @@ def import_command(
     _placeholder_command("import", vault=vault, json_output=json_output, path=str(path))
 
 
-@app.command("export")
+@app.command("export", hidden=True)
 def export_command(
     export_format: str = typer.Option("markdown", "--format", help="Export format."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
@@ -3756,17 +3826,22 @@ def _raw_files(path: Path) -> list[Path]:
     if not path.exists():
         raise ValueError(f"raw path not found: {path}")
     if path.is_file():
-        return [path]
-    return sorted(item for item in path.rglob("*") if item.is_file())
+        return [] if _is_raw_metadata_path(path) else [path]
+    return sorted(item for item in path.rglob("*") if item.is_file() and not _is_raw_metadata_path(item))
 
 
 def _is_processable_raw(path: Path) -> bool:
     return path.suffix.lower() in SOURCE_INBOX_SUFFIXES
 
 
+def _is_raw_metadata_path(path: Path) -> bool:
+    return path.name.endswith(".meta.json")
+
+
 def _raw_file_payload(config: Any, path: Path, *, include_preview: bool) -> dict[str, Any]:
     content_hash = _file_content_hash(path)
     processable = _is_processable_raw(path)
+    metadata = _raw_metadata(path)
     payload: dict[str, Any] = {
         "path": str(path),
         "relative_path": _relative_to_vault(config, path),
@@ -3776,9 +3851,195 @@ def _raw_file_payload(config: Any, path: Path, *, include_preview: bool) -> dict
         "content_hash": content_hash,
         "idempotency_key": f"raw:{_relative_to_vault(config, path)}#{content_hash}",
         "processable": processable,
+        "metadata": metadata,
     }
-    if include_preview and processable:
+    if include_preview and _is_readable_raw(path):
         payload["preview"] = _read_text_file(path)[:4000]
+    return payload
+
+
+def _raw_metadata_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.meta.json")
+
+
+def _raw_metadata(path: Path) -> Optional[dict[str, Any]]:
+    metadata_path = _raw_metadata_path(path)
+    if not metadata_path.is_file():
+        return None
+    try:
+        payload = json_module.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json_module.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _is_readable_raw(path: Path) -> bool:
+    metadata = _raw_metadata(path) or {}
+    raw_format = str(metadata.get("format") or "").lower()
+    return path.suffix.lower() in RAW_READABLE_SUFFIXES or raw_format in {"markdown", "json", "txt"}
+
+
+def _normalize_raw_kind(value: str) -> str:
+    selected = value.strip().lower()
+    if selected not in RAW_KINDS:
+        raise ValueError(f"kind must be one of: {', '.join(sorted(RAW_KINDS))}")
+    return selected
+
+
+def _normalize_raw_format(value: str) -> str:
+    selected = value.strip().lower()
+    if selected not in RAW_FORMATS:
+        raise ValueError(f"format must be one of: {', '.join(sorted(RAW_FORMATS))}")
+    return selected
+
+
+def _source_channel_for_kind(kind: str) -> str:
+    if kind == "text":
+        return "file"
+    return kind
+
+
+def _slugify_path_stem(value: str) -> str:
+    cleaned = "".join(character.lower() if character.isalnum() else "-" for character in value)
+    slug = "-".join(part for part in cleaned.split("-") if part)
+    return slug[:64] or "raw"
+
+
+def _unique_path(path: Path) -> Path:
+    if not path.exists() and not _raw_metadata_path(path).exists():
+        return path
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists() and not _raw_metadata_path(candidate).exists():
+            return candidate
+    raise ValueError(f"could not allocate unique raw path for {path.name}")
+
+
+def _raw_add_payload(
+    config: Any,
+    path: Path,
+    *,
+    kind: str,
+    source_format: str,
+    title: Optional[str],
+    project: Optional[str],
+    sensitivity: str,
+    tags: list[str],
+    dry_run: bool,
+) -> dict[str, Any]:
+    source_path = path.expanduser().resolve()
+    if not source_path.is_file():
+        raise ValueError(f"raw source file not found: {source_path}")
+    selected_kind = _normalize_raw_kind(kind)
+    selected_format = _normalize_raw_format(source_format)
+    now = datetime.now(timezone.utc).astimezone()
+    raw_id = f"{now:%Y-%m-%d_%H%M%S}_{_slugify_path_stem(source_path.stem)}"
+    target_dir = config.raw_root / "inbox" / selected_kind
+    target_path = _unique_path(target_dir / source_path.name)
+    metadata_path = _raw_metadata_path(target_path)
+    metadata = {
+        "raw_id": raw_id,
+        "kind": selected_kind,
+        "format": selected_format,
+        "title": title or source_path.stem,
+        "project": project,
+        "tags": list(tags),
+        "sensitivity": sensitivity,
+        "captured_at": now.isoformat(),
+        "original_path": str(source_path),
+        "file_name": source_path.name,
+        "size_bytes": source_path.stat().st_size,
+        "content_hash": _file_content_hash(source_path),
+    }
+    payload = {
+        "ok": True,
+        "implemented": True,
+        "command": "raw add",
+        "dry_run": dry_run,
+        "raw_id": raw_id,
+        "kind": selected_kind,
+        "format": selected_format,
+        "path": str(target_path),
+        "relative_path": _relative_to_vault(config, target_path),
+        "metadata_path": str(metadata_path),
+        "relative_metadata_path": _relative_to_vault(config, metadata_path),
+        "metadata": metadata,
+        "would_write": [str(target_path), str(metadata_path)],
+        "next_steps": [
+            "Inspect the staged file with `memora raw inspect`.",
+            "Have the agent read and analyze the raw material before saving curated evidence with `memora source add`.",
+        ],
+    }
+    if dry_run:
+        return payload
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, target_path)
+    metadata_path.write_text(json_module.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
+
+
+def _source_add_payload(
+    config: Any,
+    path: Path,
+    *,
+    extract: Optional[Path],
+    kind: str,
+    source_format: str,
+    title: Optional[str],
+    url: Optional[str],
+    project: Optional[str],
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    source_path = path.expanduser().resolve()
+    if not source_path.is_file():
+        raise ValueError(f"source file not found: {source_path}")
+    extract_path = extract.expanduser().resolve() if extract is not None else None
+    if extract_path is not None and not extract_path.is_file():
+        raise ValueError(f"extract file not found: {extract_path}")
+    selected_kind = _normalize_raw_kind(kind)
+    selected_format = _normalize_raw_format(source_format)
+    result = save_source_material(
+        config,
+        title=title or source_path.stem,
+        url=url,
+        content=_read_text_file(source_path),
+        extract=_read_text_file(extract_path) if extract_path is not None else None,
+        project=project,
+        tags=tags,
+        channel=_source_channel_for_kind(selected_kind),
+        source_quality="user_provided",
+        sensitivity=sensitivity,
+        origin={
+            "provider": "source_add",
+            "kind": selected_kind,
+            "format": selected_format,
+            "file_name": source_path.name,
+            "path": str(source_path),
+            "content_hash": _file_content_hash(source_path),
+            **(
+                {
+                    "extract_file_name": extract_path.name,
+                    "extract_path": str(extract_path),
+                    "extract_content_hash": _file_content_hash(extract_path),
+                }
+                if extract_path is not None
+                else {}
+            ),
+        },
+    )
+    payload = result.to_dict()
+    payload.update(
+        {
+            "command": "source add",
+            "kind": selected_kind,
+            "format": selected_format,
+            "next_steps": [
+                "Review the saved source/extract under Sources/.",
+                "Promote only durable atomic facts, decisions, preferences, tasks, or project context with `memora remember`.",
+            ],
+        }
+    )
     return payload
 
 

@@ -165,7 +165,7 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, analyze this source and save it",
             "проанализируй источник и сохрани",
-            "read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.",
+            "stage raw material when needed, create an extract, save curated source evidence, then promote only durable atomic items.",
         ),
     ]
     lines: list[str] = []
@@ -587,9 +587,10 @@ def agent_scheduled_template_payload(
     steps = [
         "Confirm run frequency, source boundaries, allowed accounts/workspaces, sensitivity, and project before the first run.",
         "Fetch or read only the requested source through the scheduled agent's normal client tools; Memora does not fetch email, Slack, calendars, or web pages by itself.",
+        "Stage the fetched raw file with `memora raw add` so the run has traceable input metadata.",
         "Create one concise extract for the run with Summary, Durable Facts, Decisions, Tasks, Preferences, Open Questions, and Relevant Quotes.",
-        "Preserve the prepared source and extract with `memora scheduled ingest` or another explicit source import command.",
-        "Promote only durable atomic facts, decisions, preferences, tasks, or project context as pending memories.",
+        "Preserve curated evidence with `memora source add`.",
+        "Promote only durable atomic facts, decisions, preferences, tasks, or project context with `memora remember`.",
         "Return a compact report with inspected source count, saved source id/path, pending memory count, rejected proposal count, and review command.",
     ]
     safety = [
@@ -617,9 +618,11 @@ def agent_scheduled_template_payload(
             "Agent steps:",
             *[f"{index}. {step}" for index, step in enumerate(steps, start=1)],
             "",
-            "Safe ingest command:",
+            "Core ingest commands:",
             "```bash",
-            f'memora scheduled ingest --kind {selected_kind} --project "{selected_project}" --source-file <source.md> --extract-file <extract.md> --memories-file <memories.json> --json',
+            f'memora raw add <raw-file> --kind {selected_kind if selected_kind in {"slack"} else "text"} --format markdown --project "{selected_project}" --json',
+            f'memora source add <source.md> --extract <extract.md> --kind {selected_kind if selected_kind in {"slack"} else "text"} --project "{selected_project}" --json',
+            f'memora remember --type fact --project "{selected_project}" --text "<durable atomic fact>" --json',
             "```",
             "",
             "Safety guidance:",
@@ -1082,13 +1085,14 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     search = f'memora search "<query>"{vault_arg}{project_arg} --json'
     review = f"memora review{vault_arg} --json"
     remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>" --json'
-    import_source = f"memora import-source <path>{vault_arg}{project_arg} --extract-file <extract.md> --json"
-    import_session = f"memora import-session <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --remember-summary --json"
+    raw_add = f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown --json"
+    source_add = f"memora source add <source.md>{vault_arg}{project_arg} --extract <extract.md> --kind text --json"
+    session_finalize = f"memora session finalize <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --memories-file <memories.json> --json"
     primary = _primary_latin_alias(aliases)
     addressing = "/".join(aliases)
     routing_lines = _intent_routing_lines(aliases)
     return [
-        "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, imports, writes, review, lifecycle, status, indexing, and session capture.",
+        "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
         "",
         "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `Profiles/`, `Synthesis/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
@@ -1116,11 +1120,12 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         remember,
         "```",
         "",
-        "Source capture workflow: the AI agent reads or fetches the material first, writes a concise extract, preserves raw/source material through the CLI, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
+        "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
         "",
         "```bash",
-        import_source,
-        f"memora raw process <raw-path>{vault_arg}{project_arg} --json",
+        raw_add,
+        source_add,
+        remember,
         "```",
         "",
         "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory. Canonical memories should be small, durable, cited when possible, and reviewable.",
@@ -1131,17 +1136,17 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         review,
         "```",
         "",
-        "Present id, type, confidence, source, risk flags, summary, and recommended action. Do not approve, reject, defer, supersede, or mark active without explicit confirmation unless the vault policy allows autonomous lifecycle changes with source, confidence, reason, and audit history.",
+        "Present id, type, confidence, source, risk flags, summary, and recommended action. Do not approve or reject without explicit confirmation unless the vault policy allows autonomous lifecycle changes with source, confidence, reason, and audit history.",
         "",
-        "Session-end capture workflow: at the end of a substantial task, produce one concise summary of decisions, durable facts, tasks, and open questions. If a transcript/export is available, import it through the CLI and create pending summary memory when useful:",
+        "Session-end capture workflow: when `agent_policy.session_capture` is enabled, produce one concise summary of decisions, durable facts, tasks, and open questions. If a transcript/export is available, finalize it through the CLI with proposed memories:",
         "",
         "```bash",
-        import_session,
+        session_finalize,
         "```",
         "",
         "Chat-noise reduction: do not narrate every `memora ... --json` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.",
         "",
-        "Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.",
+        "Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; stage raw input with `memora raw add`; preserve curated evidence with `memora source add`; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.",
         "",
     ]
 
