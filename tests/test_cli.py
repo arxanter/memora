@@ -170,6 +170,135 @@ def test_remember_command_creates_valid_markdown(tmp_path):
     assert document.body.strip() == "Use Markdown as durable memory."
 
 
+def test_memory_update_command_changes_scope_type_tags_and_moves_file(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/projects/ai-thesis.md",
+        memory_id="mem_20260504_ai_thesis",
+        memory_type="project_context",
+        scope="project",
+        project="memory-project",
+        body="AI value shifts toward boring infrastructure.",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "memory",
+            "update",
+            "mem_20260504_ai_thesis",
+            "--vault",
+            str(vault),
+            "--type",
+            "fact",
+            "--scope",
+            "user",
+            "--clear-project",
+            "--tag",
+            "ai",
+            "--tag",
+            "infrastructure",
+            "--reason",
+            "misclassified project context",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert set(payload["changes"]) == {"type", "scope", "project", "tags"}
+    assert payload["previous"]["relative_path"] == "Memories/projects/ai-thesis.md"
+    assert payload["updated"]["relative_path"] == "Memories/facts/ai-thesis.md"
+    assert not (vault / "Memories/projects/ai-thesis.md").exists()
+
+    document = validate_markdown_file(vault / "Memories/facts/ai-thesis.md")
+    assert document.frontmatter.type == "fact"
+    assert document.frontmatter.scope == "user"
+    assert document.frontmatter.project is None
+    assert document.frontmatter.tags == ["ai", "infrastructure"]
+    assert document.frontmatter.observations[0].category == "fact"
+    history = document.frontmatter.model_dump(mode="json")["history"]
+    assert history[-1]["action"] == "update"
+    assert history[-1]["reason"] == "misclassified project context"
+
+
+def test_memory_update_command_dry_run_does_not_write(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/projects/dry-run.md",
+        memory_id="mem_20260504_dry_run",
+        memory_type="project_context",
+        scope="project",
+        project="memory-project",
+        body="Dry run should not move this memory.",
+    )
+    path = vault / "Memories/projects/dry-run.md"
+    before = path.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "memory",
+            "update",
+            "mem_20260504_dry_run",
+            "--vault",
+            str(vault),
+            "--scope",
+            "user",
+            "--clear-project",
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["changed"] is True
+    assert payload["dry_run"] is True
+    assert payload["mutation_count"] == 0
+    assert payload["updated"]["scope"] == "user"
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_memory_update_command_requires_project_for_project_scope(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _write_memory(
+        vault,
+        "Memories/facts/user.md",
+        memory_id="mem_20260504_user",
+        memory_type="fact",
+        scope="user",
+        body="Project scope requires a project.",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "memory",
+            "update",
+            "mem_20260504_user",
+            "--vault",
+            str(vault),
+            "--scope",
+            "project",
+            "--clear-project",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "memory_update_failed"
+    assert "project-scoped memory must include project" in payload["error"]["message"]
+
+
 def test_status_and_doctor_emit_json(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault), "--json"])
@@ -214,6 +343,7 @@ def test_help_command_lists_grouped_commands():
         "agent update",
         "agent status",
         "remember",
+        "memory update <id>",
         "review",
         "raw add <path>",
         "source add <source.md>",

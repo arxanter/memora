@@ -19,6 +19,8 @@ from schema import (
     LifecycleStatus,
     MemoryDocument,
     MemoryFrontmatter,
+    MemoryScope,
+    MemoryType,
     RelationType,
     iter_memory_markdown_files,
     parse_markdown_document,
@@ -31,6 +33,7 @@ from safety import (
     scan_text,
 )
 from sync import atomic_write_many, atomic_write_text, vault_lock
+from vault import MEMORY_TYPE_DIRECTORIES
 
 _FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\n(?P<yaml>.*?)(?:\n---[ \t]*)(?:\n(?P<body>.*))?\Z",
@@ -197,6 +200,24 @@ class LifecycleResult:
             "citations": self.citations,
             **self.details,
         }
+
+
+@dataclass(frozen=True)
+class MemoryUpdateOptions:
+    """Explicit metadata/body fields requested by `memora memory update`."""
+
+    memory_type: Optional[MemoryType] = None
+    scope: Optional[MemoryScope] = None
+    project: Optional[str] = None
+    clear_project: bool = False
+    status: Optional[LifecycleStatus] = None
+    confidence: Optional[float] = None
+    clear_confidence: bool = False
+    tags: Optional[tuple[str, ...]] = None
+    clear_tags: bool = False
+    title: Optional[str] = None
+    clear_title: bool = False
+    text: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -550,6 +571,199 @@ def reject_memory(
 
     result = mark_status(config, memory_id, LifecycleStatus.REJECTED, reason=reason, _action="reject")
     return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
+
+
+def update_memory(
+    config: MemoryConfig,
+    memory_id: str,
+    options: MemoryUpdateOptions,
+    *,
+    reason: Optional[str] = None,
+    dry_run: bool = False,
+) -> LifecycleResult:
+    """Update safe, user-editable memory fields through validated Markdown."""
+
+    _validate_update_options(options)
+    if dry_run:
+        record = _find_memory(config, memory_id)
+        return _update_memory_unlocked(config, record, options, reason=reason, dry_run=True)
+
+    with vault_lock(config):
+        record = _find_memory(config, memory_id)
+        return _update_memory_unlocked(config, record, options, reason=reason, dry_run=False)
+
+
+def _update_memory_unlocked(
+    config: MemoryConfig,
+    record: _MemoryRecord,
+    options: MemoryUpdateOptions,
+    *,
+    reason: Optional[str],
+    dry_run: bool,
+) -> LifecycleResult:
+    previous_status = str(record.data.get("status"))
+    previous_path = record.path
+    previous = _update_summary(record.data, record.body, record.path, config=config)
+    data = dict(record.data)
+    body = record.body
+    changes: list[str] = []
+
+    old_type = str(data.get("type"))
+    old_confidence = data.get("confidence")
+    old_body_text = body.strip()
+
+    if options.memory_type is not None:
+        selected_type = MemoryType(options.memory_type).value
+        if data.get("type") != selected_type:
+            data["type"] = selected_type
+            _retag_observations(data, old_type=old_type, new_type=selected_type)
+            changes.append("type")
+
+    if options.scope is not None:
+        selected_scope = MemoryScope(options.scope).value
+        if data.get("scope") != selected_scope:
+            data["scope"] = selected_scope
+            changes.append("scope")
+
+    if options.clear_project:
+        if data.get("project") is not None:
+            data["project"] = None
+            changes.append("project")
+    elif options.project is not None:
+        selected_project = _clean_optional_text(options.project, field="project")
+        if data.get("project") != selected_project:
+            data["project"] = selected_project
+            changes.append("project")
+    elif data.get("scope") != MemoryScope.PROJECT.value and data.get("project") is not None:
+        data["project"] = None
+        changes.append("project")
+
+    if options.status is not None:
+        selected_status = LifecycleStatus(options.status).value
+        if data.get("status") != selected_status:
+            data["status"] = selected_status
+            today = _now().date().isoformat()
+            if selected_status in _TERMINAL_STATUSES:
+                data["valid_to"] = data.get("valid_to") or _valid_to_for(data, today)
+            elif selected_status in {LifecycleStatus.ACTIVE.value, LifecycleStatus.PENDING.value}:
+                data["valid_to"] = None
+            changes.append("status")
+
+    if options.clear_confidence:
+        if data.get("confidence") is not None:
+            data["confidence"] = None
+            _update_observation_confidence(data, old_confidence=old_confidence, new_confidence=None)
+            changes.append("confidence")
+    elif options.confidence is not None:
+        selected_confidence = float(options.confidence)
+        if data.get("confidence") != selected_confidence:
+            data["confidence"] = selected_confidence
+            _update_observation_confidence(
+                data,
+                old_confidence=old_confidence,
+                new_confidence=selected_confidence,
+            )
+            changes.append("confidence")
+
+    if options.clear_tags:
+        if data.get("tags"):
+            data["tags"] = []
+            changes.append("tags")
+    elif options.tags is not None:
+        selected_tags = _normalize_tag_updates(options.tags)
+        if data.get("tags") != selected_tags:
+            data["tags"] = selected_tags
+            changes.append("tags")
+
+    if options.clear_title:
+        if data.get("title") is not None:
+            data["title"] = None
+            data["aliases"] = []
+            changes.append("title")
+    elif options.title is not None:
+        selected_title = _clean_optional_text(options.title, field="title")
+        if data.get("title") != selected_title:
+            data["title"] = selected_title
+            changes.append("title")
+
+    if options.text is not None:
+        selected_text = options.text.strip()
+        if not selected_text:
+            raise ValueError("memory text must not be empty")
+        if old_body_text != selected_text:
+            body = f"\n\n{selected_text}\n"
+            _update_observation_text(data, old_text=old_body_text, new_text=selected_text)
+            changes.append("text")
+
+    if {"text", "tags"} & set(changes):
+        safety = merge_scan_results(
+            scan_text(body.strip(), field="memory"),
+            scan_text(" ".join(_string_list(data.get("tags"))), field="tags"),
+        )
+        merged_risk_flags = normalize_risk_flags((*_string_list(data.get("risk_flags")), *safety.risk_flags))
+        data["risk_flags"] = merged_risk_flags
+
+    if not changes:
+        return LifecycleResult(
+            command="memory update",
+            mutations=(),
+            details={
+                "id": record.document.frontmatter.id,
+                "changed": False,
+                "dry_run": dry_run,
+                "message": "memory already has requested values",
+                "previous": previous,
+                "updated": previous,
+                "changes": [],
+            },
+        )
+
+    now = _now()
+    data["updated_at"] = now.isoformat()
+    _append_history(
+        data,
+        action="update",
+        at=now,
+        previous_status=previous_status,
+        status=str(data.get("status")),
+        reason=reason,
+        changes=changes,
+    )
+
+    target_path = _target_path_for_update(config, record.path, MemoryType(data["type"]))
+    rendered = _render_updated(data, body, path=target_path)
+    updated = _update_summary(data, body, target_path, config=config)
+
+    if not dry_run:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_replace(target_path, rendered)
+        if target_path != record.path:
+            record.path.unlink()
+
+    mutation = LifecycleMutation(
+        memory_id=record.document.frontmatter.id,
+        path=target_path,
+        relative_path=target_path.relative_to(config.vault_path),
+        previous_status=previous_status,
+        status=str(data.get("status")),
+        action="update",
+    )
+    details = {
+        "id": record.document.frontmatter.id,
+        "changed": True,
+        "dry_run": dry_run,
+        "changes": changes,
+        "previous": previous,
+        "updated": updated,
+    }
+    if target_path != previous_path:
+        details["previous_relative_path"] = previous_path.relative_to(config.vault_path).as_posix()
+        details["relative_path"] = target_path.relative_to(config.vault_path).as_posix()
+    return LifecycleResult(
+        command="memory update",
+        mutations=() if dry_run else (mutation,),
+        details=details,
+    )
 
 
 def review_batch_action(
@@ -1803,6 +2017,121 @@ def _touch_last_used_unlocked(
         record.data["last_used_at"] = selected_when.isoformat()
         rendered.append((record.path, _render_updated(record.data, record.body, path=record.path)))
     _atomic_replace_many(rendered)
+
+
+def _validate_update_options(options: MemoryUpdateOptions) -> None:
+    if options.clear_project and options.project is not None:
+        raise ValueError("--project and --clear-project cannot be used together")
+    if options.clear_confidence and options.confidence is not None:
+        raise ValueError("--confidence and --clear-confidence cannot be used together")
+    if options.clear_tags and options.tags is not None:
+        raise ValueError("--tag and --clear-tags cannot be used together")
+    if options.clear_title and options.title is not None:
+        raise ValueError("--title and --clear-title cannot be used together")
+    if options.confidence is not None and not 0 <= float(options.confidence) <= 1:
+        raise ValueError("--confidence must be between 0 and 1")
+    if not any(
+        (
+            options.memory_type is not None,
+            options.scope is not None,
+            options.project is not None,
+            options.clear_project,
+            options.status is not None,
+            options.confidence is not None,
+            options.clear_confidence,
+            options.tags is not None,
+            options.clear_tags,
+            options.title is not None,
+            options.clear_title,
+            options.text is not None,
+        )
+    ):
+        raise ValueError("at least one memory field must be provided")
+
+
+def _target_path_for_update(config: MemoryConfig, current_path: Path, memory_type: MemoryType) -> Path:
+    target_dir = config.memory_root / MEMORY_TYPE_DIRECTORIES[memory_type]
+    target_path = target_dir / current_path.name
+    if target_path != current_path and target_path.exists():
+        raise ValueError(f"target memory path already exists: {target_path.relative_to(config.vault_path)}")
+    return target_path
+
+
+def _clean_optional_text(value: str, *, field: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field} must not be empty")
+    return cleaned
+
+
+def _normalize_tag_updates(tags: Iterable[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        item = str(tag).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        cleaned.append(item)
+    return cleaned
+
+
+def _retag_observations(data: dict[str, Any], *, old_type: str, new_type: str) -> None:
+    observations = data.get("observations")
+    if not isinstance(observations, list):
+        return
+    for observation in observations:
+        if isinstance(observation, dict) and observation.get("category") == old_type:
+            observation["category"] = new_type
+
+
+def _update_observation_text(data: dict[str, Any], *, old_text: str, new_text: str) -> None:
+    observations = data.get("observations")
+    if not isinstance(observations, list):
+        return
+    if not observations:
+        observations.append(
+            {
+                "category": str(data.get("type")),
+                "text": new_text,
+                "confidence": data.get("confidence"),
+            }
+        )
+        return
+    first = observations[0]
+    if isinstance(first, dict) and str(first.get("text") or "").strip() == old_text:
+        first["text"] = new_text
+
+
+def _update_observation_confidence(
+    data: dict[str, Any],
+    *,
+    old_confidence: Any,
+    new_confidence: Optional[float],
+) -> None:
+    observations = data.get("observations")
+    if not isinstance(observations, list):
+        return
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        if observation.get("confidence") in (old_confidence, None):
+            observation["confidence"] = new_confidence
+
+
+def _update_summary(data: Mapping[str, Any], body: str, path: Path, *, config: MemoryConfig) -> dict[str, Any]:
+    return {
+        "id": str(data.get("id")),
+        "type": str(data.get("type")),
+        "scope": str(data.get("scope")),
+        "project": data.get("project"),
+        "status": str(data.get("status")),
+        "confidence": data.get("confidence"),
+        "tags": _string_list(data.get("tags")),
+        "title": data.get("title"),
+        "text": body.strip(),
+        "relative_path": path.relative_to(config.vault_path).as_posix(),
+    }
 
 
 @dataclass

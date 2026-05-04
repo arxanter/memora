@@ -29,8 +29,10 @@ from config import ENV_VAULT_PATH, ConfigError, load_config, set_agent_aliases
 from freshness import refresh_index_if_needed
 from indexer import reindex_vault
 from lifecycle import (
+    MemoryUpdateOptions,
     review_batch_action,
     review_queue,
+    update_memory,
 )
 from memora_profile import build_context_profile_payload
 from recall import explain_recall, recall_memory
@@ -57,12 +59,14 @@ app = typer.Typer(
 raw_app = typer.Typer(help="Stage and inspect raw source material.", no_args_is_help=True)
 source_app = typer.Typer(help="Save curated durable source evidence.", no_args_is_help=True)
 review_app = typer.Typer(help="Review pending agent-generated memories.", no_args_is_help=False)
+memory_app = typer.Typer(help="Update existing canonical memories.", no_args_is_help=True)
 agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
 session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage the installed default vault.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
 app.add_typer(source_app, name="source")
 app.add_typer(review_app, name="review")
+app.add_typer(memory_app, name="memory")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
 app.add_typer(vault_app, name="vault")
@@ -113,6 +117,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Write and review",
         (
             ("remember", "Create a validated Markdown memory."),
+            ("memory update <id>", "Update safe editable fields on an existing memory."),
             ("review", "List pending agent-generated memories with a diff-style preview."),
             ("review approve <id...>", "Approve pending agent memories in an explicit batch."),
             ("review reject <id...>", "Reject pending agent memories in an explicit batch."),
@@ -889,6 +894,68 @@ def remember(
         return
 
     console.print(f"[green]Created memory:[/green] {payload['relative_path']}")
+
+
+@memory_app.command("update")
+def memory_update_command(
+    memory_id: str = typer.Argument(..., help="Memory id to update."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Replace memory type."),
+    scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Replace recall scope."),
+    project: Optional[str] = typer.Option(None, "--project", help="Replace project metadata."),
+    clear_project: bool = typer.Option(False, "--clear-project", help="Clear project metadata."),
+    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Replace lifecycle status."),
+    confidence: Optional[float] = typer.Option(None, "--confidence", min=0, max=1, help="Replace confidence."),
+    clear_confidence: bool = typer.Option(False, "--clear-confidence", help="Clear confidence metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Replace tags; may be repeated."),
+    clear_tags: bool = typer.Option(False, "--clear-tags", help="Clear all tags."),
+    title: Optional[str] = typer.Option(None, "--title", help="Replace title metadata."),
+    clear_title: bool = typer.Option(False, "--clear-title", help="Clear title metadata."),
+    text: Optional[str] = typer.Option(None, "--text", help="Replace memory body text."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for this update."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the update without writing files."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Update safe editable fields on an existing canonical memory."""
+
+    try:
+        config = load_config(vault)
+        result = update_memory(
+            config,
+            memory_id,
+            MemoryUpdateOptions(
+                memory_type=memory_type,
+                scope=scope,
+                project=project,
+                clear_project=clear_project,
+                status=status,
+                confidence=confidence,
+                clear_confidence=clear_confidence,
+                tags=tuple(tag) if tag else None,
+                clear_tags=clear_tags,
+                title=title,
+                clear_title=clear_title,
+                text=text,
+            ),
+            reason=reason,
+            dry_run=dry_run,
+        )
+        payload = result.to_dict()
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="memory_update_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    label = "Planned memory update" if dry_run else "Updated memory"
+    if not payload.get("changed"):
+        console.print(f"[yellow]No memory changes:[/yellow] {memory_id}")
+        return
+    updated = payload["updated"]
+    console.print(f"[green]{label}:[/green] {memory_id}")
+    console.print(f"Path: {updated['relative_path']}")
+    console.print(f"Changes: {', '.join(payload['changes'])}")
 
 
 @app.command()

@@ -27,6 +27,7 @@ Use these most often:
 
 - `memora build-context "<task>" --project <project> --task-class planning --json`
 - `memora remember --type <type> --text "<atomic memory>" --project <project> --json`
+- `memora memory update <id> --scope user --clear-project --json`
 - `memora raw add <path> --kind <kind> --format <format> --project <project> --json`
 - `memora source add <source.md> --extract <extract.md> --kind <kind> --project <project> --json`
 - `memora review --json`
@@ -131,6 +132,16 @@ and report the CLI gap.
 `memora remember --type <memory_type> --text TEXT [--scope user|project] [--project NAME] [--status <status>] [--tag TAG ...] [--vault PATH] [--json]`
 
 - Create one canonical atomic memory.
+
+`memora memory update <id> [--type <memory_type>] [--scope user|project|global] [--project NAME|--clear-project] [--status <status>] [--confidence N|--clear-confidence] [--tag TAG ...|--clear-tags] [--title TEXT|--clear-title] [--text TEXT] [--reason TEXT] [--dry-run] [--vault PATH] [--json]`
+
+- Update safe editable fields on an existing canonical memory.
+- `--tag` replaces the full tag list; repeat it for multiple tags. Use
+  `--clear-tags` to remove all tags.
+- Changing `--type` moves the Markdown file into the corresponding
+  `Memories/` type directory.
+- Non-project scopes clear `project` automatically unless `--project` is
+  supplied.
 
 `memora review [--group-by source] [--vault PATH] [--json]`
 
