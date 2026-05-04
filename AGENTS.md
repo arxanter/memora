@@ -2,8 +2,10 @@
 
 This project uses Memora. The preferred current interface is CLI-first.
 
-Current project direction is CLI-only for agents. Prefer `memora ... --json`
-commands and generated agent instructions/skills for all memory workflows.
+Current project direction is CLI-only for agents. Prefer `memora ...` commands
+and generated agent instructions/skills for all memory workflows. Retrieval
+commands default to compact agent-readable output; use `--json` for writes,
+review/lifecycle operations, integrations, tests, and debugging.
 
 ## Remi / Memora Policy
 
@@ -50,17 +52,17 @@ preferences, project history/status, or project-specific memory.
 
 When recall is relevant, run:
 
-`memora build-context "<task>" --project "<project-name>" --task-class planning --json`
+`memora build-context "<task>" --project "<project-name>" --task-class planning`
 
 Use returned memory only when `memory_needed` is true.
 
 When the user asks to find information in the knowledge base, prefer CLI:
 
-1. `memora search "<query>" --project "<project>" --json` for direct lookup and
-   citations.
-2. `memora recall "<query>" --budget 1200 --project "<project>" --json` when
+1. `memora search "<query>" --project "<project>"` for direct lookup and
+   citations. Use `memora inspect <id>` to load full entries only when needed.
+2. `memora recall "<query>" --budget 1200 --project "<project>"` when
    the agent needs compact source chunks to answer a question.
-3. `memora brief "<query>" --budget 1200 --project "<project>" --json` when the
+3. `memora brief "<query>" --budget 1200 --project "<project>"` when the
    user wants a synthesized, citation-preserving summary.
 
 Useful filters include `project`, `type`, `status`, `scope`, `limit`,

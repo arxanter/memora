@@ -809,9 +809,9 @@ def render_agent_rules(
 
 
 def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]) -> list[str]:
-    build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning --json'
-    brief = f'memora brief "<topic>"{vault_arg}{project_arg} --json'
-    search = f'memora search "<query>"{vault_arg}{project_arg} --json'
+    build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning'
+    brief = f'memora brief "<topic>"{vault_arg}{project_arg}'
+    search = f'memora search "<query>"{vault_arg}{project_arg}'
     review = f"memora review{vault_arg} --json"
     remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>" --json'
     raw_add = f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown --json"
@@ -821,13 +821,15 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     addressing = "/".join(aliases)
     routing_lines = _intent_routing_lines(aliases)
     return [
-        "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
+        "Current product direction is CLI-first and CLI-only for agents. Use `memora ...` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
+        "",
+        "For recall/search/brief/build-context, prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`. Use `--json` for machine-readable writes, review/lifecycle operations, integration payloads, tests, and debugging.",
         "",
         "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
         "",
-        "For a compact command and option reference, use `docs/cli-agent-reference.md` when it is available in the project; otherwise run `memora help --json` for the current public command surface.",
+        "For a compact command and option reference, use `docs/cli-agent-reference.md` when it is available in the project; otherwise run `memora help` for the current public command surface.",
         "",
         f"Do not run memora recall for every turn. Use memory when the request addresses {addressing}, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
         "",
@@ -875,7 +877,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         session_finalize,
         "```",
         "",
-        "Chat-noise reduction: do not narrate every `memora ... --json` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.",
+        "Chat-noise reduction: do not narrate every `memora ...` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.",
         "",
         "Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; stage raw input with `memora raw add`; preserve curated evidence with `memora source add`; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.",
         "",

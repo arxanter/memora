@@ -272,7 +272,7 @@ def help_command(
         ],
         "tips": [
             "Run `memora <command> --help` for command-specific options.",
-            "Most commands support `--json` for agent-friendly output.",
+            "Retrieval commands default to compact agent output; use `--json` for structured/debug payloads.",
             "Use `memora agent rules --client cursor` to generate project agent instructions.",
         ],
     }
@@ -1053,30 +1053,7 @@ def search(
         _print_json(payload)
         return
 
-    semantic_info = payload.get("semantic", {})
-    if semantic_info.get("enabled"):
-        console.print(
-            "[dim]Semantic: "
-            f"provider={semantic_info.get('provider') or '-'} "
-            f"model={semantic_info.get('model') or '-'}[/dim]"
-        )
-
-    if not payload["results"]:
-        console.print("[yellow]No memories found.[/yellow]")
-        return
-
-    for position, result in enumerate(payload["results"], start=1):
-        metadata = result["metadata"]
-        related_marker = " [cyan](related)[/cyan]" if result["related"] else ""
-        console.print(
-            f"[bold]{position}. {result['id']}[/bold]{related_marker} "
-            f"[dim]score={result['score']:.2f} path={result['path']}[/dim]"
-        )
-        console.print(
-            f"   {metadata['type']} / {metadata['status']} / "
-            f"project={metadata['project'] or '-'} / chunk={metadata['chunk_type']}"
-        )
-        console.print(f"   {result['snippet']}")
+    _print_agent_search(payload)
 
 
 @app.command()
@@ -1396,7 +1373,7 @@ def brief(
         _print_json(payload)
         return
 
-    console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
+    _print_agent_brief(payload)
 
 
 @app.command("build-context")
@@ -1562,9 +1539,9 @@ def build_context_command(
         return
 
     if not payload["memory_needed"]:
-        console.print("[yellow]No memory context needed.[/yellow]")
+        _print_agent_build_context(payload)
         return
-    console.print(payload["markdown"], markup=False, end="", soft_wrap=True)
+    _print_agent_build_context(payload)
 
 
 @app.command("should-recall", hidden=True)
@@ -1637,19 +1614,7 @@ def inspect(
         _print_json(payload)
         return
 
-    memory = payload["memory"]
-    console.print(f"[bold]{payload['id']}[/bold] [dim]{payload['relative_path']}[/dim]")
-    console.print(
-        f"{memory['type']} / {memory['status']} / "
-        f"scope={memory['scope']} / project={memory.get('project') or '-'}"
-    )
-    console.print(f"Path: {payload['path']}")
-    console.print(f"Obsidian: {payload['obsidian_uri']}")
-    if memory.get("source"):
-        console.print(f"Source: {memory['source']}")
-    if payload["body"]:
-        console.print("")
-        console.print(payload["body"], markup=False, soft_wrap=True)
+    _print_agent_inspect(payload)
 
 
 @app.command("open")
@@ -2300,6 +2265,165 @@ def _compose_context_markdown(profile: Mapping[str, Any], brief_markdown: str) -
     if not brief_markdown:
         return profile_markdown
     return f"{profile_markdown.rstrip()}\n\n{brief_markdown}"
+
+
+_AGENT_BRIEF_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("current_decisions", "Decisions"),
+    ("current_relevant_facts", "Facts"),
+    ("warnings", "Warnings"),
+    ("open_questions", "Open questions"),
+)
+
+
+def _print_agent_search(payload: Mapping[str, Any]) -> None:
+    results = [item for item in payload.get("results", []) if isinstance(item, Mapping)]
+    query = str(payload.get("query") or "")
+    if not results:
+        console.print(f"Found 0 memory candidates for: {query}", markup=False)
+        return
+
+    console.print(f"Found {len(results)} memory candidate(s) for: {query}", markup=False)
+    for position, result in enumerate(results, start=1):
+        metadata = dict(result.get("metadata") or {})
+        memory_id = str(result.get("id") or "")
+        marker = f"C{position}"
+        type_status = _agent_type_status(metadata)
+        related = " related" if result.get("related") else ""
+        console.print(f"[{marker}] {memory_id} {type_status}{related}", markup=False)
+        console.print(f"Summary: {_agent_one_line(result.get('snippet'))}", markup=False)
+        if memory_id:
+            console.print(f"Inspect: memora inspect {shlex.quote(memory_id)}", markup=False)
+        if position != len(results):
+            console.print("", markup=False)
+
+
+def _print_agent_brief(payload: Mapping[str, Any], *, heading: str = "Memory context") -> None:
+    sections = payload.get("sections")
+    if not isinstance(sections, Mapping):
+        markdown = str(payload.get("markdown") or "")
+        console.print(markdown, markup=False, end="" if markdown.endswith("\n") else "\n", soft_wrap=True)
+        return
+
+    items = list(_agent_brief_items(sections))
+    query = str(payload.get("query") or "")
+    if not items:
+        console.print(f"{heading}: no relevant memories found for: {query}", markup=False)
+        return
+
+    console.print(f"{heading}: {len(items)} item(s) for: {query}", markup=False)
+    for position, (section_name, section_label, item) in enumerate(items, start=1):
+        del section_name
+        citations = item.get("citations") if isinstance(item.get("citations"), list) else []
+        marker = str(citations[0]) if citations else "C?"
+        memory_id = str(item.get("source_id") or "")
+        type_status = _agent_type_status(item)
+        console.print(f"[{marker}] {section_label}: {memory_id} {type_status}".rstrip(), markup=False)
+        console.print(f"Summary: {_agent_one_line(item.get('text'))}", markup=False)
+        if memory_id:
+            console.print(f"Inspect: memora inspect {shlex.quote(memory_id)}", markup=False)
+        if position != len(items):
+            console.print("", markup=False)
+
+
+def _print_agent_build_context(payload: Mapping[str, Any]) -> None:
+    needed = bool(payload.get("memory_needed"))
+    console.print(f"memory_needed: {str(needed).lower()}", markup=False)
+    policy = payload.get("policy") if isinstance(payload.get("policy"), Mapping) else {}
+    query = str(policy.get("query") or payload.get("task") or "")
+    if query:
+        console.print(f"query: {query}", markup=False)
+    if not needed:
+        trace = payload.get("trace") if isinstance(payload.get("trace"), Mapping) else {}
+        reason = str(policy.get("reason") or trace.get("empty_reason") or "policy_skipped")
+        console.print(f"reason: {reason}", markup=False)
+        return
+
+    profile_lines = _agent_profile_lines(payload.get("profile"))
+    if profile_lines:
+        console.print("", markup=False)
+        for line in profile_lines:
+            console.print(line, markup=False)
+
+    brief_payload = payload.get("brief")
+    if isinstance(brief_payload, Mapping):
+        console.print("", markup=False)
+        _print_agent_brief(brief_payload, heading="Brief")
+
+
+def _print_agent_inspect(payload: Mapping[str, Any]) -> None:
+    memory = payload.get("memory") if isinstance(payload.get("memory"), Mapping) else {}
+    memory_id = str(payload.get("id") or memory.get("id") or "")
+    console.print(f"ID: {memory_id}", markup=False)
+    console.print(f"Type: {memory.get('type') or '-'}", markup=False)
+    console.print(f"Status: {memory.get('status') or '-'}", markup=False)
+    console.print(f"Scope: {memory.get('scope') or '-'}", markup=False)
+    if memory.get("project"):
+        console.print(f"Project: {memory['project']}", markup=False)
+    if payload.get("relative_path"):
+        console.print(f"Path: {payload['relative_path']}", markup=False)
+    if memory.get("source"):
+        console.print(f"Source: {memory['source']}", markup=False)
+    body = str(payload.get("body") or "").strip()
+    if body:
+        console.print("", markup=False)
+        console.print(body, markup=False, soft_wrap=True)
+
+
+def _agent_brief_items(sections: Mapping[str, Any]) -> Iterable[tuple[str, str, Mapping[str, Any]]]:
+    for section_name, section_label in _AGENT_BRIEF_SECTIONS:
+        values = sections.get(section_name) or []
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, Mapping):
+                yield section_name, section_label, item
+
+
+def _agent_profile_lines(profile: Any) -> list[str]:
+    if not isinstance(profile, Mapping) or not profile.get("included"):
+        return []
+    markdown = str(profile.get("markdown") or "")
+    lines = ["Profile context:"]
+    in_frontmatter = False
+    in_citations = False
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if line == "---":
+            in_frontmatter = not in_frontmatter
+            continue
+        if in_frontmatter or not line:
+            continue
+        if line.startswith("# "):
+            continue
+        if line.startswith("Generated ") or line.startswith("Selected active memories:"):
+            continue
+        if line == "## Citations":
+            in_citations = True
+            continue
+        if in_citations:
+            continue
+        if line.startswith("## "):
+            lines.append(line[3:])
+            continue
+        if line.startswith("- "):
+            lines.append(line)
+    if len(lines) == 1:
+        memory_ids = profile.get("source_memory_ids") or []
+        if memory_ids:
+            lines.append("Loaded profile memories: " + ", ".join(str(item) for item in memory_ids))
+    return lines if len(lines) > 1 else []
+
+
+def _agent_type_status(values: Mapping[str, Any]) -> str:
+    memory_type = values.get("type") or values.get("memory_type") or "-"
+    status = values.get("status") or "-"
+    return f"{memory_type}/{status}"
+
+
+def _agent_one_line(value: Any) -> str:
+    text = str(value or "").replace("[", "").replace("]", "")
+    text = " ".join(text.split())
+    return text or "-"
 
 
 def _build_context_trace(

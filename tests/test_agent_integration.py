@@ -52,7 +52,8 @@ def test_render_agent_rules_preserves_phase_one_content(tmp_path):
     assert 'memora build-context "<task>"' in content
     assert f'--vault "{tmp_path / "vault"}"' in content
     assert '--project "memora"' in content
-    assert "Use only `memora ... --json` commands" in content
+    assert "prefer the default compact agent output" in content
+    assert "memora search \"<query>\"" in content
 
 
 def test_render_agent_rules_contains_strict_vault_and_remi_policy():
@@ -87,7 +88,7 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     assert "Рэми, актуализируй память по <topic>" in content
     assert "Реми, актуализируй память по <topic>" in content
     assert "Remi, analyze this source and save it" in content
-    assert "do not narrate every `memora ... --json` call" in content
+    assert "do not narrate every `memora ...` call" in content
 
 
 def test_user_scope_targets_use_real_global_files_when_supported(tmp_path):

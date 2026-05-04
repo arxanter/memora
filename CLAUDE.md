@@ -1,22 +1,24 @@
 <!-- BEGIN AGENT MEMORY MANAGED BLOCK -->
 <!-- template_version: agent-rules-v2 -->
-<!-- content_hash: sha256:c63a6578a7a0392c00534b2f904e7f4fae136e071d807b7637d43952737fcd74 -->
+<!-- content_hash: sha256:1a3620abfeae3f7f0a56c37891a641c69a3d41843b941e15a40598ebf1430db6 -->
 # Memora Instructions
 
-Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.
+Current product direction is CLI-first and CLI-only for agents. Use `memora ...` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.
+
+For recall/search/brief/build-context, prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`. Use `--json` for machine-readable writes, review/lifecycle operations, integration payloads, tests, and debugging.
 
 Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.
 
 If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.
 
-For a compact command and option reference, use `docs/cli-agent-reference.md` when it is available in the project; otherwise run `memora help --json` for the current public command surface.
+For a compact command and option reference, use `docs/cli-agent-reference.md` when it is available in the project; otherwise run `memora help` for the current public command surface.
 
 Do not run memora recall for every turn. Use memory when the request addresses Remi/Рэми/Реми, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.
 
 When recall is relevant, run:
 
 ```bash
-memora build-context "<task>" --project "memory-project" --task-class planning --json
+memora build-context "<task>" --project "memory-project" --task-class planning
 ```
 
 Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.
@@ -33,8 +35,8 @@ Remi intent routing examples:
 Useful Remi commands:
 
 ```bash
-memora brief "<topic>" --project "memory-project" --json
-memora search "<query>" --project "memory-project" --json
+memora brief "<topic>" --project "memory-project"
+memora search "<query>" --project "memory-project"
 memora remember --project "memory-project" --type decision --text "<durable decision>" --json
 ```
 
@@ -62,7 +64,7 @@ Session-end capture workflow: when `agent_policy.session_capture` is enabled, pr
 memora session finalize <transcript> --project "memory-project" --summary-file <summary.md> --memories-file <memories.json> --json
 ```
 
-Chat-noise reduction: do not narrate every `memora ... --json` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.
+Chat-noise reduction: do not narrate every `memora ...` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.
 
 Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; stage raw input with `memora raw add`; preserve curated evidence with `memora source add`; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.
 

@@ -83,7 +83,8 @@ Generated rules are the contract for Cursor, Claude, Codex, and generic
 `AGENTS.md` consumers. They instruct agents to:
 
 - treat `Remi`, `Рэми`, and `Реми` aliases as explicit Memora triggers;
-- call `memora build-context ... --json` only when memory is relevant;
+- call `memora build-context ...` only when memory is relevant, using the compact
+  default output for recall and `--json` only for structured/debug payloads;
 - use returned context only when `memory_needed=true`;
 - stage raw input with `raw add`;
 - save durable evidence with `source add`;

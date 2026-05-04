@@ -1194,8 +1194,10 @@ def test_brief_command_generates_markdown_and_json(tmp_path):
     json_result = runner.invoke(app, ["brief", "memory brief", "--vault", str(vault), "--json"])
 
     assert markdown_result.exit_code == 0, markdown_result.output
-    assert "## Memora Brief" in markdown_result.output
-    assert "Current decisions:" in markdown_result.output
+    assert "Memory context: 1 item(s) for: memory brief" in markdown_result.output
+    assert "Decisions: mem_" in markdown_result.output
+    assert "Summary: Memory brief CLI returns citation-preserving Markdown." in markdown_result.output
+    assert "Inspect: memora inspect mem_" in markdown_result.output
     assert "[C1]" in markdown_result.output
     assert json_result.exit_code == 0, json_result.output
     payload = json.loads(json_result.output)
@@ -1203,7 +1205,8 @@ def test_brief_command_generates_markdown_and_json(tmp_path):
     assert payload["implemented"] is True
     assert payload["budget_mode"] == "strict"
     assert payload["used_tokens_estimate"] <= payload["budget"]
-    assert payload["markdown"] == markdown_result.output
+    assert "## Memora Brief" in payload["markdown"]
+    assert "Current decisions:" in payload["markdown"]
     assert payload["sections"]["current_decisions"][0]["citations"] == ["C1"]
 
 
@@ -1270,6 +1273,44 @@ def test_build_context_command_json_preserves_legacy_fields(tmp_path):
     assert payload["trace"]["policy"]["should_recall"] is True
     assert payload["trace"]["freshness"]["trigger"] == "before_recall"
     assert payload["trace"]["task_budget"]["selected"] == 1200
+
+
+def test_build_context_command_defaults_to_compact_agent_output(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Build-context compact agent output is short for agents.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "What did we decide about compact agent output?",
+            "--vault",
+            str(vault),
+            "--no-include-profile",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "memory_needed: true" in result.output
+    assert "Brief: 1 item(s)" in result.output
+    assert "Summary: Build-context compact agent output is short for agents." in result.output
+    assert "Inspect: memora inspect mem_" in result.output
+    assert "freshness" not in result.output
+    assert "score_breakdown" not in result.output
 
 
 def test_build_context_command_omits_loaded_memory_ids(tmp_path):
@@ -1530,6 +1571,36 @@ def test_search_command_returns_ranked_json_results(tmp_path):
     assert payload["result_count"] == 1
     assert payload["results"][0]["metadata"]["project"] == "memora"
     assert payload["results"][0]["citation"]["path"].startswith("Memories/decisions/")
+
+
+def test_search_command_defaults_to_compact_agent_candidates(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault), "--json"])
+    runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "decision",
+            "--text",
+            "Search default output should show compact candidate summaries.",
+            "--json",
+        ],
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
+
+    result = runner.invoke(app, ["search", "compact candidate", "--vault", str(vault)])
+
+    assert result.exit_code == 0, result.output
+    assert "Found 1 memory candidate(s) for: compact candidate" in result.output
+    assert "[C1] mem_" in result.output
+    assert "decision/active" in result.output
+    assert "Summary: Search default output should show compact candidate summaries." in result.output
+    assert "Inspect: memora inspect mem_" in result.output
+    assert "score_breakdown" not in result.output
+    assert "vault_path" not in result.output
 
 
 def test_search_command_refreshes_index_before_query(tmp_path):

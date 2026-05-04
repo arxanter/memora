@@ -1,11 +1,12 @@
 # Memora CLI Agent Reference
 
-Purpose: compact command map for agents. Prefer `--json` for machine-readable
-output. Omit `--vault` unless the default vault is not configured.
+Purpose: compact command map for agents. Retrieval commands default to compact
+agent-readable text; use `--json` when a machine-readable/debug payload is
+needed. Omit `--vault` unless the default vault is not configured.
 
 Common options:
 
-- `--json`: structured output for agents.
+- `--json`: structured output for integrations, tests, lifecycle writes, or debugging.
 - `--vault PATH`, `-v PATH`: override vault resolution.
 - `--project NAME`: project filter/metadata where supported.
 - `--dry-run`: validate or preview without writing where supported.
@@ -25,7 +26,9 @@ Value sets:
 
 Use these most often:
 
-- `memora build-context "<task>" --project <project> --task-class planning --json`
+- `memora build-context "<task>" --project <project> --task-class planning`
+- `memora search "<query>" --project <project>`
+- `memora inspect <id>`
 - `memora remember --type <type> --text "<atomic memory>" --project <project> --json`
 - `memora memory update <id> --scope user --clear-project --json`
 - `memora raw add <path> --kind <kind> --format <format> --project <project> --json`
@@ -162,10 +165,14 @@ and report the CLI gap.
 - Main agent recall command. Use returned context only when
   `memory_needed=true`.
 - `--include-profile` adds a bounded in-memory rollup to this response.
+- Default output is compact agent text. `--json` preserves the full legacy
+  payload, including `trace`, `freshness`, `brief`, `profile`, and citations.
 
 `memora search <query> [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--created-after DATE] [--created-before DATE] [--updated-after DATE] [--updated-before DATE] [--valid-from DATE] [--valid-to DATE] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--limit N] [--vault PATH] [--json]`
 
 - Ranked search with snippets and citations.
+- Default output is a compact candidate list with IDs. Use `memora inspect <id>`
+  to load a full memory only when needed.
 
 `memora recall <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH] [--json]`
 
@@ -174,12 +181,15 @@ and report the CLI gap.
 `memora brief <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH] [--json]`
 
 - Produce citation-preserving Markdown context.
+- Default output is a compact cited brief with memory IDs. Use `--json` for the
+  full Markdown and section payload.
 
 ## Inspect And Open
 
 `memora inspect <id> [--vault PATH] [--json]`
 
 - Show one memory by id.
+- Default output shows metadata and body without absolute vault/debug fields.
 
 `memora open <id> [--launch] [--vault PATH] [--json]`
 
