@@ -41,6 +41,8 @@ memora vault set ~/ExistingMemoryVault
 To force-refresh the Memora source checkout and reinstall the local wrapper:
 
 ```bash
+cd ~
+mkdir -p ~/.local/src
 rm -rf ~/.local/src/memora
 git clone https://github.com/arxanter/memora.git ~/.local/src/memora
 cd ~/.local/src/memora
