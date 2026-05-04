@@ -24,6 +24,8 @@ Obsidian Vault/
     decisions/
     projects/
     tasks/
+    sources/
+    conversations/
   Sources/
     YYYY-MM-DD_hash/
       source.md
@@ -58,6 +60,10 @@ The initial memory schema should include:
 ```yaml
 schema_version: 1
 id: mem_20260429_9f3a21
+title: Use Markdown as durable memory
+aliases:
+  - mem_20260429_9f3a21
+  - Markdown as durable memory
 type: decision
 scope: project
 project: agent-memory
@@ -69,6 +75,9 @@ valid_from: 2026-04-29
 valid_to:
 source:
   path: Sources/2026-04-29_abcd1234/extract.md
+  title: Stage 0 planning extract
+source_links:
+  - "[[Sources/2026-04-29_abcd1234/extract|Stage 0 planning extract]]"
 author:
   kind: agent
   name: Cursor
@@ -77,6 +86,8 @@ contradicts: []
 relations:
   - type: supports
     target: mem_20260429_7ab901
+relation_links:
+  - "supports: [[mem_20260429_7ab901]]"
 observations:
   - category: decision
     text: SQLite is a disposable index, not durable state.
@@ -116,6 +127,11 @@ Conditional fields:
   relation-specific fields such as `target`, `by`, or `reason`.
 - `last_used_at` is optional metadata updated after recall on a best-effort
   basis. It does not affect schema validity or durable graph validation.
+
+Presentation fields such as `title`, `aliases`, `source_links`, and
+`relation_links` are optional Obsidian-friendly metadata. They do not replace
+stable IDs, `source.path`, or structured `relations[]`; they make sample vaults
+and generated notes easier to browse as a graph.
 
 ## Supported Types
 

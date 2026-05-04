@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from agent_memory.config import (
@@ -21,6 +23,9 @@ from agent_memory.config import (
     load_config,
 )
 from agent_memory.vault import init_vault
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_load_config_from_explicit_vault(tmp_path):
@@ -193,6 +198,24 @@ def test_load_config_includes_disabled_connector_defaults(tmp_path):
     assert config.connectors.source_inbox.patterns == ["**/*"]
     assert config.connectors.source_inbox.sensitivity == "normal"
     assert summary["connectors"]["source_inbox"]["enabled"] is False
+
+
+def test_sample_vault_config_loads_with_cli_first_defaults():
+    sample_vault = ROOT / "examples" / "sample-vault"
+
+    config = load_config(sample_vault)
+    summary = config_to_dict(config)
+
+    assert config.default_project == "agent-memory"
+    assert config.agent_default_status == "pending"
+    assert config.agent_policy.trust_level == "review"
+    assert config.recall_policies["planning"].include_related is True
+    assert config.recall_policies["review"].include_pending is True
+    assert config.profile.enabled is True
+    assert config.index_freshness.refresh_before_search is True
+    assert summary["semantic"]["provider"] is None
+    assert summary["connectors"]["url"]["enabled"] is False
+    assert summary["connectors"]["source_inbox"]["path"] == "raw/inbox"
 
 
 def test_load_config_preserves_connector_defaults_for_old_yaml(tmp_path):

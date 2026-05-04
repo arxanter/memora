@@ -99,11 +99,14 @@ def test_local_install_docs_reference_existing_scripts():
         assert script_name in docs or script_name in commands
 
     assert "./scripts/install.sh --vault ~/MemoryVault" in readme
+    assert 'pipx install "agent-memory[mcp]"' in readme
+    assert "Windows And WSL" in readme
     assert "Python 3.10" in readme and "newer" in readme
     assert "agent-memory-service install" in docs
     assert "python3.12" in docs
     assert "systemd --user" in docs
     assert "launchd" in docs
+    assert "WSL2" in docs
     assert "save_source" in agent_docs
     assert "ingest_url" in agent_docs
     assert "remember" in agent_docs

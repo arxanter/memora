@@ -53,15 +53,12 @@ or asks for history/status.
 Review the pending queue once near session startup when memory work is relevant,
 or when the user explicitly asks Toby to review memory:
 
-```text
-review()
-```
-
-If the current MCP client does not expose `review`, use the CLI fallback:
-
 ```bash
 memory review --json
 ```
+
+If a legacy MCP client is the only available interface, use `review()` as the
+compatibility equivalent.
 
 When pending items exist, summarize them with id, type, confidence, source,
 summary, risk flags, and recommended action. Ask whether to inspect, approve,
@@ -162,7 +159,40 @@ Use this shape for `extract`:
 ## Relevant Quotes
 ```
 
-## MCP Tool Examples
+## CLI Capture Examples
+
+Save a source after reading it and writing a concise extract:
+
+```bash
+memory import-source ./article.md \
+  --extract-file ./article-extract.md \
+  --project agent-memory \
+  --tag article \
+  --json
+```
+
+Use explicit connector commands only when the user asks for that source:
+
+```bash
+memory import-url https://example.com/article --dry-run --json
+memory import-pdf ./paper.pdf --text-file ./paper.txt --project agent-memory --json
+memory import-zoom ./meeting-summary.md --project agent-memory --json
+memory import-slack ./thread.json --channel "#agent-memory" --json
+memory source-inbox scan --path ./raw/inbox --ignore-disabled --dry-run --json
+```
+
+Promote a durable atomic decision after preserving the source:
+
+```bash
+memory remember \
+  --type decision \
+  --scope project \
+  --project agent-memory \
+  --text "Use Obsidian Markdown as durable memory; SQLite remains rebuildable cache." \
+  --json
+```
+
+## Legacy MCP Examples
 
 Save a URL after fetching it:
 
@@ -208,9 +238,10 @@ Agent-created memories should stay `pending` until reviewed unless
 `agent_policy.trust_level` allows direct activation for an explicit user save:
 
 ```bash
-memory review
-memory mark <id> --status active
-memory reject <id>
+memory review --json
+memory review approve <id> --reason "verified source" --json
+memory review reject <id> --reason "not durable" --json
+memory review defer <id> --reason "needs later review" --json
 memory reindex
 ```
 

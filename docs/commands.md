@@ -11,6 +11,37 @@ Agent-facing operations should support structured JSON responses, stable error
 codes, and citations. Mutating commands must not silently promote agent-written
 memory to active durable truth unless explicitly configured.
 
+## Common End-To-End Path
+
+```bash
+memory setup ~/MemoryVault --dry-run --json
+memory setup ~/MemoryVault --json
+memory agent-rules --format cursor --vault ~/MemoryVault --project agent-memory
+memory install-agent-rules --client cursor --project /path/to/repo --dry-run --json
+```
+
+Preserve material first, then promote durable atomic memories:
+
+```bash
+memory import-source ./notes.md --vault ~/MemoryVault --extract-file ./notes-extract.md --project agent-memory --json
+memory import-url https://example.com/article --vault ~/MemoryVault --dry-run --json
+memory import-pdf ./paper.pdf --vault ~/MemoryVault --text-file ./paper.txt --json
+memory import-zoom ./meeting-summary.md --vault ~/MemoryVault --project agent-memory --json
+memory import-slack ./thread.json --vault ~/MemoryVault --channel "#agent-memory" --json
+memory source-inbox scan --vault ~/MemoryVault --path ~/MemoryVault/raw/inbox --ignore-disabled --dry-run --json
+memory remember --vault ~/MemoryVault --type decision --project agent-memory --text "Use Markdown as durable memory." --json
+```
+
+Review and curate before recall treats agent-written memory as active truth:
+
+```bash
+memory review --vault ~/MemoryVault
+memory review approve mem_20260430_example --vault ~/MemoryVault --reason "verified source" --json
+memory review reject mem_20260430_bad --vault ~/MemoryVault --reason "not durable" --json
+memory synthesize "project decisions" --vault ~/MemoryVault --project agent-memory --dry-run --json
+memory build-context "Plan storage work" --vault ~/MemoryVault --project agent-memory --task-class planning --json
+```
+
 ## Initial CLI Commands
 
 ```bash
@@ -51,7 +82,7 @@ memory raw process raw/inbox/webclips/article.md --project <project> --dry-run
 memory raw process-inbox raw/inbox --project <project> --limit 10
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
-memory source-inbox scan --dry-run
+memory source-inbox scan --ignore-disabled --dry-run
 memory import-url <url> --dry-run
 memory import-pdf <path> --text-file <path> --dry-run
 memory import-zoom <path> --meeting-id <id> --dry-run
@@ -828,6 +859,7 @@ Example:
 memory source-inbox scan \
   --vault ./memory-vault \
   --path ./Inbox \
+  --ignore-disabled \
   --dry-run \
   --json
 ```

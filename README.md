@@ -76,12 +76,15 @@ Typical data flow:
 
 ## Installation
 
-The package requires Python 3.10 or newer. The local installer installs the MCP
-extra by default, and the upstream `mcp` package also requires Python 3.10 or
-newer. On macOS, if `/usr/bin/python3` is 3.9, install a newer Python first or
-pass `--python /path/to/python3.10`.
+The package requires Python 3.10 or newer. For a packaged install, use `pipx` so
+the `memory` CLI lives in an isolated environment:
 
-For local machine setup without manually activating a venv, use the installer:
+```bash
+pipx install "agent-memory[mcp]"
+```
+
+For this repository, the local installer is the quickest machine setup. It
+creates stable wrapper commands without requiring you to activate a venv:
 
 ```bash
 ./scripts/install.sh --vault ~/MemoryVault
@@ -89,17 +92,10 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 This creates stable `memory`, `memory-mcp`, and `agent-memory-service` wrapper
-commands. It supports macOS and Linux. See `docs/local-install.md` for service
-management, MCP activation, upgrade, and uninstall details.
+commands. It supports macOS, Linux, and WSL2. See `docs/local-install.md` for
+service management, MCP activation, upgrade, and uninstall details.
 
-For a PyPI or internal package index install, use `pipx` for an isolated CLI
-environment:
-
-```bash
-pipx install "agent-memory[mcp]"
-```
-
-For development and local CLI usage from a clone:
+For development and local CLI usage from a clone, use an editable install:
 
 ```bash
 cd /path/to/memory-project
@@ -125,15 +121,18 @@ memory-mcp
 
 ## Quickstart
 
-Create a vault, add a memory, build the local index, and recall context:
+Create a vault, install agent rules, add memory, and recall context:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[test]'
 
-memory init ./memory-vault
 memory setup ./memory-vault --dry-run
+memory setup ./memory-vault
+memory agent-rules --format cursor --vault ./memory-vault --project agent-memory
+memory install-agent-rules --client cursor --project /path/to/repo --dry-run
+
 memory remember --vault ./memory-vault --type decision --text "Use Markdown as durable memory."
 memory reindex --vault ./memory-vault
 
@@ -149,11 +148,24 @@ Most commands also support `--json` for agent-friendly output:
 memory brief --vault ./memory-vault "storage decisions" --budget 1200 --json
 ```
 
-To connect a coding agent without copying rule text manually:
+To preserve source material before promoting durable memories:
 
 ```bash
-memory agent-rules --format cursor --vault ./memory-vault --project agent-memory
-memory install-agent-rules --client cursor --project /path/to/repo --dry-run
+memory import-source ./notes.md --vault ./memory-vault --extract-file ./notes-extract.md --project agent-memory --json
+memory import-url https://example.com/article --vault ./memory-vault --dry-run --json
+memory import-pdf ./paper.pdf --vault ./memory-vault --text-file ./paper.txt --json
+memory import-zoom ./meeting-summary.md --vault ./memory-vault --project agent-memory --json
+memory import-slack ./thread.json --vault ./memory-vault --channel "#agent-memory" --json
+memory source-inbox scan --vault ./memory-vault --path ./raw/inbox --ignore-disabled --dry-run --json
+```
+
+Review and curate agent-written memory before it becomes active durable context:
+
+```bash
+memory review --vault ./memory-vault
+memory review approve mem_20260430_example --vault ./memory-vault --reason "verified source"
+memory reject --vault ./memory-vault mem_20260430_bad --reason "Not durable enough"
+memory synthesize "raw ingestion" --vault ./memory-vault --project agent-memory --dry-run --json
 ```
 
 When a vault is already configured, commands resolve it in this order:
@@ -161,6 +173,31 @@ When a vault is already configured, commands resolve it in this order:
 1. The explicit `--vault` option.
 2. The `AGENT_MEMORY_VAULT` environment variable.
 3. The nearest parent `.agent-memory/config.yaml`.
+
+## Sample Vault
+
+`examples/sample-vault` is a ready CLI-first fixture with `.agent-memory/config.yaml`,
+raw inbox material, imported `Sources/`, source-backed `Memories/`, graph
+wikilinks, and pending review examples:
+
+```bash
+memory status --vault examples/sample-vault
+memory review --vault examples/sample-vault
+memory brief "What is the storage decision?" --vault examples/sample-vault --project agent-memory --json
+memory source-inbox scan --vault examples/sample-vault --path examples/sample-vault/raw/inbox --ignore-disabled --dry-run --json
+```
+
+Connector config is disabled by default in the sample. Use explicit import
+commands or `--ignore-disabled` for one-shot dry runs.
+
+## Windows And WSL
+
+Native Windows support is not first-class yet. Use WSL2 with Python 3.10 or newer
+and install/run `memory` inside the Linux environment. Prefer a vault path inside
+the WSL filesystem, such as `~/MemoryVault`, for better file watching and path
+behavior. If you keep the vault on the Windows side for Obsidian, pass the WSL
+path form, for example `/mnt/c/Users/you/Documents/MemoryVault`, and avoid mixing
+Windows-style paths in CLI config.
 
 ## MCP Usage
 

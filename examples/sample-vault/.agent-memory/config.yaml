@@ -1,0 +1,120 @@
+# Ready sample vault config for CLI-first Agent Memory workflows.
+# Generated cache files under .agent-memory/ remain local and rebuildable.
+schema_version: 1
+raw_dir: raw
+memories_dir: Memories
+sources_dir: Sources
+briefs_dir: Briefs
+profiles_dir: Profiles
+synthesis_dir: Synthesis
+agent_memory_dir: .agent-memory
+index_path: .agent-memory/index.sqlite
+default_scope: project
+default_project: agent-memory
+user_default_status: active
+agent_default_status: pending
+default_author_name: memory CLI
+
+semantic:
+  provider: null
+  model: local-embedding-model
+  command: null
+  timeout_seconds: 30.0
+  batch_size: 32
+  dimensions: null
+  min_similarity: 0.0
+  vector_limit: 100
+  keyword_limit: 100
+
+recall:
+  candidate_limit: 50
+  max_tokens_per_chunk: 300
+  max_chunks_per_document: 2
+  max_chunks_per_project: 8
+  max_chunks_per_memory_type:
+    preference: 4
+    decision: 6
+    project_context: 6
+    fact: 8
+    task: 4
+    source_extract: 3
+    conversation_summary: 3
+
+recall_policies:
+  default:
+    budget: 1200
+    include_related: false
+    include_pending: false
+    include_profile: true
+    types: []
+  coding:
+    budget: 900
+    include_related: false
+    include_pending: false
+    include_profile: true
+    types:
+      - decision
+      - preference
+      - project_context
+      - task
+  planning:
+    budget: 2000
+    include_related: true
+    include_pending: false
+    include_profile: true
+    types:
+      - decision
+      - project_context
+      - source_extract
+      - conversation_summary
+  review:
+    budget: 2400
+    include_related: false
+    include_pending: true
+    include_profile: false
+    types: []
+
+agent_policy:
+  aliases:
+    - Toby
+    - Тоби
+    - tb
+  trust_level: review
+  default_recall_budget: 1200
+  min_active_confidence: 0.85
+  min_pending_confidence: 0.55
+  explicit_user_saves_active: true
+  autonomous_lifecycle: false
+  require_review_for_source_extracts: true
+
+index_freshness:
+  enabled: true
+  interval_seconds: 30
+  debounce_seconds: 2.0
+  clean: false
+  refresh_before_search: true
+  refresh_before_recall: true
+
+profile:
+  enabled: true
+  user_budget: 500
+  project_budget: 700
+  refresh_after_review: true
+  inject_by_default: false
+
+connectors:
+  url:
+    enabled: false
+  pdf:
+    enabled: false
+  zoom:
+    enabled: false
+  slack:
+    enabled: false
+  source_inbox:
+    enabled: false
+    path: raw/inbox
+    patterns:
+      - "**/*"
+    sensitivity: normal
+    source_quality: imported_export
