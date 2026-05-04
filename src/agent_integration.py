@@ -66,7 +66,14 @@ MANAGED_BLOCK_END = "<!-- END AGENT MEMORY MANAGED BLOCK -->"
 _TEMPLATE_VERSION_RE = re.compile(r"template_version:\s*([^\s<>]+)")
 _CONTENT_HASH_RE = re.compile(r"content_hash:\s*(sha256:[0-9a-f]{64})")
 _SCHEDULED_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-
+_CURSOR_RULE_FRONTMATTER = "\n".join(
+    [
+        "---",
+        "description: Use Memora CLI for durable project memory",
+        "alwaysApply: true",
+        "---",
+    ]
+)
 
 def resolve_rule_aliases(
     *,
@@ -561,8 +568,10 @@ def plan_managed_agent_write(
     force: bool,
 ) -> dict[str, object]:
     target_exists = target_info.path.exists()
-    new_hash = managed_content_hash(content)
-    new_block = render_managed_block(content)
+    managed_payload = managed_agent_payload(target_info.client, content)
+    new_hash = managed_content_hash(managed_payload)
+    new_block = render_managed_block(managed_payload)
+    new_file_content = render_managed_agent_file(target_info.client, content)
     existing_content = target_info.path.read_text(encoding="utf-8") if target_exists else ""
     metadata = managed_block_metadata(existing_content) if target_exists else {}
     managed = bool(metadata)
@@ -571,29 +580,30 @@ def plan_managed_agent_write(
     )
     detected_version = metadata.get("template_version")
     needs_update = existing_hash != new_hash
-    needs_manual_merge = target_exists and not managed and not force
+    needs_manual_merge = False
 
     if not target_exists:
         action = "create"
-        planned_content = new_block
+        planned_content = new_file_content
         would_write = True
-    elif needs_manual_merge:
-        action = "blocked"
-        planned_content = existing_content
-        would_write = False
     elif managed:
         action = "update_managed_block" if needs_update else "noop"
         planned_content = replace_managed_block(existing_content, new_block) if needs_update else existing_content
         would_write = needs_update
-    else:
+    elif force:
         action = "overwrite"
-        planned_content = new_block
+        planned_content = new_file_content
+        would_write = True
+    else:
+        action = "append_managed_block"
+        planned_content = append_managed_block(existing_content, new_block)
         would_write = True
 
     return {
         "action": action,
         "target_exists": target_exists,
         "managed": managed,
+        "legacy_migratable": False,
         "target_hash": existing_hash,
         "content_hash": new_hash,
         "detected_version": detected_version,
@@ -634,7 +644,7 @@ def agent_target_status(
         project=project_path.name,
         agent_aliases=aliases,
     )
-    expected_hash = managed_content_hash(content)
+    expected_hash = managed_content_hash(managed_agent_payload(selected_client, content))
     target_exists = target_info.path.exists()
     metadata: dict[str, str] = {}
     target_hash: Optional[str] = None
@@ -652,8 +662,8 @@ def agent_target_status(
         needs_update = target_hash != expected_hash
         status = "outdated" if needs_update else "installed"
     else:
-        needs_update = target_hash != expected_hash
-        status = "manual" if needs_update else "installed_unmanaged"
+        needs_update = True
+        status = "appendable"
 
     return {
         "client": selected_client.value,
@@ -664,12 +674,13 @@ def agent_target_status(
         "installed": target_exists,
         "status": status,
         "managed": managed,
+        "legacy_migratable": False,
         "target_hash": target_hash,
         "content_hash": expected_hash,
         "detected_version": metadata.get("template_version"),
         "template_version": AGENT_RULES_TEMPLATE_VERSION,
         "needs_update": needs_update,
-        "needs_manual_merge": status == "manual",
+        "needs_manual_merge": False,
     }
 
 
@@ -685,6 +696,11 @@ def replace_managed_block(existing_content: str, new_block: str) -> str:
     if after:
         parts.append(after.rstrip())
     return "\n\n".join(parts) + "\n"
+
+
+def append_managed_block(existing_content: str, new_block: str) -> str:
+    parts = [existing_content.rstrip(), new_block.rstrip()]
+    return "\n\n".join(part for part in parts if part) + "\n"
 
 
 def _agent_operation_payload(
@@ -732,6 +748,7 @@ def _agent_result_payload(
         "target_path": str(target_info.path),
         "target_exists": plan["target_exists"],
         "managed": plan["managed"],
+        "legacy_migratable": plan["legacy_migratable"],
         "action": plan["action"],
         "blocked": plan["blocked"],
         "needs_manual_merge": plan["needs_manual_merge"],
@@ -793,10 +810,7 @@ def render_agent_rules(
     if selected_format == AgentClient.CURSOR:
         return "\n".join(
             [
-                "---",
-                "description: Use Memora CLI for durable project memory",
-                "alwaysApply: true",
-                "---",
+                _CURSOR_RULE_FRONTMATTER,
                 "",
                 *lines,
             ]
@@ -810,6 +824,8 @@ def render_agent_rules(
 
 def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]) -> list[str]:
     build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning'
+    unscoped_build_context = f'memora build-context "<task>"{vault_arg} --task-class planning'
+    unscoped_search = f'memora search "<query>"{vault_arg}'
     brief = f'memora brief "<topic>"{vault_arg}{project_arg}'
     search = f'memora search "<query>"{vault_arg}{project_arg}'
     review = f"memora review{vault_arg} --json"
@@ -833,10 +849,24 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         f"Do not run memora recall for every turn. Use memory when the request addresses {addressing}, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
         "",
+        "Choose recall/search scope deliberately:",
+        "",
+        "- Use the project filter for questions about this repository, the current product, local implementation details, project decisions, current branch/status, TODOs, roadmap, bugs, tests, CLI behavior, or anything phrased as \"in this project\".",
+        "- Omit the project filter for general questions about durable user preferences, cross-project conventions, agent behavior, recurring personal/work context, or prior conversations that are not clearly tied to the current project.",
+        "- If the request mixes project and general context, start with the narrower project scope when the work is in this repository; run an unscoped lookup only when the answer still needs user-wide history or preferences.",
+        "- If scope is unclear, infer from the task target: code/workspace/change requests are project-scoped; preference/history/identity questions are usually unscoped.",
+        "",
         "When recall is relevant, run:",
         "",
         "```bash",
         build_context,
+        "```",
+        "",
+        "For unscoped recall/search, omit the project filter:",
+        "",
+        "```bash",
+        unscoped_build_context,
+        unscoped_search,
         "```",
         "",
         "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
@@ -852,6 +882,12 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         search,
         remember,
         "```",
+        "",
+        "During a session, notice memory-worthy information and offer to save it when it is durable and likely useful later:",
+        "",
+        "- Propose saving explicit user preferences, recurring workflow preferences, project decisions, stable constraints, roadmap/status updates, unresolved tasks, important bug findings, or agreed implementation direction.",
+        "- Do not propose saving transient implementation chatter, temporary logs, speculative ideas, secrets, raw dumps, sensitive personal data, or facts already obvious from the current code.",
+        "- Keep prompts lightweight: \"This seems useful to remember as <type>. Save it?\" Only write after explicit approval unless the user directly asks to remember/save it.",
         "",
         "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
         "",
@@ -886,6 +922,39 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
 
 def managed_content_hash(content: str) -> str:
     return f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"
+
+
+def managed_agent_payload(client: AgentClient | str, content: str) -> str:
+    """Return the generated payload covered by managed block metadata."""
+
+    selected_client = _coerce_client(client)
+    if selected_client == AgentClient.CURSOR:
+        _, body = split_cursor_rule_frontmatter(content)
+        return body
+    return content
+
+
+def render_managed_agent_file(client: AgentClient | str, content: str) -> str:
+    """Render generated instructions as an installable managed target file."""
+
+    selected_client = _coerce_client(client)
+    payload = managed_agent_payload(selected_client, content)
+    managed_block = render_managed_block(payload)
+    if selected_client != AgentClient.CURSOR:
+        return managed_block
+    frontmatter, _ = split_cursor_rule_frontmatter(content)
+    return "\n\n".join([frontmatter, managed_block.rstrip()]) + "\n"
+
+
+def split_cursor_rule_frontmatter(content: str) -> tuple[str, str]:
+    lines = content.splitlines()
+    if lines and lines[0] == "---":
+        for index in range(1, len(lines)):
+            if lines[index] == "---":
+                frontmatter = "\n".join(lines[: index + 1])
+                body = "\n".join(lines[index + 1 :]).lstrip("\n")
+                return frontmatter, body
+    return _CURSOR_RULE_FRONTMATTER, content.lstrip("\n")
 
 
 def file_content_hash(path: Path) -> str:

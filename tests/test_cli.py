@@ -393,7 +393,7 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_clients(
             assert content.startswith("---\ndescription:")
 
 
-def test_agent_integrate_dry_run_and_no_overwrite_behavior(tmp_path):
+def test_agent_integrate_dry_run_and_append_behavior(tmp_path):
     project = tmp_path / "project"
     target = project / "memora-rules.md"
     project.mkdir()
@@ -442,9 +442,13 @@ def test_agent_integrate_dry_run_and_no_overwrite_behavior(tmp_path):
     assert no_overwrite.exit_code == 0, no_overwrite.output
     payload = json.loads(no_overwrite.output)
     assert payload["ok"] is True
-    assert payload["blocked_count"] == 1
-    assert payload["results"][0]["blocked"] is True
-    assert target.read_text(encoding="utf-8") == "existing"
+    assert payload["blocked_count"] == 0
+    assert payload["written_count"] == 1
+    assert payload["results"][0]["action"] == "append_managed_block"
+    assert payload["results"][0]["blocked"] is False
+    updated = target.read_text(encoding="utf-8")
+    assert updated.startswith("existing")
+    assert "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->" in updated
 
 
 def test_agent_integrate_without_project_refuses_memora_source_checkout(tmp_path, monkeypatch):
@@ -631,7 +635,7 @@ def test_agent_scheduled_template_json_includes_template_steps_and_safety():
     assert any("pending" in item for item in payload["safety"])
 
 
-def test_agent_group_update_blocks_unmanaged_existing_target(tmp_path):
+def test_agent_group_update_appends_to_unmanaged_existing_target(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     target = project / "AGENTS.md"
@@ -653,11 +657,58 @@ def test_agent_group_update_blocks_unmanaged_existing_target(tmp_path):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["command"] == "agent update"
-    assert payload["blocked_count"] == 1
-    assert payload["results"][0]["blocked"] is True
-    assert payload["results"][0]["needs_manual_merge"] is True
-    assert payload["results"][0]["would_write"] is False
-    assert target.read_text(encoding="utf-8") == "existing user instructions\n"
+    assert payload["blocked_count"] == 0
+    assert payload["written_count"] == 1
+    assert payload["results"][0]["action"] == "append_managed_block"
+    assert payload["results"][0]["blocked"] is False
+    assert payload["results"][0]["needs_manual_merge"] is False
+    assert payload["results"][0]["would_write"] is True
+    updated = target.read_text(encoding="utf-8")
+    assert updated.startswith("existing user instructions")
+    assert "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->" in updated
+
+
+def test_agent_group_update_appends_to_unmanaged_memora_text_target(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "AGENTS.md"
+    target.write_text(
+        "# Project Instructions\n\n"
+        "Keep this user-owned intro.\n\n"
+        "## Memora Usage\n\n"
+        "Use `memora build-context \"<task>\"` for recall.\n\n"
+        "Use `memora review --json` for pending memory.\n\n"
+        "## Project Rules\n\n"
+        "Keep this user-owned outro.\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "agent",
+            "update",
+            "--client",
+            "codex",
+            "--project",
+            str(project),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["command"] == "agent update"
+    assert payload["blocked_count"] == 0
+    assert payload["written_count"] == 1
+    assert payload["results"][0]["action"] == "append_managed_block"
+    assert payload["results"][0]["legacy_migratable"] is False
+    updated = target.read_text(encoding="utf-8")
+    assert "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->" in updated
+    assert "During a session, notice memory-worthy information" in updated
+    assert "Keep this user-owned intro." in updated
+    assert "Keep this user-owned outro." in updated
+    assert "Use `memora build-context \"<task>\"` for recall." in updated
 
 
 def test_raw_list_and_inspect_report_inbox_files(tmp_path):
