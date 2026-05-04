@@ -2,7 +2,6 @@ schema_version: 1
 memories_dir: Memories
 sources_dir: Sources
 briefs_dir: Briefs
-profiles_dir: Profiles
 synthesis_dir: Synthesis
 memora_dir: .memora
 index_path: .memora/index.sqlite

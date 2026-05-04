@@ -30,6 +30,9 @@ Older direct import, scheduled ingest, lifecycle, profile, synthesis, and eval
 commands are compatibility/internal paths and are not part of the public product
 surface.
 
+For a compact option-level reference intended for agents, see
+`docs/cli-agent-reference.md`.
+
 ## Raw Staging
 
 `memora raw add <path> --kind pdf|zoom|slack|text --format pdf|markdown|json|txt`

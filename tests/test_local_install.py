@@ -90,14 +90,21 @@ def test_cli_module_invocation_runs_typer_app():
 def test_local_install_docs_reference_existing_scripts():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    cli_reference = (ROOT / "docs" / "cli-agent-reference.md").read_text(encoding="utf-8")
 
     for script_name in ("install.sh", "memora-service.sh", "uninstall.sh"):
         assert (SCRIPTS / script_name).exists()
 
+    assert "git clone https://github.com/arxanter/memora.git ~/.local/src/memora" in readme
     assert "./scripts/install.sh --vault ~/MemoryVault" in readme
-    assert 'pipx install "memora"' in readme
+    assert "./scripts/uninstall.sh --remove-venv" in readme
+    assert "normal commands do not need `--vault`" in readme
     assert "Python 3.10" in readme and "newer" in readme
     assert "WSL2" in readme
-    assert "raw add" in readme
-    assert "source add" in readme
+    assert "CLI command reference for agents" in readme
+    assert "raw add" not in readme
+    assert "source add" not in readme
+    assert "<details>" in readme
     assert "remember" in architecture
+    assert "memora raw add <path>" in cli_reference
+    assert "memora build-context <task>" in cli_reference

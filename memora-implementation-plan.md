@@ -74,9 +74,6 @@ Obsidian Vault/
       source.md
       extract.md
   Briefs/
-  Profiles/
-    user.md
-    projects/
   Synthesis/
   .memora/
     config.yaml

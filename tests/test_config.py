@@ -11,7 +11,6 @@ from config import (
     ENV_PROFILE_ENABLED,
     ENV_PROFILE_INJECT_BY_DEFAULT,
     ENV_PROFILE_PROJECT_BUDGET,
-    ENV_PROFILE_REFRESH_AFTER_REVIEW,
     ENV_PROFILE_USER_BUDGET,
     ENV_SEMANTIC_BATCH_SIZE,
     ENV_SEMANTIC_DIMENSIONS,
@@ -185,13 +184,11 @@ def test_load_config_includes_profile_defaults_and_summary(tmp_path):
     assert config.profile.enabled is True
     assert config.profile.user_budget == 500
     assert config.profile.project_budget == 700
-    assert config.profile.refresh_after_review is True
     assert config.profile.inject_by_default is False
     assert summary["profile"] == {
         "enabled": True,
         "user_budget": 500,
         "project_budget": 700,
-        "refresh_after_review": True,
         "inject_by_default": False,
     }
 
@@ -250,7 +247,6 @@ def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch
     monkeypatch.setenv(ENV_PROFILE_ENABLED, "false")
     monkeypatch.setenv(ENV_PROFILE_USER_BUDGET, "321")
     monkeypatch.setenv(ENV_PROFILE_PROJECT_BUDGET, "654")
-    monkeypatch.setenv(ENV_PROFILE_REFRESH_AFTER_REVIEW, "false")
     monkeypatch.setenv(ENV_PROFILE_INJECT_BY_DEFAULT, "true")
 
     config = load_config(vault)
@@ -258,7 +254,6 @@ def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch
     assert config.profile.enabled is False
     assert config.profile.user_budget == 321
     assert config.profile.project_budget == 654
-    assert config.profile.refresh_after_review is False
     assert config.profile.inject_by_default is True
 
 

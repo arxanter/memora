@@ -36,7 +36,7 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert (vault / "raw" / "processed").is_dir()
     assert (vault / "raw" / "quarantine").is_dir()
     assert (vault / "Memories" / "decisions").is_dir()
-    assert (vault / "Profiles" / "projects").is_dir()
+    assert not (vault / "Profiles").exists()
 
 
 def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
@@ -151,6 +151,14 @@ def test_help_command_lists_grouped_commands():
         "build-context",
         "raw list",
     } <= command_usages
+    assert "build-profile" not in command_usages
+
+
+def test_build_profile_command_is_removed_from_cli():
+    result = runner.invoke(app, ["build-profile", "--json"])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(tmp_path):
@@ -2603,7 +2611,7 @@ def test_build_context_command_include_profile_adds_bounded_profile_context(tmp_
     assert payload["citations"][0]["key"] == "P1"
     assert payload["trace"]["profile"]["included"] is True
     assert payload["trace"]["task_budget"]["profile_used"] == payload["profile"]["used_tokens_estimate"]
-    assert not (vault / "Profiles" / "user.md").exists()
+    assert not (vault / "Profiles").exists()
 
 
 def test_build_context_command_no_include_profile_suppresses_profile_context(tmp_path):

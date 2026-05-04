@@ -86,11 +86,11 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     )
 
     assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
+    assert "docs/cli-agent-reference.md" in content
     for private_path in (
         "`Memories/`",
         "`Sources/`",
         "`Briefs/`",
-        "`Profiles/`",
         "`Synthesis/`",
         "`raw/`",
         "`.memora/index.sqlite`",

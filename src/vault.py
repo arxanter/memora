@@ -470,8 +470,6 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
         *memory_dirs,
         config.vault_path / config.sources_dir,
         config.vault_path / config.briefs_dir,
-        config.vault_path / config.profiles_dir,
-        config.vault_path / config.profiles_dir / "projects",
         config.vault_path / config.synthesis_dir,
         config.vault_path / config.memora_dir,
         config.vault_path / config.memora_dir / "schemas",

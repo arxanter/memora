@@ -11,7 +11,6 @@ sync tool:
 - `Memories/**/*.md`
 - `Sources/**/*.md`
 - `Briefs/**/*.md`
-- `Profiles/**/*.md`
 - `Synthesis/**/*.md`
 - `.memora/config.yaml`
 - `.memora/schemas/`

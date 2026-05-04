@@ -1,8 +1,7 @@
-"""Deterministic generated profile builder for active canonical memories."""
+"""Bounded in-memory profile context for active canonical memories."""
 
 from __future__ import annotations
 
-import posixpath
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,10 +16,8 @@ from markdown import aliases as presentation_aliases
 from markdown import wikilink_for_memory
 from safety import has_unsafe_recall_risk, scan_text
 from schema import LifecycleStatus, MemoryDocument, MemoryScope, MemoryType, validate_vault
-from sync import atomic_write_text, vault_lock
 
 PROFILE_SCHEMA_VERSION = 1
-DEFAULT_PROFILE_BUDGET = 1200
 PROFILE_TYPES = {"user", "project"}
 TYPE_ORDER = (
     MemoryType.DECISION.value,
@@ -40,11 +37,6 @@ TYPE_TITLES = {
     MemoryType.SOURCE_EXTRACT.value: "Source Extracts",
     MemoryType.CONVERSATION_SUMMARY.value: "Conversation Summaries",
 }
-NEXT_STEPS = (
-    "Treat this profile as generated context, not canonical memory.",
-    "Regenerate it with `memora build-profile` after canonical memories change.",
-    "Promote durable updates with `memora remember`; profile generation does not mutate memories.",
-)
 PROFILE_INJECTION_CITATION_PREFIX = "P"
 
 
@@ -79,11 +71,9 @@ class ProfileItem:
 
 @dataclass(frozen=True)
 class ProfileResult:
-    """Structured result for CLI surfaces."""
+    """Generated profile context selected for build-context."""
 
     config: MemoryConfig
-    path: Path
-    relative_path: Path
     profile_type: str
     project: Optional[str]
     budget: int
@@ -100,50 +90,6 @@ class ProfileResult:
     def used_tokens_estimate(self) -> int:
         return estimate_tokens(self.markdown) if self.markdown.strip() else 0
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "implemented": True,
-            "command": "build_profile",
-            "tool": "build_profile",
-            "profile_type": self.profile_type,
-            "project": self.project,
-            "budget": self.budget,
-            "token_budget": self.budget,
-            "budget_mode": "strict",
-            "used_tokens_estimate": self.used_tokens_estimate,
-            "generated_at": self.generated_at.isoformat(),
-            "vault_path": str(self.config.vault_path),
-            "path": str(self.path),
-            "relative_path": self.relative_path.as_posix(),
-            "memory_count": len(self.items),
-            "source_memory_ids": [item.memory_id for item in self.items],
-            "citations": [dict(citation) for citation in self.citations],
-            "generated_context": True,
-            "canonical_memory": False,
-            "truncated": self.truncated,
-            "next_steps": list(NEXT_STEPS),
-        }
-
-
-def build_profile(
-    config: MemoryConfig,
-    profile_type: str = "user",
-    project: Optional[str] = None,
-    budget: Optional[int] = None,
-    now: Optional[datetime] = None,
-) -> ProfileResult:
-    """Write a deterministic generated profile under Profiles/."""
-
-    return _build_profile_result(
-        config,
-        profile_type=profile_type,
-        project=project,
-        budget=budget,
-        now=now,
-        write=True,
-    )
-
 
 def generate_profile_context(
     config: MemoryConfig,
@@ -152,15 +98,14 @@ def generate_profile_context(
     budget: Optional[int] = None,
     now: Optional[datetime] = None,
 ) -> ProfileResult:
-    """Render deterministic generated profile context without writing Profiles/."""
+    """Render deterministic generated profile context without writing files."""
 
-    return _build_profile_result(
+    return _generate_profile_result(
         config,
         profile_type=profile_type,
         project=project,
         budget=budget,
         now=now,
-        write=False,
     )
 
 
@@ -222,7 +167,6 @@ def build_context_profile_payload(
             "used_tokens_estimate": profile.used_tokens_estimate,
             "memory_count": len(profile.items),
             "source_memory_ids": [item.memory_id for item in profile.items],
-            "relative_path": profile.relative_path.as_posix(),
             "generated_at": profile.generated_at.isoformat(),
             "truncated": profile.truncated,
         }
@@ -243,16 +187,15 @@ def build_context_profile_payload(
     return payload
 
 
-def _build_profile_result(
+def _generate_profile_result(
     config: MemoryConfig,
     *,
     profile_type: str,
     project: Optional[str],
     budget: Optional[int],
     now: Optional[datetime],
-    write: bool,
 ) -> ProfileResult:
-    """Build a profile result, optionally persisting it under Profiles/."""
+    """Build a profile result without persisting generated context."""
 
     selected_profile_type = _validate_profile_type(profile_type)
     selected_project = _clean_optional(project)
@@ -294,19 +237,10 @@ def _build_profile_result(
         items=items,
     )
     if estimate_tokens(markdown) > selected_budget:
-        raise ValueError("budget is too small to write required profile frontmatter")
-
-    target_path = _profile_path(config, profile_type=selected_profile_type, project=selected_project)
-    if write:
-        with vault_lock(config, name="profile"):
-            target_path = _profile_path(config, profile_type=selected_profile_type, project=selected_project)
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(target_path, markdown)
+        raise ValueError("budget is too small to render required profile frontmatter")
 
     return ProfileResult(
         config=config,
-        path=target_path,
-        relative_path=target_path.relative_to(config.vault_path),
         profile_type=selected_profile_type,
         project=selected_project,
         budget=selected_budget,
@@ -364,11 +298,9 @@ def render_profile_markdown(
             lines.append("")
 
         lines.append("## Citations")
-        profile_relative_path = _relative_profile_path(profile_type=profile_type, project=project)
         for item in items:
-            link = _relative_link_from_profile(profile_relative_path, item.relative_path)
             wikilink = wikilink_for_memory(item.memory_id, item.relative_path)
-            lines.append(f"- [{item.citation_key}] {wikilink} ({link})")
+            lines.append(f"- [{item.citation_key}] {wikilink} ({item.relative_path.as_posix()})")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -420,7 +352,7 @@ def _fit_candidates(
         items=(),
     )
     if estimate_tokens(base_markdown) > budget:
-        raise ValueError("budget is too small to write required profile frontmatter")
+        raise ValueError("budget is too small to render required profile frontmatter")
 
     truncated = False
     for candidate in candidates:
@@ -507,28 +439,6 @@ def _ordered_types(items: Sequence[ProfileItem]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def _profile_path(config: MemoryConfig, *, profile_type: str, project: Optional[str]) -> Path:
-    profile_root = config.vault_path / config.profiles_dir
-    if profile_type == "user":
-        return profile_root / "user.md"
-    if project is None:
-        raise ValueError("project profile requires project")
-    return profile_root / "projects" / f"{_slugify(project)}.md"
-
-
-def _relative_profile_path(*, profile_type: str, project: Optional[str]) -> Path:
-    if profile_type == "user":
-        return Path("Profiles/user.md")
-    if project is None:
-        raise ValueError("project profile requires project")
-    return Path("Profiles/projects") / f"{_slugify(project)}.md"
-
-
-def _relative_link_from_profile(profile_relative_path: Path, memory_relative_path: Path) -> str:
-    start = profile_relative_path.parent.as_posix()
-    return posixpath.relpath(memory_relative_path.as_posix(), start=start)
-
-
 def _relative_path(config: MemoryConfig, document: MemoryDocument) -> Path:
     if document.path is None:
         return Path(document.frontmatter.id)
@@ -600,11 +510,6 @@ def _clean_optional(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", text.strip()).strip(".-")
-    return slug[:96].strip(".-") or "project"
-
-
 def _namespace_profile_citations(
     markdown: str,
     citations: Sequence[dict[str, Any]],
@@ -626,15 +531,12 @@ def _namespace_profile_citations(
 
 
 __all__ = [
-    "DEFAULT_PROFILE_BUDGET",
-    "NEXT_STEPS",
     "PROFILE_INJECTION_CITATION_PREFIX",
     "PROFILE_SCHEMA_VERSION",
     "PROFILE_TYPES",
     "ProfileCandidate",
     "ProfileItem",
     "ProfileResult",
-    "build_profile",
     "build_context_profile_payload",
     "generate_profile_context",
     "render_profile_markdown",

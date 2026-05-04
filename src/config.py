@@ -34,7 +34,6 @@ ENV_AGENT_SESSION_CAPTURE = "MEMORA_AGENT_SESSION_CAPTURE"
 ENV_PROFILE_ENABLED = "MEMORA_PROFILE_ENABLED"
 ENV_PROFILE_USER_BUDGET = "MEMORA_PROFILE_USER_BUDGET"
 ENV_PROFILE_PROJECT_BUDGET = "MEMORA_PROFILE_PROJECT_BUDGET"
-ENV_PROFILE_REFRESH_AFTER_REVIEW = "MEMORA_PROFILE_REFRESH_AFTER_REVIEW"
 ENV_PROFILE_INJECT_BY_DEFAULT = "MEMORA_PROFILE_INJECT_BY_DEFAULT"
 
 
@@ -236,12 +235,11 @@ class IndexFreshnessConfig(BaseModel):
 
 
 class ProfileConfig(BaseModel):
-    """Generated profile configuration."""
+    """Bounded in-memory profile context configuration."""
 
     enabled: bool = True
     user_budget: int = Field(default=500, ge=1)
     project_budget: int = Field(default=700, ge=1)
-    refresh_after_review: bool = True
     inject_by_default: bool = False
 
 
@@ -303,7 +301,6 @@ class MemoryConfig(BaseModel):
     memories_dir: str = "Memories"
     sources_dir: str = "Sources"
     briefs_dir: str = "Briefs"
-    profiles_dir: str = "Profiles"
     synthesis_dir: str = "Synthesis"
     memora_dir: str = CONFIG_DIR_NAME
     index_path: str = ".memora/index.sqlite"
@@ -346,7 +343,6 @@ class MemoryConfig(BaseModel):
         "memories_dir",
         "sources_dir",
         "briefs_dir",
-        "profiles_dir",
         "synthesis_dir",
         "memora_dir",
         "index_path",
@@ -514,7 +510,6 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         (ENV_PROFILE_ENABLED, "enabled"),
         (ENV_PROFILE_USER_BUDGET, "user_budget"),
         (ENV_PROFILE_PROJECT_BUDGET, "project_budget"),
-        (ENV_PROFILE_REFRESH_AFTER_REVIEW, "refresh_after_review"),
         (ENV_PROFILE_INJECT_BY_DEFAULT, "inject_by_default"),
     ):
         value = os.environ.get(env_name)

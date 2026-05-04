@@ -1094,9 +1094,11 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     return [
         "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
         "",
-        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `Profiles/`, `Synthesis/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
+        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `Synthesis/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
+        "",
+        "For a compact command and option reference, use `docs/cli-agent-reference.md` when it is available in the project; otherwise run `memora help --json` for the current public command surface.",
         "",
         f"Do not run memora recall for every turn. Use memory when the request addresses {addressing}, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
         "",
