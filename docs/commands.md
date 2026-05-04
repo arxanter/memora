@@ -17,6 +17,7 @@ memory to active durable truth unless explicitly configured.
 memory setup ~/MemoryVault --dry-run --json
 memory setup ~/MemoryVault --json
 memory agent-rules --format cursor --vault ~/MemoryVault --project agent-memory
+memory agent-install-commands --vault ~/MemoryVault
 memory install-agent-rules --client cursor --project /path/to/repo --dry-run --json
 ```
 
@@ -49,6 +50,7 @@ memory init <vault>
 memory setup [vault] --dry-run
 memory help
 memory agent-rules --format cursor
+memory agent-install-commands --vault ~/MemoryVault
 memory install-agent-rules --client cursor --project <path> --dry-run
 memory mcp-config
 memory remember --type decision --text "..."
@@ -183,6 +185,29 @@ memory agent-rules --format codex
 Generated rules tell agents to prefer `memory ... --json`, use
 `memory build-context` only when recall is relevant, preserve citations, and
 save raw material as `Sources/` before promoting atomic memories.
+
+### `memory agent-install-commands`
+
+Prints copy/paste shell commands for installing Agent Memory rules into the
+current project for Cursor and Claude. The command does not write files; it only
+renders dry-run and install commands that call `memory install-agent-rules`.
+
+Examples:
+
+```bash
+cd ./my-repo
+memory agent-install-commands --vault ~/MemoryVault
+memory agent-install-commands --vault ~/MemoryVault --force --json
+```
+
+Human output is ready to paste into a shell:
+
+```bash
+memory install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memory install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault
+memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault
+```
 
 ### `memory install-agent-rules`
 

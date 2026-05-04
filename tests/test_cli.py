@@ -141,6 +141,7 @@ def test_help_command_lists_grouped_commands():
         "setup [vault]",
         "agent-rules",
         "install-agent-rules",
+        "agent-install-commands",
         "mcp-config",
         "remember",
         "curate",
@@ -240,6 +241,58 @@ def test_install_agent_rules_dry_run_and_no_overwrite_behavior(tmp_path):
     assert payload["ok"] is False
     assert payload["error"]["code"] == "install_agent_rules_failed"
     assert target.read_text(encoding="utf-8") == "existing"
+
+
+def test_agent_install_commands_default_to_current_project(tmp_path):
+    project = tmp_path / "project"
+    vault = tmp_path / "memory-vault"
+    project.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "agent-install-commands",
+            "--project",
+            str(project),
+            "--vault",
+            str(vault),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "memory install-agent-rules --client cursor" in result.output
+    assert "memory install-agent-rules --client claude" in result.output
+    assert f"--project {project}" in result.output
+    assert f"--vault {vault}" in result.output
+    assert "--dry-run" in result.output
+    assert str(project / ".cursor" / "rules" / "agent-memory.mdc") in result.output
+    assert str(project / "CLAUDE.md") in result.output
+
+    json_result = runner.invoke(
+        app,
+        [
+            "agent-install-commands",
+            "--project",
+            str(project),
+            "--vault",
+            str(vault),
+            "--no-dry-run-first",
+            "--force",
+            "--json",
+        ],
+    )
+
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "agent-install-commands"
+    assert payload["project_path"] == str(project)
+    assert payload["vault_path"] == str(vault)
+    assert payload["force"] is True
+    assert payload["dry_run_first"] is False
+    assert [command["client"] for command in payload["commands"]] == ["cursor", "claude"]
+    assert all(command["dry_run_command"] is None for command in payload["commands"])
+    assert all("--force" in command["install_command"] for command in payload["commands"])
 
 
 def test_mcp_config_command_prints_client_config(tmp_path):

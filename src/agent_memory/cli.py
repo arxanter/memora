@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as json_module
 import os
+import shlex
 import shutil
 import hashlib
 from fnmatch import fnmatch
@@ -82,6 +83,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("refresh-index", "Reindex only when durable vault files changed."),
             ("agent-rules", "Generate CLI-first instructions for coding agents."),
             ("install-agent-rules", "Install generated agent instructions into a project."),
+            ("agent-install-commands", "Print copy/paste Cursor and Claude install commands."),
             ("mcp-config", "Print MCP client configuration for Claude, Cursor, or generic clients."),
             ("raw list", "List raw inbox/archive files."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
@@ -295,6 +297,49 @@ def install_agent_rules_command(
             console.print(f"[yellow]Dry run:[/yellow] would write {payload['target_path']}")
         return
     console.print(f"[green]Installed agent rules:[/green] {payload['target_path']}")
+
+
+@app.command("agent-install-commands")
+def agent_install_commands_command(
+    project: Path = typer.Option(Path("."), "--project", help="Project directory; defaults to the current directory."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in generated rules."),
+    force: bool = typer.Option(False, "--force", help="Include --force in install commands."),
+    dry_run_first: bool = typer.Option(
+        True,
+        "--dry-run-first/--no-dry-run-first",
+        help="Include dry-run preview commands before install commands.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Print copy/paste commands that install Cursor and Claude agent rules."""
+
+    try:
+        payload = _agent_install_commands_payload(
+            project=project,
+            vault=vault,
+            force=force,
+            dry_run_first=dry_run_first,
+        )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_install_commands_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    typer.echo("# Agent Memory agent-rule install commands")
+    typer.echo(f"# Project: {payload['project_path']}")
+    if payload["vault_path"]:
+        typer.echo(f"# Vault: {payload['vault_path']}")
+    else:
+        typer.echo("# Vault: resolved by --vault, AGENT_MEMORY_VAULT, or nearest .agent-memory/config.yaml")
+    typer.echo("")
+    for command in payload["commands"]:
+        typer.echo(f"# {command['client']} -> {command['target_path']}")
+        if command.get("dry_run_command"):
+            typer.echo(command["dry_run_command"])
+        typer.echo(command["install_command"])
+        typer.echo("")
 
 
 @app.command("mcp-config")
@@ -3522,6 +3567,52 @@ def _install_agent_rules_payload(
     return payload
 
 
+def _agent_install_commands_payload(
+    *,
+    project: Path,
+    vault: Optional[Path],
+    force: bool,
+    dry_run_first: bool,
+) -> dict[str, Any]:
+    project_path = project.expanduser().resolve()
+    resolved_vault = vault.expanduser().resolve() if vault is not None else None
+    commands: list[dict[str, Any]] = []
+    for client in ("cursor", "claude"):
+        target_path = _agent_rules_target_path(client, project_path, None)
+        base_args = [
+            "memory",
+            "install-agent-rules",
+            "--client",
+            client,
+            "--project",
+            str(project_path),
+        ]
+        if resolved_vault is not None:
+            base_args.extend(["--vault", str(resolved_vault)])
+        if force:
+            base_args.append("--force")
+        install_command = _shell_command(base_args)
+        dry_run_command = _shell_command([*base_args, "--dry-run"]) if dry_run_first else None
+        commands.append(
+            {
+                "client": client,
+                "target_path": str(target_path),
+                "dry_run_command": dry_run_command,
+                "install_command": install_command,
+            }
+        )
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "agent-install-commands",
+        "project_path": str(project_path),
+        "vault_path": str(resolved_vault) if resolved_vault is not None else None,
+        "force": force,
+        "dry_run_first": dry_run_first,
+        "commands": commands,
+    }
+
+
 def _agent_rules_target_path(client: str, project_path: Path, target: Optional[Path]) -> Path:
     if target is not None:
         candidate = target.expanduser()
@@ -3553,6 +3644,10 @@ def _render_agent_rules(format_name: str, *, vault_path: Optional[Path], project
     if format_name == "codex":
         return "\n".join(["# Agent Memory Instructions For Codex", "", *lines])
     return "\n".join(["## Agent Memory Usage", "", *lines])
+
+
+def _shell_command(args: list[str]) -> str:
+    return " ".join(shlex.quote(arg) for arg in args)
 
 
 def _agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
