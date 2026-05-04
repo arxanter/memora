@@ -32,6 +32,7 @@ from agent_memory.profile import build_context_profile_payload, build_profile
 from agent_memory.recall import explain_recall, recall_memory
 from agent_memory.recall_policy import should_recall
 from agent_memory.retrieval import RetrievalIndexError, SearchFilters, search_memory
+from agent_memory.safety import scan_source_material
 from agent_memory.schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType
 from agent_memory.session import normalize_session_recall_state, session_trace
 from agent_memory.sources import lookup_source, save_source_material
@@ -47,6 +48,7 @@ from agent_memory.vault import (
     setup_vault,
     status_summary,
 )
+from agent_memory.zoom_import import load_zoom_content
 
 app = typer.Typer(
     help="Local-first Obsidian-backed memory CLI.",
@@ -100,6 +102,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
             ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
             ("import-pdf <path>", "Import explicit local PDF text into Sources/."),
+            ("import-zoom <path>", "Import an explicit local Zoom summary/transcript export."),
             ("import-session <path>", "Save an AI-agent transcript and optional summary memory."),
         ),
     ),
@@ -801,6 +804,88 @@ def import_pdf_command(
         return
 
     console.print(f"[green]Imported PDF source:[/green] {payload['relative_source_path']}")
+    if payload.get("relative_extract_path"):
+        console.print(f"Extract: {payload['relative_extract_path']}")
+
+
+@app.command("import-zoom")
+def import_zoom_command(
+    path: Path = typer.Argument(..., help="Explicit local Zoom summary/transcript export to import into Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to export heading or file stem."),
+    meeting_date: Optional[str] = typer.Option(None, "--meeting-date", help="Meeting date metadata."),
+    meeting_time: Optional[str] = typer.Option(None, "--meeting-time", help="Meeting time metadata."),
+    meeting_id: Optional[str] = typer.Option(None, "--meeting-id", help="Zoom meeting ID metadata."),
+    meeting_url: Optional[str] = typer.Option(None, "--meeting-url", help="Zoom meeting URL metadata."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    channel: str = typer.Option("zoom", "--channel", help="Source channel metadata."),
+    source_quality: str = typer.Option("meeting_summary", "--source-quality", help="Source quality metadata."),
+    sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the Zoom import plan without writing Sources/."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Import an explicit local Zoom meeting summary/transcript export."""
+
+    try:
+        config = load_config(vault)
+        imported = load_zoom_content(
+            path,
+            title=title,
+            meeting_date=meeting_date,
+            meeting_time=meeting_time,
+            meeting_id=meeting_id,
+            meeting_url=meeting_url,
+        )
+        if dry_run:
+            payload = _zoom_import_plan_payload(
+                config,
+                imported=imported,
+                project=project,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                tags=tag,
+            )
+        else:
+            result = save_source_material(
+                config,
+                title=imported.title,
+                url=_meeting_url(imported.meeting),
+                content=imported.content,
+                extract=imported.extract,
+                project=project,
+                tags=tag,
+                channel=channel,
+                source_quality=source_quality,
+                sensitivity=sensitivity,
+                origin=imported.origin,
+            )
+            payload = result.to_dict()
+            payload.update(
+                {
+                    "command": "import-zoom",
+                    "dry_run": False,
+                    "content": imported.summary(),
+                    "meeting": imported.meeting,
+                    "next_steps": [
+                        "Review the saved Zoom source and extract before promoting canonical memory.",
+                        "Create pending source-backed memories only for durable facts, decisions, preferences, project context, or tasks.",
+                    ],
+                }
+            )
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="import_zoom_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    if dry_run:
+        console.print(f"[yellow]Dry run:[/yellow] Zoom source would be imported: {payload['path']}")
+        return
+
+    console.print(f"[green]Imported Zoom source:[/green] {payload['relative_source_path']}")
     if payload.get("relative_extract_path"):
         console.print(f"Extract: {payload['relative_extract_path']}")
 
@@ -2433,6 +2518,76 @@ def _pdf_import_plan_payload(
             "Review the saved extract before creating pending source-backed memories.",
         ],
     }
+
+
+def _zoom_import_plan_payload(
+    config: Any,
+    *,
+    imported: Any,
+    project: Optional[str],
+    channel: str,
+    source_quality: str,
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    safety = scan_source_material(
+        content=imported.content,
+        extract=imported.extract,
+        metadata={
+            "channel": channel,
+            "source_quality": source_quality,
+            "sensitivity": sensitivity,
+            **imported.origin,
+        },
+    )
+    planned_source = {
+        "title": imported.title,
+        "url": _meeting_url(imported.meeting),
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": dict(imported.origin),
+        "meeting": dict(imported.meeting),
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
+    }
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "import-zoom",
+        "dry_run": True,
+        "vault_path": str(config.vault_path),
+        "path": str(imported.path),
+        "title": imported.title,
+        "url": _meeting_url(imported.meeting),
+        "project": project,
+        "tags": tags,
+        "channel": channel,
+        "source_quality": source_quality,
+        "sensitivity": sensitivity,
+        "origin": dict(imported.origin),
+        "meeting": dict(imported.meeting),
+        "content": imported.summary(),
+        "risk_flags": list(safety.risk_flags),
+        "safety": safety.to_dict(),
+        "planned_source": planned_source,
+        "would_read_file": str(imported.path),
+        "would_write": "Sources/<source_id>/{source.md,extract.md}",
+        "next_steps": [
+            "Run without --dry-run to save the Zoom export under Sources/.",
+            "Review the saved extract before creating pending source-backed memories.",
+        ],
+    }
+
+
+def _meeting_url(meeting: Mapping[str, object]) -> Optional[str]:
+    value = meeting.get("meeting_url")
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
 
 
 def _resolve_raw_path(config: Any, path: Optional[Path]) -> Path:

@@ -53,6 +53,7 @@ memory import-source <path>
 memory import-source-inbox <path> --dry-run
 memory import-url <url> --dry-run
 memory import-pdf <path> --text-file <path> --dry-run
+memory import-zoom <path> --meeting-id <id> --dry-run
 memory import-session <path> --summary-file <path> --remember-summary
 memory import <path>
 memory export --format markdown
@@ -849,6 +850,32 @@ memory import-pdf ./paper.pdf \
   --vault ./memory-vault \
   --project agent-memory \
   --tag paper \
+  --json
+```
+
+### `memory import-zoom`
+
+Implemented in Phase 4 as an optional explicit connector.
+
+Imports one local Zoom meeting summary or transcript export (`.md`/`.txt`) into
+`Sources/`. The command is opt-in, reads only the file path provided by the user,
+does not call Zoom APIs, and does not create canonical memories by itself. It
+records `channel: zoom`, `source_quality: meeting_summary`, file origin, meeting
+metadata such as ID/date/time/URL when provided or easily detected, project,
+tags, sensitivity, and safety risk flags.
+
+Use `--dry-run` to preview the planned source payload and safety scan without
+writing files.
+
+Examples:
+
+```bash
+memory import-zoom ./weekly-summary.md --vault ./memory-vault --dry-run --json
+memory import-zoom ./weekly-summary.md \
+  --vault ./memory-vault \
+  --project agent-memory \
+  --meeting-id 123456789 \
+  --tag meeting \
   --json
 ```
 
