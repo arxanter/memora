@@ -16,7 +16,7 @@ embedding cache, locks, and schemas.
 
 The public CLI is intentionally small:
 
-- Vault basics: `init`, `setup`, `status`, `doctor`, `reindex`.
+- Vault basics: `init`, `setup`, `status`, `doctor`, `conflicts`, `reindex`.
 - Raw staging: `raw add`, `raw list`, `raw inspect`.
 - Curated evidence: `source add`, `lookup-source`.
 - Memory writes and review: `remember`, `review`, `review approve`,
@@ -26,9 +26,8 @@ The public CLI is intentionally small:
   `agent status`, `agent-aliases list`, `agent-aliases set`.
 - Session capture: `session finalize`.
 
-Older direct import, scheduled ingest, lifecycle, profile, synthesis, and eval
-commands are compatibility/internal paths and are not part of the public product
-surface.
+`build-context` may include a bounded profile-style rollup generated in memory.
+Lifecycle changes are handled through `review approve` and `review reject`.
 
 For a compact option-level reference intended for agents, see
 `docs/cli-agent-reference.md`.

@@ -264,22 +264,8 @@ fi
 exec "__PYTHON_CMD__" -m cli "$@"
 '
 
-SERVICE_WRAPPER='#!/usr/bin/env bash
-set -euo pipefail
-__DEFAULT_VAULT_EXPORT__
-export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-__INSTALL_DIR__}"
-export MEMORA_BIN_DIR="${MEMORA_BIN_DIR:-__BIN_DIR__}"
-if [ -n "${MEMORA_DEFAULT_VAULT:-}" ] && [ -z "${MEMORA_VAULT:-}" ]; then
-  export MEMORA_VAULT="$MEMORA_DEFAULT_VAULT"
-fi
-exec "__REPO_ROOT__/scripts/memora-service.sh" "$@"
-'
-
 MEMORA_WRAPPER="${MEMORA_WRAPPER//__PYTHON_CMD__/$PYTHON_CMD}"
 MEMORA_WRAPPER="${MEMORA_WRAPPER//__INSTALL_DIR__/$INSTALL_DIR}"
-SERVICE_WRAPPER="${SERVICE_WRAPPER//__INSTALL_DIR__/$INSTALL_DIR}"
-SERVICE_WRAPPER="${SERVICE_WRAPPER//__BIN_DIR__/$BIN_DIR}"
-SERVICE_WRAPPER="${SERVICE_WRAPPER//__REPO_ROOT__/$REPO_ROOT}"
 
 if [ -n "$VAULT_PATH" ]; then
   DEFAULT_VAULT_EXPORT="export MEMORA_DEFAULT_VAULT=\"$VAULT_PATH\""
@@ -287,11 +273,9 @@ else
   DEFAULT_VAULT_EXPORT=":"
 fi
 MEMORA_WRAPPER="${MEMORA_WRAPPER//__DEFAULT_VAULT_EXPORT__/$DEFAULT_VAULT_EXPORT}"
-SERVICE_WRAPPER="${SERVICE_WRAPPER//__DEFAULT_VAULT_EXPORT__/$DEFAULT_VAULT_EXPORT}"
 
 log "installing wrapper commands"
 write_file "$BIN_DIR/memora" 0755 "$MEMORA_WRAPPER"
-write_file "$BIN_DIR/memora-service" 0755 "$SERVICE_WRAPPER"
 
 if [ -n "$VAULT_PATH" ]; then
   log "initializing vault: $VAULT_PATH"
@@ -308,12 +292,8 @@ Add this directory to PATH if needed:
 CLI:
   memora status
   memora reindex --clean
-  memora agent commands --client all
-  memora-service install
-  memora-service start
-  memora-service status
+  memora agent integrate --client all --dry-run
 
 Notes:
   - Use generated agent instructions and CLI JSON commands for coding-agent integrations.
-  - The background service is for local health and maintenance hooks.
 EOF

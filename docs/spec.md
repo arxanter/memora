@@ -20,14 +20,14 @@ The core wedge is better agent context, not generic note taking:
 
 The implementation targets one primary interface:
 
-- CLI for development, inspection, repair, imports, exports, and local workflows.
+- CLI for development, inspection, repair, source capture, and local workflows.
 
 Generated agent instructions for Claude Code, Codex, Cursor, and similar tools
 should call the CLI instead of relying on a separate protocol surface.
 
 ## Source Of Truth
 
-Obsidian Markdown is canonical. A vault contains human-readable memories, sources, profiles, briefs, and synthesis notes. SQLite, FTS indexes, embedding vectors, locks, and temporary cache files are rebuildable local data under `.memora/`.
+Obsidian Markdown is canonical. A vault contains human-readable memories, curated sources, and generated briefs. Profile-style context is generated in memory during recall and is not a durable vault folder. SQLite, FTS indexes, embedding vectors, locks, and temporary cache files are rebuildable local data under `.memora/`.
 
 The expected sync model is:
 

@@ -11,7 +11,6 @@ SCRIPTS = ROOT / "scripts"
 def test_local_install_scripts_pass_bash_syntax_check():
     scripts = [
         SCRIPTS / "install.sh",
-        SCRIPTS / "memora-service.sh",
         SCRIPTS / "uninstall.sh",
     ]
 
@@ -53,7 +52,7 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "would write" in result.stdout
-    assert "memora agent commands --client all" in result.stdout
+    assert "memora agent integrate --client all --dry-run" in result.stdout
     assert not install_dir.exists()
     assert not bin_dir.exists()
     assert not vault.exists()
@@ -92,7 +91,7 @@ def test_local_install_docs_reference_existing_scripts():
     architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
     cli_reference = (ROOT / "docs" / "cli-agent-reference.md").read_text(encoding="utf-8")
 
-    for script_name in ("install.sh", "memora-service.sh", "uninstall.sh"):
+    for script_name in ("install.sh", "uninstall.sh"):
         assert (SCRIPTS / script_name).exists()
 
     assert "git clone https://github.com/arxanter/memora.git ~/.local/src/memora" in readme

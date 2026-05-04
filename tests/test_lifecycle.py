@@ -22,7 +22,7 @@ from vault import doctor_report, init_vault
 runner = CliRunner()
 
 
-def test_mark_reject_and_review_lifecycle_commands(tmp_path):
+def test_review_reject_lifecycle_command(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
     _write_memory(
@@ -38,24 +38,21 @@ def test_mark_reject_and_review_lifecycle_commands(tmp_path):
     )
 
     review_payload = runner.invoke(app, ["review", "--vault", str(vault), "--json"])
-    mark_payload = runner.invoke(
+    reject_payload = runner.invoke(
         app,
-        ["mark", "mem_20260430_agent", "--status", "stale", "--vault", str(vault), "--json"],
+        ["review", "reject", "mem_20260430_agent", "--vault", str(vault), "--json"],
     )
-    reject_payload = runner.invoke(app, ["reject", "mem_20260430_agent", "--vault", str(vault), "--json"])
 
     assert review_payload.exit_code == 0, review_payload.output
-    assert mark_payload.exit_code == 0, mark_payload.output
     assert reject_payload.exit_code == 0, reject_payload.output
     assert json.loads(review_payload.output)["items"][0]["id"] == "mem_20260430_agent"
-    assert json.loads(mark_payload.output)["mutations"][0]["status"] == "stale"
     assert json.loads(reject_payload.output)["mutations"][0]["status"] == "rejected"
 
     document = validate_markdown_file(vault / "Memories/facts/agent.md")
     assert document.frontmatter.status == "rejected"
     assert document.frontmatter.valid_to is not None
     history = document.frontmatter.model_dump(mode="json")["history"]
-    assert [entry["action"] for entry in history] == ["mark_status", "reject"]
+    assert [entry["action"] for entry in history] == ["reject"]
 
 
 def test_supersede_updates_status_relation_and_audit_together(tmp_path):
@@ -966,124 +963,6 @@ def test_curation_plan_proposes_conservative_actions_without_mutating_memories(t
             "type": "fact",
             "status": "active",
         }
-    ]
-
-
-def test_curate_cli_json_and_human_output_do_not_mutate_memories(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/facts/active-duplicate.md",
-        memory_id="mem_20260430_active_duplicate",
-        memory_type="fact",
-        status="active",
-        body="CLI curation detects duplicate review text.",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/active-truth.md",
-        memory_id="mem_20260430_active_truth",
-        memory_type="fact",
-        status="active",
-        body="CLI curation active memory says Markdown is durable.",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/pending-duplicate.md",
-        memory_id="mem_20260430_pending_duplicate",
-        memory_type="fact",
-        status="pending",
-        body="CLI curation detects duplicate review text.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_cli_duplicates/extract.md",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/pending-contradiction.md",
-        memory_id="mem_20260430_pending_contradiction",
-        memory_type="fact",
-        status="pending",
-        body="CLI curation pending memory contradicts active truth.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_cli_contradictions/extract.md",
-        confidence=0.95,
-        contradicts=["mem_20260430_active_truth"],
-    )
-    memory_paths = sorted((vault / "Memories").rglob("*.md"))
-    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
-
-    json_result = runner.invoke(app, ["curate", "--vault", str(vault), "--json"])
-    human_result = runner.invoke(app, ["curate", "--vault", str(vault)])
-
-    assert json_result.exit_code == 0, json_result.output
-    assert human_result.exit_code == 0, human_result.output
-    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
-    payload = json.loads(json_result.output)
-    items = {item["id"]: item for item in payload["items"]}
-    assert items["mem_20260430_pending_duplicate"]["recommended_action"] == "merge_or_reject_duplicate"
-    assert items["mem_20260430_pending_contradiction"]["recommended_action"] == "inspect_contradiction"
-    assert "Curation proposals" in human_result.output
-    assert "merge_or_reject_duplicate" in human_result.output
-    assert "inspect_contradiction" in human_result.output
-
-
-def test_curate_cli_filters_by_project_and_source(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/facts/project.md",
-        memory_id="mem_20260430_project_pending",
-        memory_type="fact",
-        status="pending",
-        scope="project",
-        project="memora",
-        body="Project curation memory should match project and source filters.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_project/extract.md",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/other.md",
-        memory_id="mem_20260430_other_pending",
-        memory_type="fact",
-        status="pending",
-        scope="project",
-        project="other-project",
-        body="Other curation memory should be filtered out.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_other/extract.md",
-        confidence=0.95,
-    )
-
-    project_result = runner.invoke(
-        app,
-        ["curate", "--vault", str(vault), "--project", "memora", "--json"],
-    )
-    source_result = runner.invoke(
-        app,
-        [
-            "curate",
-            "--vault",
-            str(vault),
-            "--source",
-            "Sources/2026-04-30_project/extract.md",
-            "--json",
-        ],
-    )
-
-    assert project_result.exit_code == 0, project_result.output
-    assert source_result.exit_code == 0, source_result.output
-    assert [item["id"] for item in json.loads(project_result.output)["items"]] == [
-        "mem_20260430_project_pending"
-    ]
-    assert [item["id"] for item in json.loads(source_result.output)["items"]] == [
-        "mem_20260430_project_pending"
     ]
 
 

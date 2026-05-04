@@ -5,7 +5,6 @@ raw_dir: raw
 memories_dir: Memories
 sources_dir: Sources
 briefs_dir: Briefs
-synthesis_dir: Synthesis
 memora_dir: .memora
 index_path: .memora/index.sqlite
 default_scope: project
@@ -99,20 +98,3 @@ profile:
   user_budget: 500
   project_budget: 700
   inject_by_default: false
-
-connectors:
-  url:
-    enabled: false
-  pdf:
-    enabled: false
-  zoom:
-    enabled: false
-  slack:
-    enabled: false
-  source_inbox:
-    enabled: false
-    path: raw/inbox
-    patterns:
-      - "**/*"
-    sensitivity: normal
-    source_quality: imported_export

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shlex
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -37,15 +36,6 @@ class TargetSupport(str, Enum):
     UNSUPPORTED = "unsupported"
 
 
-class IntegrationAction(str, Enum):
-    """Planned file action for an integration target."""
-
-    CREATE = "create"
-    OVERWRITE = "overwrite"
-    BLOCKED = "blocked"
-    DRY_RUN = "dry_run"
-
-
 @dataclass(frozen=True)
 class IntegrationTarget:
     client: AgentClient
@@ -65,36 +55,9 @@ class IntegrationTarget:
             "explicit": self.explicit,
         }
 
-
-@dataclass(frozen=True)
-class IntegrationPlan:
-    target: IntegrationTarget
-    content: str
-    action: IntegrationAction
-    target_exists: bool
-    existing_hash: Optional[str]
-    new_hash: str
-    would_write: bool
-    needs_update: bool
-    force: bool
-    dry_run: bool
-    detected_version: Optional[str] = None
-
-    @property
-    def blocked(self) -> bool:
-        return self.action == IntegrationAction.BLOCKED
-
-
-@dataclass(frozen=True)
-class IntegrationResult:
-    plan: IntegrationPlan
-    written: bool
-
-
 SUPPORTED_AGENT_RULE_FORMATS = frozenset(client.value for client in AgentClient)
 SUPPORTED_AGENT_RULE_CLIENTS = SUPPORTED_AGENT_RULE_FORMATS
-SUPPORTED_AGENT_INSTALL_COMMAND_CLIENTS = frozenset({"all", *SUPPORTED_AGENT_RULE_CLIENTS})
-DEFAULT_INSTALL_COMMAND_CLIENTS = (AgentClient.CURSOR, AgentClient.CLAUDE, AgentClient.CODEX)
+DEFAULT_AGENT_INTEGRATION_CLIENTS = (AgentClient.CURSOR, AgentClient.CLAUDE, AgentClient.CODEX)
 SCHEDULED_TEMPLATE_KINDS = frozenset({"email", "calendar", "slack", "web", "custom"})
 
 AGENT_RULES_TEMPLATE_VERSION = "agent-rules-v2"
@@ -175,130 +138,6 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
             parts.append(f"`{name}, {russian_tail}`")
         lines.append("- " + " / ".join(parts) + f": {instruction}")
     return lines
-
-
-def agent_rules_payload(
-    *,
-    rule_format: str,
-    vault: Optional[Path],
-    project: Optional[str],
-    alias_overrides: Optional[list[str]] = None,
-) -> dict[str, object]:
-    selected_format = _normalize_client(rule_format, kind="format")
-    resolved_vault = vault.expanduser().resolve() if vault is not None else None
-    selected_project = project.strip() if project else None
-    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
-    content = render_agent_rules(
-        selected_format,
-        vault_path=resolved_vault,
-        project=selected_project,
-        agent_aliases=aliases,
-    )
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "agent-rules",
-        "format": selected_format.value,
-        "vault_path": str(resolved_vault) if resolved_vault else None,
-        "project": selected_project,
-        "alias_overrides": alias_overrides,
-        "agent_aliases": aliases,
-        "content": content,
-    }
-
-
-def install_agent_rules_payload(
-    *,
-    client: str,
-    project: Path,
-    target: Optional[Path],
-    vault: Optional[Path],
-    dry_run: bool,
-    force: bool,
-    alias_overrides: Optional[list[str]] = None,
-) -> dict[str, object]:
-    selected_client = _normalize_client(client, kind="client")
-    project_path = project.expanduser().resolve()
-    resolved_vault = vault.expanduser().resolve() if vault is not None else None
-    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
-    content = render_agent_rules(
-        selected_client,
-        vault_path=resolved_vault,
-        project=project_path.name,
-        agent_aliases=aliases,
-    )
-    plan = plan_integration(
-        client=selected_client,
-        scope=IntegrationScope.PROJECT,
-        project_path=project_path,
-        target=target,
-        content=content,
-        dry_run=dry_run,
-        force=force,
-    )
-
-    payload = {
-        "ok": True,
-        "implemented": True,
-        "command": "install-agent-rules",
-        "client": selected_client.value,
-        "project_path": str(project_path),
-        "target_path": str(plan.target.path),
-        "target_exists": plan.target_exists,
-        "dry_run": dry_run,
-        "force": force,
-        "blocked": plan.blocked,
-        "would_write": plan.would_write,
-        "written": False,
-        "agent_aliases": aliases,
-        "alias_overrides": alias_overrides,
-        "content": content,
-    }
-
-    if dry_run:
-        return payload
-    if plan.blocked:
-        raise ValueError(f"target exists: {plan.target.path}; pass --force to overwrite")
-
-    plan.target.path.parent.mkdir(parents=True, exist_ok=True)
-    plan.target.path.write_text(content, encoding="utf-8")
-    payload["written"] = True
-    return payload
-
-
-def agent_install_commands_payload(
-    *,
-    project: Path,
-    client: str,
-    vault: Optional[Path],
-    force: bool,
-    dry_run_first: bool,
-) -> dict[str, object]:
-    selected_client = client.strip().lower()
-    clients = agent_install_command_clients(selected_client)
-    project_path = project.expanduser().resolve()
-    resolved_vault = vault.expanduser().resolve() if vault is not None else None
-    commands = [
-        install_command_plan(
-            client=install_client,
-            project_path=project_path,
-            vault_path=resolved_vault,
-            force=force,
-            dry_run_first=dry_run_first,
-        )
-        for install_client in clients
-    ]
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "agent-install-commands",
-        "client": selected_client,
-        "project_path": str(project_path),
-        "vault_path": str(resolved_vault) if resolved_vault is not None else None,
-        "force": force,
-        "dry_run_first": dry_run_first,
-        "commands": commands,
-    }
 
 
 def agent_group_rules_payload(
@@ -551,28 +390,6 @@ def agent_doctor_payload(
     }
 
 
-def agent_group_commands_payload(
-    *,
-    project: Path,
-    client: str,
-    vault: Optional[Path],
-    force: bool,
-    dry_run_first: bool,
-) -> dict[str, object]:
-    payload = agent_install_commands_payload(
-        project=project,
-        client=client,
-        vault=vault,
-        force=force,
-        dry_run_first=dry_run_first,
-    )
-    return {
-        **payload,
-        "command": "agent commands",
-        "compatibility_command": "agent-install-commands",
-    }
-
-
 def agent_scheduled_template_payload(
     *,
     client: str,
@@ -659,7 +476,7 @@ def agent_session_template_payload(
             "",
             "At the end of a substantial task:",
             "1. Create a concise session summary with decisions, durable facts, tasks, and open questions.",
-            "2. If a transcript export is available, save it with `memora import-session --summary-file <summary> --json`.",
+            "2. If a transcript export is available, save it with `memora session finalize --summary-file <summary> --json`.",
             "3. Propose only durable atomic memories; avoid raw logs, secrets, and transient implementation chatter.",
             "4. Leave inferred memories pending unless policy explicitly allows activation.",
             "5. Report the source saved, pending memory count, and review command.",
@@ -675,53 +492,13 @@ def agent_session_template_payload(
     }
 
 
-def agent_install_command_clients(client: str) -> tuple[AgentClient, ...]:
+def select_agent_clients(client: str) -> tuple[AgentClient, ...]:
     selected_client = client.strip().lower()
-    if selected_client not in SUPPORTED_AGENT_INSTALL_COMMAND_CLIENTS:
+    if selected_client not in {"all", *SUPPORTED_AGENT_RULE_CLIENTS}:
         raise ValueError("client must be one of: all, agents, cursor, claude, codex")
     if selected_client == "all":
-        return DEFAULT_INSTALL_COMMAND_CLIENTS
+        return DEFAULT_AGENT_INTEGRATION_CLIENTS
     return (_normalize_client(selected_client, kind="client"),)
-
-
-def select_agent_clients(client: str) -> tuple[AgentClient, ...]:
-    return agent_install_command_clients(client)
-
-
-def install_command_plan(
-    *,
-    client: AgentClient | str,
-    project_path: Path,
-    vault_path: Optional[Path],
-    force: bool,
-    dry_run_first: bool,
-) -> dict[str, Optional[str]]:
-    selected_client = _coerce_client(client)
-    target = resolve_integration_target(
-        selected_client,
-        scope=IntegrationScope.PROJECT,
-        project_path=project_path,
-    )
-    base_args = [
-        "memora",
-        "install-agent-rules",
-        "--client",
-        selected_client.value,
-        "--project",
-        str(project_path),
-    ]
-    if vault_path is not None:
-        base_args.extend(["--vault", str(vault_path)])
-    if force:
-        base_args.append("--force")
-    install_command = shell_command(base_args)
-    dry_run_command = shell_command([*base_args, "--dry-run"]) if dry_run_first else None
-    return {
-        "client": selected_client.value,
-        "target_path": str(target.path),
-        "dry_run_command": dry_run_command,
-        "install_command": install_command,
-    }
 
 
 def apply_agent_integration(
@@ -970,54 +747,6 @@ def _agent_result_payload(
     }
 
 
-def plan_integration(
-    *,
-    client: AgentClient | str,
-    scope: IntegrationScope | str,
-    project_path: Path,
-    target: Optional[Path],
-    content: str,
-    dry_run: bool,
-    force: bool,
-) -> IntegrationPlan:
-    selected_client = _coerce_client(client)
-    selected_scope = _coerce_scope(scope)
-    integration_target = resolve_integration_target(
-        selected_client,
-        scope=selected_scope,
-        project_path=project_path,
-        target=target,
-    )
-    target_exists = integration_target.path.exists()
-    existing_hash = file_content_hash(integration_target.path) if target_exists else None
-    new_hash = managed_content_hash(content)
-    detected_version = managed_block_metadata(
-        integration_target.path.read_text(encoding="utf-8")
-    ).get("template_version") if target_exists else None
-    blocked = target_exists and not force
-    if blocked:
-        action = IntegrationAction.BLOCKED
-    elif dry_run:
-        action = IntegrationAction.DRY_RUN
-    elif target_exists:
-        action = IntegrationAction.OVERWRITE
-    else:
-        action = IntegrationAction.CREATE
-    return IntegrationPlan(
-        target=integration_target,
-        content=content,
-        action=action,
-        target_exists=target_exists,
-        existing_hash=existing_hash,
-        new_hash=new_hash,
-        would_write=not blocked,
-        needs_update=existing_hash != new_hash,
-        force=force,
-        dry_run=dry_run,
-        detected_version=detected_version,
-    )
-
-
 def resolve_integration_target(
     client: AgentClient | str,
     *,
@@ -1094,7 +823,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     return [
         "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
         "",
-        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `Synthesis/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
+        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
         "",
@@ -1199,10 +928,6 @@ def managed_block_metadata(content: str) -> dict[str, str]:
     return metadata
 
 
-def shell_command(args: list[str]) -> str:
-    return " ".join(shlex.quote(arg) for arg in args)
-
-
 def normalize_scheduled_kind(kind: str) -> str:
     """Return a compact, deterministic scheduled source kind slug."""
 
@@ -1215,7 +940,7 @@ def normalize_scheduled_kind(kind: str) -> str:
 
 
 def scheduled_source_channel(kind: str) -> str:
-    """Return the source channel recorded for scheduled ingests."""
+    """Return the source channel recorded for scheduled source captures."""
 
     return f"scheduled_{normalize_scheduled_kind(kind).replace('-', '_')}"
 

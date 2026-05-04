@@ -37,7 +37,6 @@ SOURCE_CHANNELS = {
     "web_clipper",
     "zoom",
     "slack",
-    "source_inbox",
 }
 SOURCE_QUALITIES = {
     "explicit_user",

@@ -5,9 +5,7 @@ from agent_integration import (
     IntegrationScope,
     TargetSupport,
     agent_status_payload,
-    agent_install_command_clients,
     agent_targets_payload,
-    install_command_plan,
     managed_block_metadata,
     managed_content_hash,
     plan_managed_agent_write,
@@ -15,6 +13,7 @@ from agent_integration import (
     render_agent_rules,
     render_managed_block,
     resolve_integration_target,
+    select_agent_clients,
 )
 
 _DEFAULT_AGENT_ALIASES = AgentPolicyConfig().aliases
@@ -31,33 +30,12 @@ def test_project_targets_match_existing_agent_rule_defaults(tmp_path):
     assert resolve_integration_target("agents", project_path=project).path == project.resolve() / "AGENTS.md"
 
 
-def test_all_install_command_clients_skip_duplicate_agents_target():
-    assert agent_install_command_clients("all") == (
+def test_select_agent_clients_all_skips_duplicate_agents_target():
+    assert select_agent_clients("all") == (
         AgentClient.CURSOR,
         AgentClient.CLAUDE,
         AgentClient.CODEX,
     )
-
-
-def test_install_command_plan_renders_existing_compatibility_command(tmp_path):
-    project = tmp_path / "project with spaces"
-    vault = tmp_path / "vault"
-
-    plan = install_command_plan(
-        client="codex",
-        project_path=project,
-        vault_path=vault,
-        force=True,
-        dry_run_first=True,
-    )
-
-    assert plan["client"] == "codex"
-    assert plan["target_path"] == str(project / "AGENTS.md")
-    assert "memora install-agent-rules --client codex" in plan["install_command"]
-    assert f"--project '{project}'" in plan["install_command"]
-    assert f"--vault {vault}" in plan["install_command"]
-    assert "--force" in plan["install_command"]
-    assert plan["dry_run_command"].endswith("--force --dry-run")
 
 
 def test_render_agent_rules_preserves_phase_one_content(tmp_path):
@@ -91,7 +69,6 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
         "`Memories/`",
         "`Sources/`",
         "`Briefs/`",
-        "`Synthesis/`",
         "`raw/`",
         "`.memora/index.sqlite`",
         "cache",

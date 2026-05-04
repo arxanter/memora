@@ -90,11 +90,12 @@ and Basic Memory import/export compatibility shape.
 
 ## Running Evaluation
 
-Use the lightweight CLI harness:
+Use the lightweight Python harness from tests:
 
-```bash
-memora eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
-memora eval tests/fixtures/vault-basic
+```python
+from evaluation import run_evaluation
+
+report = run_evaluation("tests/fixtures/evaluation/coding-agent-questions.yaml")
 ```
 
 The harness copies the fixture vault to a temporary directory, runs a clean
@@ -102,10 +103,9 @@ reindex, then evaluates search, recall, brief, review, conflict, or doctor cases
 against expected IDs, warning text, token budget, and explainability metadata.
 This keeps repository fixtures immutable while still testing rebuild behavior.
 
-Import/export remains a placeholder command surface in Stage 12. The
-`vault-basic-memory-import` fixture documents the Basic Memory-compatible shape
-expected by a later importer and tests that the placeholder command contract is
-stable until that implementation is scoped.
+Import/export placeholders are not part of the CLI. The
+`vault-basic-memory-import` fixture remains as data for future importer design,
+but scripts should use explicit raw, source, memory, and recall commands.
 
 ## Stage 0 Acceptance
 

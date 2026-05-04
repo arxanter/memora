@@ -32,7 +32,7 @@ observations:
   - category: task
     text: Add a CLI skeleton after the schema validator exists.
     confidence: 0.78
-tags: [memory, cli, stage-2]
+tags: [memory, cli, example]
 ---
 
-Pending example: Stage 2 can introduce CLI commands once Stage 1 schema validation is in place.
+Pending example: keep the CLI skeleton aligned with the current public command surface.

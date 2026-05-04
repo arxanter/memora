@@ -1,11 +1,8 @@
-import json
 import shutil
 from pathlib import Path
 
 import yaml
-from typer.testing import CliRunner
 
-from cli import app
 from config import load_config
 from evaluation import run_evaluation
 from indexer import reindex_vault, split_document_chunks
@@ -15,7 +12,6 @@ from sync import detect_sync_conflicts
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 EVAL_SPEC = FIXTURES / "evaluation" / "coding-agent-questions.yaml"
-runner = CliRunner()
 
 
 def test_stage12_evaluation_set_runs_representative_coding_agent_questions():
@@ -28,17 +24,6 @@ def test_stage12_evaluation_set_runs_representative_coding_agent_questions():
     assert 30 <= payload["case_count"] <= 50
     assert payload["reindex"]["documents_seen"] >= 15
     assert all(case["used_tokens_estimate"] <= case["max_tokens"] for case in payload["cases"] if case["max_tokens"])
-
-
-def test_eval_cli_emits_stable_json_payload():
-    result = runner.invoke(app, ["eval", str(EVAL_SPEC), "--json"])
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["ok"] is True
-    assert payload["implemented"] is True
-    assert payload["case_count"] >= 30
-    assert payload["failed_count"] == 0
 
 
 def test_eval_can_run_fixture_directory_smoke_spec():
@@ -96,7 +81,7 @@ def test_conflict_fixture_reports_expected_warning_and_conflict_kinds():
     }
 
 
-def test_basic_memory_import_fixture_documents_compatibility_shape(tmp_path):
+def test_basic_memory_import_fixture_documents_future_compatibility_shape(tmp_path):
     fixture = FIXTURES / "vault-basic-memory-import"
     shape = yaml.safe_load((fixture / "basic-memory-export.yaml").read_text(encoding="utf-8"))
     vault = _copy_fixture(fixture, tmp_path / "import-fixture")
@@ -106,17 +91,6 @@ def test_basic_memory_import_fixture_documents_compatibility_shape(tmp_path):
     assert shape["expected_memora_shape"]["memory_type"] == "source_extract"
     assert "observations[].text" in shape["expected_memora_shape"]["preserves"]
     assert result.graph.ok is True
-
-    import_result = runner.invoke(
-        app,
-        ["import", str(fixture / "basic-memory-export.yaml"), "--vault", str(vault), "--json"],
-    )
-    export_result = runner.invoke(app, ["export", "--format", "markdown", "--vault", str(vault), "--json"])
-
-    assert json.loads(import_result.output)["implemented"] is False
-    assert json.loads(import_result.output)["path"].endswith("basic-memory-export.yaml")
-    assert json.loads(export_result.output)["implemented"] is False
-    assert json.loads(export_result.output)["format"] == "markdown"
 
 
 def _copy_fixture(source: Path, destination: Path) -> Path:

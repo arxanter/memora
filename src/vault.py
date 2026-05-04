@@ -83,14 +83,14 @@ class SetupResult:
             "actions": list(self.actions),
             "next_steps": [
                 "Run without --dry-run to create the planned vault files.",
-                "Run `memora agent-rules --format agents` to generate coding-agent instructions.",
-                "Run `memora install-agent-rules --client cursor --project <path> --dry-run` to preview project rule installation.",
+                "Run `memora agent rules --client agents` to generate coding-agent instructions.",
+                "Run `memora agent integrate --client cursor --project <path> --dry-run` to preview project rule installation.",
             ]
             if self.dry_run
             else [
                 "Run `memora doctor --vault <vault>` to validate the vault.",
-                "Run `memora agent-rules --format agents` to generate coding-agent instructions.",
-                "Run `memora install-agent-rules --client cursor --project <path>` to connect a project agent.",
+                "Run `memora agent rules --client agents` to generate coding-agent instructions.",
+                "Run `memora agent integrate --client cursor --project <path>` to connect a project agent.",
             ],
         }
 
@@ -117,7 +117,7 @@ class RememberResult:
 
 
 def init_vault(vault_path: Union[Path, str]) -> InitResult:
-    """Create the Stage 2 vault layout and default config without overwriting data."""
+    """Create the vault layout and default config without overwriting data."""
 
     config = create_default_config(vault_path)
     created_paths: list[Path] = []
@@ -403,18 +403,6 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
     }
 
 
-def placeholder_result(command: str, **details: Any) -> dict[str, Any]:
-    """Structured Stage 2 placeholder for later retrieval/indexing services."""
-
-    return {
-        "ok": True,
-        "implemented": False,
-        "command": command,
-        "message": f"{command} is a Stage 2 CLI placeholder; implementation is planned for later stages.",
-        **details,
-    }
-
-
 def _contradiction_warnings(documents: Iterable[Any], config: MemoryConfig) -> list[dict[str, Any]]:
     known_paths = {
         document.frontmatter.id: (
@@ -470,7 +458,6 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
         *memory_dirs,
         config.vault_path / config.sources_dir,
         config.vault_path / config.briefs_dir,
-        config.vault_path / config.synthesis_dir,
         config.vault_path / config.memora_dir,
         config.vault_path / config.memora_dir / "schemas",
         config.vault_path / config.memora_dir / "cache",

@@ -31,7 +31,6 @@ Obsidian Vault/
       source.md
       extract.md
   Briefs/
-  Synthesis/
   .memora/
     config.yaml
     schemas/

@@ -43,9 +43,6 @@ only-include = ["src"]
 sources = ["src"]
 
 [project.optional-dependencies]
-pdf = [
-  "pypdf",
-]
 test = [
   "pytest>=8.0",
 ]

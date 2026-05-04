@@ -43,7 +43,7 @@ vault policy is `autonomous` and the change is source-backed with a reason.
 For approval, use `memora review approve <id> --reason "<reason>" --json`. For
 rejection, use `memora review reject <id> --reason "<reason>" --json`.
 
-Do not run `build_context()` for generic coding or shell tasks. For normal user
+Do not run `memora build-context` for generic coding or shell tasks. For normal user
 requests, first decide whether memory is relevant. Recall is relevant when the
 request uses a configured assistant alias, asks about previous decisions, earlier work, stored
 preferences, project history/status, or project-specific memory.

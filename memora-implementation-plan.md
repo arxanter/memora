@@ -74,7 +74,6 @@ Obsidian Vault/
       source.md
       extract.md
   Briefs/
-  Synthesis/
   .memora/
     config.yaml
     schemas/
@@ -249,7 +248,7 @@ memora recall --json
 memora brief --json
 memora inspect --json
 memora explain-recall --json
-memora mark --json
+memora review --json
 ```
 
 Rules:
@@ -487,19 +486,16 @@ Deliverables:
 - JSON and Markdown output modes.
 - Golden fixtures for brief formatting.
 
-## Stage 9: Lifecycle: Supersede, Contradict, Decay
+## Stage 9: Lifecycle And Review
 
 Estimated time: 3-5 days.
 
 Commands:
 
 ```bash
-memora supersede <old_id> --by <new_id>
-memora contradict <id1> <id2>
-memora mark <id> --status stale
-memora decay
 memora review
-memora reject <id>
+memora review approve <id>
+memora review reject <id>
 ```
 
 Rules:
@@ -516,7 +512,7 @@ Rules:
 
 Deliverables:
 
-- Lifecycle commands.
+- Lifecycle backend used by the review workflow.
 - Retrieval respects lifecycle.
 - `doctor` detects contradictions and missing links.
 - Review queue for agent-generated memory.
@@ -550,7 +546,6 @@ memora should-recall "<message>" --json
 memora brief "<query>" --json
 memora build-context "<task>" --json
 memora remember ... --json
-memora supersede ... --json
 ```
 
 Deliverables:

@@ -60,7 +60,6 @@ def test_generate_user_profile_context_uses_active_user_and_global_memories_with
     after = {path: path.read_text(encoding="utf-8") for path in memory_paths}
 
     assert after == before
-    assert not (vault / "Profiles").exists()
     assert len(result.items) == 2
     assert result.used_tokens_estimate <= result.budget
     assert frontmatter == {
@@ -218,8 +217,6 @@ def test_generate_profile_context_respects_disabled_config(tmp_path):
     with pytest.raises(ValueError, match="profile generation is disabled"):
         generate_profile_context(config, profile_type="user", budget=500)
 
-    assert not (vault / "Profiles").exists()
-
 
 def test_build_context_profile_payload_returns_context_without_file_paths(tmp_path):
     vault = tmp_path / "memory-vault"
@@ -253,7 +250,6 @@ def test_build_context_profile_payload_returns_context_without_file_paths(tmp_pa
     assert payload["source_memory_ids"] == ["mem_20260501_cli_profile"]
     assert payload["citations"][0]["key"] == "P1"
     assert "Build context injects profile context in memory. [P1]" in payload["markdown"]
-    assert not (vault / "Profiles").exists()
 
 
 def _write_memory(

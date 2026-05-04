@@ -39,8 +39,8 @@ Common options to add when needed: `--install-dir <path>`, `--bin-dir <path>`,
 `--python <path>`, `--dry-run`, `--force`.
 
 The installer creates a managed virtual environment, installs Memora from the
-cloned repository, writes `memora` and `memora-service` wrappers, and initializes
-the vault when `--vault` is provided.
+cloned repository, writes the `memora` wrapper, and initializes the vault when
+`--vault` is provided.
 
 On Windows, use WSL2 and run the same commands inside Linux.
 
@@ -103,14 +103,14 @@ Markdown vault is not deleted.
 
 ```bash
 cd ~/.local/src/memora
-./scripts/uninstall.sh --remove-venv --remove-logs
+./scripts/uninstall.sh --remove-venv
 rm -rf ~/.local/src/memora
 ```
 
 To preview removal:
 
 ```bash
-./scripts/uninstall.sh --remove-venv --remove-logs --dry-run
+./scripts/uninstall.sh --remove-venv --dry-run
 ```
 
 </details>

@@ -224,7 +224,7 @@ class AgentPolicyConfig(BaseModel):
 
 
 class IndexFreshnessConfig(BaseModel):
-    """Polling freshness settings for the local service."""
+    """Index freshness settings for CLI commands that refresh before reads."""
 
     enabled: bool = True
     interval_seconds: int = Field(default=30, ge=1)
@@ -243,55 +243,8 @@ class ProfileConfig(BaseModel):
     inject_by_default: bool = False
 
 
-class SourceConnectorConfig(BaseModel):
-    """Opt-in source connector switch."""
-
-    enabled: bool = False
-
-
-class SourceInboxConnectorConfig(SourceConnectorConfig):
-    """One-shot source inbox scanning defaults."""
-
-    path: str = "raw/inbox"
-    patterns: list[str] = Field(default_factory=lambda: ["**/*"])
-    sensitivity: str = "normal"
-    source_quality: str = "imported_export"
-
-    @field_validator("path", "sensitivity", "source_quality")
-    @classmethod
-    def require_non_empty_string(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("source inbox config string values must not be empty")
-        return value.strip()
-
-    @field_validator("patterns")
-    @classmethod
-    def normalize_patterns(cls, value: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for item in value:
-            pattern = str(item).strip()
-            if not pattern or pattern in seen:
-                continue
-            seen.add(pattern)
-            cleaned.append(pattern)
-        if not cleaned:
-            raise ValueError("source inbox patterns must include at least one pattern")
-        return cleaned
-
-
-class ConnectorConfig(BaseModel):
-    """Opt-in local source connector configuration."""
-
-    url: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
-    pdf: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
-    zoom: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
-    slack: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
-    source_inbox: SourceInboxConnectorConfig = Field(default_factory=SourceInboxConnectorConfig)
-
-
 class MemoryConfig(BaseModel):
-    """Stage 2 configuration for a local Memora vault."""
+    """Configuration for a local Memora vault."""
 
     model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
 
@@ -301,7 +254,6 @@ class MemoryConfig(BaseModel):
     memories_dir: str = "Memories"
     sources_dir: str = "Sources"
     briefs_dir: str = "Briefs"
-    synthesis_dir: str = "Synthesis"
     memora_dir: str = CONFIG_DIR_NAME
     index_path: str = ".memora/index.sqlite"
     default_scope: MemoryScope = MemoryScope.USER
@@ -315,7 +267,6 @@ class MemoryConfig(BaseModel):
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
-    connectors: ConnectorConfig = Field(default_factory=ConnectorConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -343,7 +294,6 @@ class MemoryConfig(BaseModel):
         "memories_dir",
         "sources_dir",
         "briefs_dir",
-        "synthesis_dir",
         "memora_dir",
         "index_path",
         "default_author_name",
@@ -372,7 +322,7 @@ class MemoryConfig(BaseModel):
 
 
 def create_default_config(vault_path: Union[Path, str]) -> MemoryConfig:
-    """Create the default Stage 2 config model for a vault path."""
+    """Create the default config model for a vault path."""
 
     return MemoryConfig(vault_path=Path(vault_path).expanduser().resolve())
 

@@ -134,6 +134,7 @@ and report the CLI gap.
 
 - Main agent recall command. Use returned context only when
   `memory_needed=true`.
+- `--include-profile` adds a bounded in-memory rollup to this response.
 
 `memora search <query> [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--created-after DATE] [--created-before DATE] [--updated-after DATE] [--updated-before DATE] [--valid-from DATE] [--valid-to DATE] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--limit N] [--vault PATH] [--json]`
 
@@ -157,6 +158,10 @@ and report the CLI gap.
 
 - Print memory path and Obsidian URI; optionally launch URI.
 
+`memora conflicts [--vault PATH] [--json]`
+
+- Detect Markdown sync conflicts that require manual resolution.
+
 ## Session Capture
 
 `memora session finalize [transcript] [--transcript PATH] --summary-file <summary.md> [--memories-file <memories.json>] [--format TEXT] [--project NAME] [--tag TAG ...] [--sensitivity normal|private|secret|unsafe] [--confidence 0..1] [--dry-run] [--vault PATH] [--json]`
@@ -164,8 +169,3 @@ and report the CLI gap.
 - Save session transcript/source, summary extract, and optional proposed
   memories for review.
 
-## Compatibility/Internal Commands
-
-Some older commands remain hidden for compatibility, tests, or internal
-maintenance. Agents should not prefer them unless generated rules or a maintainer
-explicitly request them. Use `memora help --json` for the public surface.

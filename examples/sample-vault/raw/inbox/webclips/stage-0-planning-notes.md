@@ -1,12 +1,12 @@
 # Stage 0 Planning Notes
 
 This raw inbox example represents unprocessed material from a web clip, pasted
-note, or local export. It is safe to preview before importing:
+note, or local export. It is safe to preview before curation:
 
 ```bash
-memora source-inbox scan --vault examples/sample-vault --path examples/sample-vault/raw/inbox --ignore-disabled --dry-run --json
+memora raw inspect raw/inbox/webclips/stage-0-planning-notes.md --vault examples/sample-vault --json
 ```
 
-When imported, Memora copies normalized source material into `Sources/`.
-An agent should then write a concise extract and promote only durable atomic
-memories into `Memories/` for review.
+When useful, an agent should write a concise extract, save durable evidence with
+`memora source add`, and promote only durable atomic memories into `Memories/`
+for review.
