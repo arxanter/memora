@@ -90,17 +90,33 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     assert "do not narrate every `memora ... --json` call" in content
 
 
-def test_user_scope_targets_are_safe_fallbacks(tmp_path):
-    target = resolve_integration_target(
+def test_user_scope_targets_use_real_global_files_when_supported(tmp_path):
+    cursor_target = resolve_integration_target(
+        "cursor",
+        scope=IntegrationScope.USER,
+        home=tmp_path,
+    )
+    claude_target = resolve_integration_target(
+        "claude",
+        scope=IntegrationScope.USER,
+        home=tmp_path,
+    )
+    codex_target = resolve_integration_target(
         "codex",
         scope=IntegrationScope.USER,
         home=tmp_path,
     )
 
-    assert target.client == AgentClient.CODEX
-    assert target.scope == IntegrationScope.USER
-    assert target.support == TargetSupport.FALLBACK
-    assert target.path == tmp_path.resolve() / ".memora" / "integrations" / "codex" / "AGENTS.md"
+    assert cursor_target.client == AgentClient.CURSOR
+    assert cursor_target.scope == IntegrationScope.USER
+    assert cursor_target.support == TargetSupport.FALLBACK
+    assert cursor_target.path == tmp_path.resolve() / ".memora" / "integrations" / "cursor-memora.mdc"
+    assert claude_target.client == AgentClient.CLAUDE
+    assert claude_target.support == TargetSupport.SUPPORTED
+    assert claude_target.path == tmp_path.resolve() / ".claude" / "CLAUDE.md"
+    assert codex_target.client == AgentClient.CODEX
+    assert codex_target.support == TargetSupport.SUPPORTED
+    assert codex_target.path == tmp_path.resolve() / ".codex" / "AGENTS.md"
 
 
 def test_managed_block_helpers_round_trip_metadata():

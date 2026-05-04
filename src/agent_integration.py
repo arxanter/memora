@@ -982,20 +982,24 @@ def _user_target(client: AgentClient, *, home: Optional[Path]) -> IntegrationTar
     if client == AgentClient.CURSOR:
         path = integration_root / "cursor-memora.mdc"
         reason = "safe fallback file for manual Cursor user-level installation"
+        support = TargetSupport.FALLBACK
     elif client == AgentClient.CLAUDE:
-        path = integration_root / "CLAUDE.md"
-        reason = "safe fallback file for manual Claude user-level installation"
+        path = home_path / ".claude" / "CLAUDE.md"
+        reason = "Claude Code user memory file"
+        support = TargetSupport.SUPPORTED
     elif client == AgentClient.CODEX:
-        path = integration_root / "codex" / "AGENTS.md"
-        reason = "safe fallback file for manual Codex user-level installation"
+        path = home_path / ".codex" / "AGENTS.md"
+        reason = "Codex global AGENTS.md file"
+        support = TargetSupport.SUPPORTED
     else:
         path = integration_root / "AGENTS.md"
         reason = "safe fallback AGENTS.md for manual user-level installation"
+        support = TargetSupport.FALLBACK
     return IntegrationTarget(
         client=client,
         scope=IntegrationScope.USER,
         path=path,
-        support=TargetSupport.FALLBACK,
+        support=support,
         reason=reason,
     )
 

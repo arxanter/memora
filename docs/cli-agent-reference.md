@@ -83,6 +83,10 @@ and report the CLI gap.
 - Install generated instructions into a project/user target. For project scope,
   run from the target project or pass `--project PATH`; Memora refuses implicit
   writes from its own source checkout.
+- User scope writes Claude to `~/.claude/CLAUDE.md` and Codex to
+  `~/.codex/AGENTS.md`; Cursor user scope emits a fallback file under
+  `~/.memora/integrations/` for manual installation because Cursor user rules
+  are settings-managed.
 
 `memora agent update [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force] [--json]`
 
