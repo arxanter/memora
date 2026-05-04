@@ -1,3 +1,5 @@
+from config import AgentPolicyConfig
+
 from agent_integration import (
     AgentClient,
     IntegrationScope,
@@ -14,6 +16,8 @@ from agent_integration import (
     render_managed_block,
     resolve_integration_target,
 )
+
+_DEFAULT_AGENT_ALIASES = AgentPolicyConfig().aliases
 
 
 def test_project_targets_match_existing_agent_rule_defaults(tmp_path):
@@ -57,7 +61,12 @@ def test_install_command_plan_renders_existing_compatibility_command(tmp_path):
 
 
 def test_render_agent_rules_preserves_phase_one_content(tmp_path):
-    content = render_agent_rules("cursor", vault_path=tmp_path / "vault", project="memora")
+    content = render_agent_rules(
+        "cursor",
+        vault_path=tmp_path / "vault",
+        project="memora",
+        agent_aliases=_DEFAULT_AGENT_ALIASES,
+    )
 
     assert content.startswith("---\ndescription:")
     assert "CLI-first" in content
@@ -68,8 +77,13 @@ def test_render_agent_rules_preserves_phase_one_content(tmp_path):
     assert "Use only `memora ... --json` commands" in content
 
 
-def test_render_agent_rules_contains_strict_vault_and_toby_policy():
-    content = render_agent_rules("codex", vault_path=None, project="memora")
+def test_render_agent_rules_contains_strict_vault_and_remi_policy():
+    content = render_agent_rules(
+        "codex",
+        vault_path=None,
+        project="memora",
+        agent_aliases=_DEFAULT_AGENT_ALIASES,
+    )
 
     assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
     for private_path in (
@@ -87,13 +101,15 @@ def test_render_agent_rules_contains_strict_vault_and_toby_policy():
     ):
         assert private_path in content
     assert "If the CLI lacks an operation, stop and report the missing command" in content
-    assert "Toby intent routing examples" in content
-    assert "Toby, show current facts about <topic>" in content
-    assert "Тоби, что мы решили по <topic>" in content
-    assert "Toby, save this fact/decision/preference" in content
-    assert "Toby, review pending memory" in content
-    assert "Тоби, актуализируй память по <topic>" in content
-    assert "Toby, analyze this source and save it" in content
+    assert "Remi intent routing examples" in content
+    assert "Remi, show current facts about <topic>" in content
+    assert "Рэми, что мы решили по <topic>" in content
+    assert "Реми, что мы решили по <topic>" in content
+    assert "Remi, save this fact/decision/preference" in content
+    assert "Remi, review pending memory" in content
+    assert "Рэми, актуализируй память по <topic>" in content
+    assert "Реми, актуализируй память по <topic>" in content
+    assert "Remi, analyze this source and save it" in content
     assert "do not narrate every `memora ... --json` call" in content
 
 
@@ -142,7 +158,12 @@ def test_plan_managed_agent_write_blocks_unmanaged_existing_target(tmp_path):
 
     plan = plan_managed_agent_write(
         target_info=target,
-        content=render_agent_rules("codex", vault_path=None, project="project"),
+        content=render_agent_rules(
+            "codex",
+            vault_path=None,
+            project="project",
+            agent_aliases=_DEFAULT_AGENT_ALIASES,
+        ),
         dry_run=True,
         force=False,
     )
@@ -170,7 +191,12 @@ def test_agent_status_detects_managed_current_target(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     target = project / "AGENTS.md"
-    content = render_agent_rules("codex", vault_path=None, project="project")
+    content = render_agent_rules(
+        "codex",
+        vault_path=None,
+        project="project",
+        agent_aliases=_DEFAULT_AGENT_ALIASES,
+    )
     target.write_text(render_managed_block(content), encoding="utf-8")
 
     payload = agent_status_payload(client="codex", scope="project", project=project)

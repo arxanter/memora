@@ -58,7 +58,7 @@ class _Rule:
 
 
 _THRESHOLD = 0.6
-_DEFAULT_AGENT_ALIASES = ("Toby", "Тоби", "tb")
+_DEFAULT_AGENT_ALIASES = ("Remi", "Рэми", "Реми")
 
 
 def should_recall(message: str, aliases: Sequence[str] | None = None) -> RecallDecision:

@@ -21,6 +21,7 @@ from config import (
     ENV_VAULT_PATH,
     config_to_dict,
     load_config,
+    set_agent_aliases,
 )
 from vault import init_vault
 
@@ -87,7 +88,7 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
 
     config = load_config(vault)
 
-    assert config.agent_policy.aliases == ["Toby", "Тоби", "tb"]
+    assert config.agent_policy.aliases == ["Remi", "Рэми", "Реми"]
     assert config.agent_policy.trust_level == "autonomous"
     assert config.agent_policy.default_recall_budget == 1800
     assert config.agent_policy.min_active_confidence == 0.85
@@ -98,6 +99,16 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
     assert config.recall_policies["planning"].include_related is True
     assert config.recall_policies["planning"].include_profile is True
     assert config.recall_policies["review"].include_profile is False
+
+
+def test_set_agent_aliases_updates_config_yaml(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    updated = set_agent_aliases(vault, ["Taylor", "Тейлор"])
+
+    assert updated == ["Taylor", "Тейлор"]
+    assert load_config(vault).agent_policy.aliases == ["Taylor", "Тейлор"]
 
 
 def test_load_config_applies_recall_policy_include_profile_yaml_overrides(tmp_path):

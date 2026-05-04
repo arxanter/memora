@@ -5,11 +5,12 @@ This project uses Memora. The preferred current interface is CLI-first.
 Current project direction is CLI-only for agents. Prefer `memora ... --json`
 commands and generated agent instructions/skills for all memory workflows.
 
-## Toby / Memora Policy
+## Remi / Memora Policy
 
-Treat `Toby`, `Тоби`, and `tb` as explicit Memora triggers. When the user
-addresses Toby, classify the request as memory work and route it through the CLI
-instead of treating it as a generic chat request.
+Treat `Remi`, `Рэми`, and `Реми` as explicit Memora triggers (override defaults with
+`memora agent-aliases set …`). When the user addresses the assistant by these names,
+classify the request as memory work and route it through the CLI instead of treating
+it as a generic chat request.
 
 The vault may define `.memora/config.yaml` `agent_policy` settings:
 
@@ -17,7 +18,7 @@ The vault may define `.memora/config.yaml` `agent_policy` settings:
 - `review`: create agent-authored memories as `pending`.
 - `explicit_active`: explicit user saves may become `active`; inferred memories
   remain `pending`.
-- `autonomous`: Toby may write and update lifecycle status under policy, with
+- `autonomous`: the assistant may write and update lifecycle status under policy, with
   source, confidence, reason, and audit history.
 
 Use confidence consistently:
@@ -31,7 +32,7 @@ Use confidence consistently:
 
 Do not run memora review on every turn. Check the pending review queue once at
 the beginning of a new session when memory work is relevant, or when the user
-asks Toby to review memory.
+asks the assistant (Remi / Рэми / Реми) to review memory.
 
 Use `memora review --json`. If pending items exist, summarize them in a compact
 review queue and ask the
@@ -44,7 +45,7 @@ rejection, use `memora review reject <id> --reason "<reason>" --json`.
 
 Do not run `build_context()` for generic coding or shell tasks. For normal user
 requests, first decide whether memory is relevant. Recall is relevant when the
-request uses a Toby alias, asks about previous decisions, earlier work, stored
+request uses a configured assistant alias, asks about previous decisions, earlier work, stored
 preferences, project history/status, or project-specific memory.
 
 When recall is relevant, run:

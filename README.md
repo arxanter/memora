@@ -35,6 +35,10 @@ From this repository:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+Without cloning first, use a one-liner that `git clone`s into a directory you
+keep (recommended under `$HOME`) or into `/tmp`; details and copy-paste commands
+are in `docs/local-install.md` (section **One-liner: clone and install**).
+
 For development:
 
 ```bash

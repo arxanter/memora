@@ -8,7 +8,9 @@ import shlex
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
+
+from config import AgentPolicyConfig, ConfigError, load_config
 
 
 class AgentClient(str, Enum):
@@ -103,19 +105,94 @@ _CONTENT_HASH_RE = re.compile(r"content_hash:\s*(sha256:[0-9a-f]{64})")
 _SCHEDULED_KIND_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
+def resolve_rule_aliases(
+    *,
+    vault_path: Optional[Path] = None,
+    alias_overrides: Optional[Sequence[str]] = None,
+) -> list[str]:
+    """Resolve assistant name aliases for generated rules (vault config or overrides)."""
+
+    if alias_overrides:
+        return AgentPolicyConfig(aliases=list(alias_overrides)).aliases
+    try:
+        if vault_path is not None:
+            return load_config(vault_path).agent_policy.aliases
+        return load_config(start_path=Path.cwd()).agent_policy.aliases
+    except ConfigError:
+        return AgentPolicyConfig().aliases
+
+
+def _cyrillic_aliases(aliases: Sequence[str]) -> list[str]:
+    return [a for a in aliases if re.search(r"[\u0400-\u04ff]", a)]
+
+
+def _primary_latin_alias(aliases: Sequence[str]) -> str:
+    for alias in aliases:
+        if not re.search(r"[\u0400-\u04ff]", alias):
+            return alias
+    return aliases[0]
+
+
+def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
+    primary = _primary_latin_alias(aliases)
+    cyrillic = _cyrillic_aliases(aliases)
+    rows = [
+        (
+            f"{primary}, show current facts about <topic>",
+            "покажи текущие факты по <topic>",
+            "run `memora brief` or `memora search`, then answer with citations.",
+        ),
+        (
+            f"{primary}, what did we decide about <topic>",
+            "что мы решили по <topic>",
+            "run `memora build-context`; use returned memory only if `memory_needed=true`.",
+        ),
+        (
+            f"{primary}, save this fact/decision/preference",
+            "сохрани это как факт/решение/preference",
+            "create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.",
+        ),
+        (
+            f"{primary}, review pending memory",
+            "проверь pending memory",
+            "run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.",
+        ),
+        (
+            f"{primary}, update memory for <topic>",
+            "актуализируй память по <topic>",
+            "search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.",
+        ),
+        (
+            f"{primary}, analyze this source and save it",
+            "проанализируй источник и сохрани",
+            "read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.",
+        ),
+    ]
+    lines: list[str] = []
+    for english_phrase, russian_tail, instruction in rows:
+        parts = [f"`{english_phrase}`"]
+        for name in cyrillic:
+            parts.append(f"`{name}, {russian_tail}`")
+        lines.append("- " + " / ".join(parts) + f": {instruction}")
+    return lines
+
+
 def agent_rules_payload(
     *,
     rule_format: str,
     vault: Optional[Path],
     project: Optional[str],
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_format = _normalize_client(rule_format, kind="format")
     resolved_vault = vault.expanduser().resolve() if vault is not None else None
     selected_project = project.strip() if project else None
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     content = render_agent_rules(
         selected_format,
         vault_path=resolved_vault,
         project=selected_project,
+        agent_aliases=aliases,
     )
     return {
         "ok": True,
@@ -124,6 +201,8 @@ def agent_rules_payload(
         "format": selected_format.value,
         "vault_path": str(resolved_vault) if resolved_vault else None,
         "project": selected_project,
+        "alias_overrides": alias_overrides,
+        "agent_aliases": aliases,
         "content": content,
     }
 
@@ -136,13 +215,17 @@ def install_agent_rules_payload(
     vault: Optional[Path],
     dry_run: bool,
     force: bool,
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_client = _normalize_client(client, kind="client")
     project_path = project.expanduser().resolve()
+    resolved_vault = vault.expanduser().resolve() if vault is not None else None
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     content = render_agent_rules(
         selected_client,
-        vault_path=vault.expanduser().resolve() if vault is not None else None,
+        vault_path=resolved_vault,
         project=project_path.name,
+        agent_aliases=aliases,
     )
     plan = plan_integration(
         client=selected_client,
@@ -167,6 +250,8 @@ def install_agent_rules_payload(
         "blocked": plan.blocked,
         "would_write": plan.would_write,
         "written": False,
+        "agent_aliases": aliases,
+        "alias_overrides": alias_overrides,
         "content": content,
     }
 
@@ -222,15 +307,18 @@ def agent_group_rules_payload(
     scope: str,
     vault: Optional[Path],
     project: Optional[str],
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_client = _normalize_client(client, kind="client")
     selected_scope = _coerce_scope(scope)
     selected_project = project.strip() if project else None
     resolved_vault = vault.expanduser().resolve() if vault is not None else None
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     content = render_agent_rules(
         selected_client,
         vault_path=resolved_vault,
         project=selected_project,
+        agent_aliases=aliases,
     )
     return {
         "ok": True,
@@ -240,6 +328,8 @@ def agent_group_rules_payload(
         "scope": selected_scope.value,
         "vault_path": str(resolved_vault) if resolved_vault else None,
         "project": selected_project,
+        "agent_aliases": aliases,
+        "alias_overrides": alias_overrides,
         "content": content,
     }
 
@@ -281,6 +371,7 @@ def agent_integrate_payload(
     vault: Optional[Path],
     dry_run: bool,
     force: bool,
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_scope = _coerce_scope(scope)
     project_path = project.expanduser().resolve()
@@ -289,6 +380,7 @@ def agent_integrate_payload(
     if target is not None and len(clients) != 1:
         raise ValueError("--target can only be used when one client is selected")
 
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     results = [
         apply_agent_integration(
             client=selected_client,
@@ -299,6 +391,7 @@ def agent_integrate_payload(
             dry_run=dry_run,
             force=force,
             command="agent integrate",
+            agent_aliases=aliases,
         )
         for selected_client in clients
     ]
@@ -323,6 +416,7 @@ def agent_update_payload(
     vault: Optional[Path],
     dry_run: bool,
     force: bool,
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_scope = _coerce_scope(scope)
     project_path = project.expanduser().resolve()
@@ -331,6 +425,7 @@ def agent_update_payload(
     if target is not None and len(clients) != 1:
         raise ValueError("--target can only be used when one client is selected")
 
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     results = [
         apply_agent_integration(
             client=selected_client,
@@ -341,6 +436,7 @@ def agent_update_payload(
             dry_run=dry_run,
             force=force,
             command="agent update",
+            agent_aliases=aliases,
         )
         for selected_client in clients
     ]
@@ -362,16 +458,19 @@ def agent_status_payload(
     scope: str,
     project: Path,
     vault: Optional[Path] = None,
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
     selected_scope = _coerce_scope(scope)
     project_path = project.expanduser().resolve()
     resolved_vault = vault.expanduser().resolve() if vault is not None else None
+    aliases = resolve_rule_aliases(vault_path=resolved_vault, alias_overrides=alias_overrides)
     results = [
         agent_target_status(
             client=selected_client,
             scope=selected_scope,
             project_path=project_path,
             vault_path=resolved_vault,
+            agent_aliases=aliases,
         )
         for selected_client in select_agent_clients(client)
     ]
@@ -399,8 +498,15 @@ def agent_doctor_payload(
     vault: Optional[Path],
     memora_command_path: Optional[str],
     vault_probe: dict[str, Any],
+    alias_overrides: Optional[list[str]] = None,
 ) -> dict[str, object]:
-    status = agent_status_payload(client=client, scope=scope, project=project, vault=vault)
+    status = agent_status_payload(
+        client=client,
+        scope=scope,
+        project=project,
+        vault=vault,
+        alias_overrides=alias_overrides,
+    )
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
     if memora_command_path is None:
@@ -625,13 +731,20 @@ def apply_agent_integration(
     dry_run: bool,
     force: bool,
     command: str,
+    agent_aliases: Optional[Sequence[str]] = None,
 ) -> dict[str, object]:
     selected_client = _coerce_client(client)
     selected_scope = _coerce_scope(scope)
+    aliases = (
+        list(agent_aliases)
+        if agent_aliases is not None
+        else resolve_rule_aliases(vault_path=vault_path)
+    )
     rendered = render_agent_rules(
         selected_client,
         vault_path=vault_path,
         project=project_path.name,
+        agent_aliases=aliases,
     )
     target_info = resolve_integration_target(
         selected_client,
@@ -721,6 +834,7 @@ def agent_target_status(
     scope: IntegrationScope | str,
     project_path: Path,
     vault_path: Optional[Path],
+    agent_aliases: Optional[Sequence[str]] = None,
 ) -> dict[str, object]:
     selected_client = _coerce_client(client)
     selected_scope = _coerce_scope(scope)
@@ -729,10 +843,16 @@ def agent_target_status(
         scope=selected_scope,
         project_path=project_path,
     )
+    aliases = (
+        list(agent_aliases)
+        if agent_aliases is not None
+        else resolve_rule_aliases(vault_path=vault_path)
+    )
     content = render_agent_rules(
         selected_client,
         vault_path=vault_path,
         project=project_path.name,
+        agent_aliases=aliases,
     )
     expected_hash = managed_content_hash(content)
     target_exists = target_info.path.exists()
@@ -927,11 +1047,17 @@ def render_agent_rules(
     *,
     vault_path: Optional[Path],
     project: Optional[str],
+    agent_aliases: Optional[Sequence[str]] = None,
 ) -> str:
     selected_format = _coerce_client(format_name)
+    aliases = (
+        list(agent_aliases)
+        if agent_aliases is not None
+        else resolve_rule_aliases(vault_path=vault_path)
+    )
     vault_arg = f' --vault "{vault_path}"' if vault_path else ""
     project_arg = f' --project "{project}"' if project else ' --project "<project-name>"'
-    lines = agent_rules_body(vault_arg=vault_arg, project_arg=project_arg)
+    lines = agent_rules_body(vault_arg=vault_arg, project_arg=project_arg, aliases=aliases)
     if selected_format == AgentClient.CURSOR:
         return "\n".join(
             [
@@ -950,7 +1076,7 @@ def render_agent_rules(
     return "\n".join(["## Memora Usage", "", *lines])
 
 
-def agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
+def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]) -> list[str]:
     build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning --json'
     brief = f'memora brief "<topic>"{vault_arg}{project_arg} --json'
     search = f'memora search "<query>"{vault_arg}{project_arg} --json'
@@ -958,6 +1084,9 @@ def agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
     remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>" --json'
     import_source = f"memora import-source <path>{vault_arg}{project_arg} --extract-file <extract.md> --json"
     import_session = f"memora import-session <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --remember-summary --json"
+    primary = _primary_latin_alias(aliases)
+    addressing = "/".join(aliases)
+    routing_lines = _intent_routing_lines(aliases)
     return [
         "Current product direction is CLI-first and CLI-only for agents. Use only `memora ... --json` commands from any project directory for recall, search, source lookup, imports, writes, review, lifecycle, status, indexing, and session capture.",
         "",
@@ -965,7 +1094,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
         "",
-        "Do not run memora recall for every turn. Use memory when the request addresses Toby/Тоби/tb, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
+        f"Do not run memora recall for every turn. Use memory when the request addresses {addressing}, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
         "",
         "When recall is relevant, run:",
         "",
@@ -975,16 +1104,11 @@ def agent_rules_body(*, vault_arg: str, project_arg: str) -> list[str]:
         "",
         "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
         "",
-        "Toby intent routing examples:",
+        f"{primary} intent routing examples:",
         "",
-        "- `Toby, show current facts about <topic>` / `Тоби, покажи текущие факты по <topic>`: run `memora brief` or `memora search`, then answer with citations.",
-        "- `Toby, what did we decide about <topic>` / `Тоби, что мы решили по <topic>`: run `memora build-context`; use returned memory only if `memory_needed=true`.",
-        "- `Toby, save this fact/decision/preference` / `Тоби, сохрани это как факт/решение/preference`: create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.",
-        "- `Toby, review pending memory` / `Тоби, проверь pending memory`: run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.",
-        "- `Toby, update memory for <topic>` / `Тоби, актуализируй память по <topic>`: search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.",
-        "- `Toby, analyze this source and save it` / `Тоби, проанализируй источник и сохрани`: read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.",
+        *routing_lines,
         "",
-        "Useful Toby commands:",
+        f"Useful {primary} commands:",
         "",
         "```bash",
         brief,

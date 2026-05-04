@@ -49,12 +49,12 @@ def test_recall_policy_avoids_false_positives(message):
 @pytest.mark.parametrize(
     "message, query",
     [
-        ("Toby, сохрани это решение", "сохрани это решение"),
-        ("Тоби проанализируй статью и сохрани", "проанализируй статью и сохрани"),
-        ("tb what did we decide about status?", "status"),
+        ("Remi, сохрани это решение", "сохрани это решение"),
+        ("Рэми проанализируй статью и сохрани", "проанализируй статью и сохрани"),
+        ("Remi what did we decide about status?", "status"),
     ],
 )
-def test_recall_policy_treats_toby_alias_as_memory_trigger(message, query):
+def test_recall_policy_treats_remi_alias_as_memory_trigger(message, query):
     decision = should_recall(message)
 
     assert decision.should_recall is True

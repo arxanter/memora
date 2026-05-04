@@ -53,6 +53,39 @@ python -m pip install -e '.[test]'
 memora setup ./memory-vault
 ```
 
+## One-liner: clone and install (no prior checkout)
+
+`install.sh` runs `pip install -e` and the `memora-service` wrapper points at your
+checkout. **Do not delete the clone** after installation, or imports and the
+service wrapper will break. For that reason, a path under `/tmp` is only
+appropriate if you know it will not be cleared (many systems wipe `/tmp` on
+reboot). Prefer a directory under `$HOME` (see below).
+
+The default Git URL matches `Source` in `pyproject.toml`. Override it with
+`MEMORA_REPO_URL` if you install from a fork.
+
+### Recommended (persistent checkout)
+
+```bash
+MEMORA_REPO_URL="${MEMORA_REPO_URL:-https://github.com/anton-zhedik/memora.git}"
+export MEMORA_CHECKOUT="${MEMORA_CHECKOUT:-$HOME/.local/share/memora/checkout}"
+git clone --depth 1 "$MEMORA_REPO_URL" "$MEMORA_CHECKOUT"
+"$MEMORA_CHECKOUT/scripts/install.sh" --vault "$HOME/MemoryVault"
+```
+
+### Checkout under `/tmp`
+
+Uses `mktemp` so each run gets a unique directory. **Keep that directory** for
+as long as you use this Memora install.
+
+```bash
+MEMORA_REPO_URL="${MEMORA_REPO_URL:-https://github.com/anton-zhedik/memora.git}"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/memora-checkout.XXXXXX")"
+git clone --depth 1 "$MEMORA_REPO_URL" "$DIR"
+"$DIR/scripts/install.sh" --vault "$HOME/MemoryVault"
+printf 'Editable install and memora-service use this tree; do not rm -rf:\n  %s\n' "$DIR"
+```
+
 ## One Command Local Install
 
 From the repository root:

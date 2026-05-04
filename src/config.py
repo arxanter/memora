@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -184,7 +184,7 @@ class AgentPolicyConfig(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True, validate_default=True)
 
-    aliases: list[str] = Field(default_factory=lambda: ["Toby", "Тоби", "tb"])
+    aliases: list[str] = Field(default_factory=lambda: ["Remi", "Рэми", "Реми"])
     trust_level: AgentTrustLevel = AgentTrustLevel.REVIEW
     default_recall_budget: int = Field(default=1200, ge=1)
     min_active_confidence: float = Field(default=0.85, ge=0, le=1)
@@ -373,6 +373,16 @@ def create_default_config(vault_path: Union[Path, str]) -> MemoryConfig:
     """Create the default Stage 2 config model for a vault path."""
 
     return MemoryConfig(vault_path=Path(vault_path).expanduser().resolve())
+
+
+def set_agent_aliases(vault_path: Union[Path, str], aliases: Sequence[str]) -> list[str]:
+    """Persist `agent_policy.aliases` in `.memora/config.yaml` and return normalized aliases."""
+
+    normalized = AgentPolicyConfig(aliases=list(aliases)).aliases
+    config = load_config(vault_path)
+    updated = config.model_copy(update={"agent_policy": config.agent_policy.model_copy(update={"aliases": normalized})})
+    write_config(updated, overwrite=True)
+    return updated.agent_policy.aliases
 
 
 def write_config(config: MemoryConfig, *, overwrite: bool = False) -> bool:

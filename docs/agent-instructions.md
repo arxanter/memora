@@ -58,12 +58,12 @@ invitation to mutate files directly.
 ## Startup Recall
 
 Do not spend memory context on every user message. Recall is recommended when
-the request addresses `Toby`, `Тоби`, or `tb`; asks for current facts,
+the request addresses `Remi`, `Рэми`, or `Реми` (or names from `memora agent-aliases list`); asks for current facts,
 decisions, preferences, earlier work, project history/status; or asks to save or
 analyze durable knowledge.
 
 Review the pending queue once near session startup when memory work is relevant,
-or when the user explicitly asks Toby to review memory:
+or when the user explicitly asks the assistant to review memory:
 
 ```bash
 memora review --json
@@ -84,18 +84,18 @@ memora build-context "<task>" --project "<project-name>" --task-class planning -
 Use returned memory only when `memory_needed` is true. Preserve citations when
 summarizing or making decisions from recalled memory.
 
-## Toby Routing
+## Assistant routing (Remi)
 
-Treat `Toby`, `Тоби`, and `tb` as explicit Memora aliases.
+Treat `Remi`, `Рэми`, and `Реми` as explicit Memora aliases unless the vault overrides them (`agent_policy.aliases`; change with `memora agent-aliases set …`).
 
 Intent routing:
 
-- `Toby, show current facts about <topic>` / `Тоби, покажи текущие факты по <topic>`: run `memora brief` or `memora search`, then answer with citations.
-- `Toby, what did we decide about <topic>` / `Тоби, что мы решили по <topic>`: run `memora build-context`; use returned memory only if `memory_needed=true`.
-- `Toby, save this fact/decision/preference` / `Тоби, сохрани это как факт/решение/preference`: create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.
-- `Toby, review pending memory` / `Тоби, проверь pending memory`: run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.
-- `Toby, update memory for <topic>` / `Тоби, актуализируй память по <topic>`: search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.
-- `Toby, analyze this source and save it` / `Тоби, проанализируй источник и сохрани`: read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.
+- `Remi, show current facts about <topic>` / `Рэми, покажи текущие факты по <topic>` / `Реми, покажи текущие факты по <topic>`: run `memora brief` or `memora search`, then answer with citations.
+- `Remi, what did we decide about <topic>` / `Рэми, что мы решили по <topic>` / `Реми, что мы решили по <topic>`: run `memora build-context`; use returned memory only if `memory_needed=true`.
+- `Remi, save this fact/decision/preference` / `Рэми, сохрани это как факт/решение/preference` / `Реми, сохрани это как факт/решение/preference`: create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.
+- `Remi, review pending memory` / `Рэми, проверь pending memory` / `Реми, проверь pending memory`: run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.
+- `Remi, update memory for <topic>` / `Рэми, актуализируй память по <topic>` / `Реми, актуализируй память по <topic>`: search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.
+- `Remi, analyze this source and save it` / `Рэми, проанализируй источник и сохрани` / `Реми, проанализируй источник и сохрани`: read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.
 
 Useful commands:
 
@@ -111,7 +111,7 @@ Recommended `.memora/config.yaml` policy shape:
 
 ```yaml
 agent_policy:
-  aliases: [Toby, Тоби, tb]
+  aliases: [Remi, Рэми, Реми]
   trust_level: review
   default_recall_budget: 1200
   min_active_confidence: 0.85
@@ -126,7 +126,7 @@ Trust levels:
 - `manual`: ask before saving or changing lifecycle status.
 - `review`: create agent-authored memories as `pending`.
 - `explicit_active`: explicit user saves may become `active`; inferred memories remain `pending`.
-- `autonomous`: Toby may create memories and change lifecycle status under policy, with source, confidence, reason, and audit history.
+- `autonomous`: the assistant may create memories and change lifecycle status under policy, with source, confidence, reason, and audit history.
 
 Confidence guidance:
 

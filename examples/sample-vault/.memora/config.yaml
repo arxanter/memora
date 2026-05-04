@@ -76,9 +76,9 @@ recall_policies:
 
 agent_policy:
   aliases:
-    - Toby
-    - Тоби
-    - tb
+    - Remi
+    - Рэми
+    - Реми
   trust_level: review
   default_recall_budget: 1200
   min_active_confidence: 0.85

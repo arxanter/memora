@@ -29,7 +29,7 @@ from agent_integration import (
     scheduled_source_channel,
 )
 from brief import brief_memory
-from config import ConfigError, load_config
+from config import ConfigError, load_config, set_agent_aliases
 from evaluation import run_evaluation
 from freshness import refresh_index_if_needed
 from indexer import reindex_vault
@@ -83,6 +83,11 @@ app.add_typer(review_app, name="review")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
 app.add_typer(scheduled_app, name="scheduled")
+agent_aliases_app = typer.Typer(
+    help="Configure assistant names for recall routing and generated agent rules.",
+    no_args_is_help=True,
+)
+app.add_typer(agent_aliases_app, name="agent-aliases")
 console = Console()
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 SOURCE_INBOX_SCAN_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
@@ -109,6 +114,8 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("agent-rules", "Generate CLI-first instructions for coding agents."),
             ("install-agent-rules", "Install generated agent instructions into a project."),
             ("agent-install-commands", "Print copy/paste agent-rule install commands."),
+            ("agent-aliases list", "Show assistant names used for recall routing and agent rules."),
+            ("agent-aliases set …", "Save assistant names to the vault config."),
             ("agent <command>", "Manage grouped coding-agent rules, targets, installs, and status."),
             ("agent capture", "Batch-save an agent-analyzed source plus pending memories."),
             ("session finalize", "Save an agent transcript, summary, and proposed memories."),
@@ -276,12 +283,23 @@ def agent_rules_command(
     rule_format: str = typer.Option("agents", "--format", help="Rule format: agents, cursor, claude, or codex."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
     project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in examples."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant name override for this run only (repeat). Default: vault agent_policy.aliases.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate CLI-first coding-agent instructions."""
 
     try:
-        payload = _agent_rules_payload(rule_format=rule_format, vault=vault, project=project)
+        payload = _agent_rules_payload(
+            rule_format=rule_format,
+            vault=vault,
+            project=project,
+            alias_overrides=alias or None,
+        )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_rules_failed")
 
@@ -298,6 +316,12 @@ def install_agent_rules_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory that should receive the rules."),
     target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant name override for generated rules (repeat). Default: vault config.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the write without changing files."),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing target file."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -312,6 +336,7 @@ def install_agent_rules_command(
             vault=vault,
             dry_run=dry_run,
             force=force,
+            alias_overrides=alias or None,
         )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="install_agent_rules_failed")
@@ -384,12 +409,24 @@ def agent_group_rules_command(
     scope: str = typer.Option("project", "--scope", help="Scope for examples: project or user."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
     project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in examples."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant name override for this run only (repeat). Default: vault config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate CLI-first coding-agent instructions."""
 
     try:
-        payload = _agent_group_rules_payload(client=client, scope=scope, vault=vault, project=project)
+        payload = _agent_group_rules_payload(
+            client=client,
+            scope=scope,
+            vault=vault,
+            project=project,
+            alias_overrides=alias or None,
+        )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_rules_failed")
 
@@ -429,6 +466,12 @@ def agent_integrate_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
     target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant name override for generated rules (repeat). Default: vault config.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
     force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -444,6 +487,7 @@ def agent_integrate_command(
             vault=vault,
             dry_run=dry_run,
             force=force,
+            alias_overrides=alias or None,
         )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_integrate_failed")
@@ -462,6 +506,12 @@ def agent_update_command(
     project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
     target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant name override for generated rules (repeat). Default: vault config.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
     force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -477,6 +527,7 @@ def agent_update_command(
             vault=vault,
             dry_run=dry_run,
             force=force,
+            alias_overrides=alias or None,
         )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_update_failed")
@@ -494,12 +545,24 @@ def agent_status_command(
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
     project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path used to calculate expected content."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant names for expected content hash (repeat). Default: vault config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Report coding-agent integration target status without mutating files."""
 
     try:
-        payload = _agent_status_payload(client=client, scope=scope, project=project, vault=vault)
+        payload = _agent_status_payload(
+            client=client,
+            scope=scope,
+            project=project,
+            vault=vault,
+            alias_overrides=alias or None,
+        )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_status_failed")
 
@@ -517,6 +580,12 @@ def agent_doctor_command(
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
     project: Path = typer.Option(Path("."), "--project", help="Project directory used for project-scope targets."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to validate when available."),
+    alias: list[str] = typer.Option(
+        [],
+        "--alias",
+        "-a",
+        help="Assistant names for expected rule content (repeat). Default: vault config.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Lightly validate agent integration readiness without mutating files."""
@@ -529,6 +598,7 @@ def agent_doctor_command(
             vault=vault,
             memora_command_path=shutil.which("memora"),
             vault_probe=_agent_vault_status_probe(vault),
+            alias_overrides=alias or None,
         )
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="agent_doctor_failed")
@@ -544,6 +614,70 @@ def agent_doctor_command(
         raise typer.Exit(1)
     for warning in payload["warnings"]:
         console.print(f"- {warning['code']}: {warning['message']}")
+
+
+@agent_aliases_app.command("list")
+def agent_aliases_list_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path; default: resolve from cwd."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Show assistant names from agent_policy.aliases."""
+
+    try:
+        if vault is not None:
+            cfg = load_config(vault.expanduser().resolve())
+        else:
+            cfg = load_config(start_path=Path.cwd())
+        payload = {
+            "ok": True,
+            "implemented": True,
+            "command": "agent-aliases list",
+            "vault_path": str(cfg.vault_path),
+            "aliases": cfg.agent_policy.aliases,
+        }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_aliases_list_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[bold]Assistant aliases[/bold] ({payload['vault_path']}):")
+    for name in payload["aliases"]:
+        console.print(f"  - {name}")
+
+
+@agent_aliases_app.command("set")
+def agent_aliases_set_command(
+    names: list[str] = typer.Argument(..., help="Distinct assistant names in display order."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path; default: resolve from cwd."),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Persist assistant names to .memora/config.yaml (agent_policy.aliases)."""
+
+    try:
+        if vault is not None:
+            vault_path = vault.expanduser().resolve()
+        else:
+            vault_path = load_config(start_path=Path.cwd()).vault_path
+        updated = set_agent_aliases(vault_path, names)
+        payload = {
+            "ok": True,
+            "implemented": True,
+            "command": "agent-aliases set",
+            "vault_path": str(vault_path),
+            "aliases": updated,
+        }
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="agent_aliases_set_failed")
+
+    if json_output:
+        _print_json(payload)
+        return
+
+    console.print(f"[green]Updated assistant aliases[/green] for {payload['vault_path']}:")
+    for name in payload["aliases"]:
+        console.print(f"  - {name}")
 
 
 @agent_app.command("commands")

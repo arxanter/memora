@@ -189,9 +189,9 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(
         assert '--project "memora"' in content
         assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
         assert "`.memora/index.sqlite`" in content
-        assert "Toby intent routing examples" in content
-        assert "Toby, review pending memory" in content
-        assert "Тоби, актуализируй память" in content
+        assert "Remi intent routing examples" in content
+        assert "Remi, review pending memory" in content
+        assert "Рэми, актуализируй память" in content
         assert "If the CLI lacks an operation, stop and report the missing command" in content
         if rule_format == "cursor":
             assert content.startswith("---\ndescription:")
