@@ -24,7 +24,7 @@ The installer asks where to create/use the default vault. Press Enter to use
 Check that it works:
 
 ```bash
-memora status --json
+memora status
 ```
 
 The installer stores your selected default vault in the `memora` wrapper, so
@@ -41,7 +41,6 @@ memora vault set ~/ExistingMemoryVault
 To softly update the Memora source checkout without deleting local files:
 
 ```bash
-cd ~/.local/src/memora
 memora self update --remote-url https://github.com/arxanter/memora.git
 ```
 
@@ -49,8 +48,7 @@ This stashes local checkout changes, pulls fast-forward updates, and reapplies
 the saved stash. The `--remote-url` value is only used when the checkout is
 missing an `origin` remote. It does not remove or modify your vault.
 
-<details>
-<summary>Advanced install options</summary>
+Advanced install options
 
 ```bash
 ./scripts/install.sh --help
@@ -69,7 +67,7 @@ environment creation and package installation; otherwise it falls back to Python
 
 On Windows, use WSL2 and run the same commands inside Linux.
 
-</details>
+
 
 ## Developer Tooling
 
@@ -88,7 +86,8 @@ uv run --group test pytest
 Install generated memory instructions into a project:
 
 ```bash
-memora agent integrate --client all --project /path/to/project --json
+memora agent integrate --client all --project /path/to/project
+memora agent integrate --client all --project .
 ```
 
 After that, the agent uses Memora itself. Address the assistant as `Remi`,
@@ -109,19 +108,18 @@ raw input -> curated source -> atomic memory -> recalled context
 Humans usually do not need to run the lower-level memory commands directly.
 Generated agent rules call them with `--json` and preserve citations.
 
-<details>
-<summary>What the agent does behind the scenes</summary>
+What the agent does behind the scenes
 
 - Retrieves memory only when it is relevant to the user request.
 - Saves durable facts, decisions, preferences, tasks, and project context with
-  small atomic memory entries.
+small atomic memory entries.
 - Stages raw files separately from curated source evidence.
 - Leaves inferred agent-authored memories pending for review unless policy says
-  otherwise.
+otherwise.
 - Avoids storing secrets, raw logs, and temporary implementation chatter as
-  canonical memory.
+canonical memory.
 
-</details>
+
 
 ## Uninstall
 
@@ -135,8 +133,7 @@ cd ~/.local/src/memora
 This removes local wrapper commands and the managed virtual environment. Your
 Markdown vault is not deleted.
 
-<details>
-<summary>Remove everything except the vault</summary>
+Remove everything except the vault
 
 ```bash
 cd ~/.local/src/memora
@@ -150,9 +147,10 @@ To preview removal:
 ./scripts/uninstall.sh --remove-venv --dry-run
 ```
 
-</details>
+
 
 ## More
 
 - CLI command reference for agents: `docs/cli-agent-reference.md`
 - Technical architecture: `docs/architecture.md`
+
