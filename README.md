@@ -38,6 +38,18 @@ memora init ~/NewMemoryVault --set-default
 memora vault set ~/ExistingMemoryVault
 ```
 
+To force-refresh the Memora source checkout and reinstall the local wrapper:
+
+```bash
+rm -rf ~/.local/src/memora
+git clone https://github.com/arxanter/memora.git ~/.local/src/memora
+cd ~/.local/src/memora
+./scripts/install.sh --force --no-vault
+```
+
+This replaces only the source checkout and wrapper install. It does not remove
+or modify your vault.
+
 <details>
 <summary>Advanced install options</summary>
 
