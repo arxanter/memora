@@ -14,9 +14,12 @@ Requirements: macOS or Linux, Python 3.10 or newer, `git`.
 ```bash
 git clone https://github.com/arxanter/memora.git ~/.local/src/memora
 cd ~/.local/src/memora
-./scripts/install.sh --vault ~/MemoryVault
+./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+The installer asks where to create/use the default vault. Press Enter to use
+`~/MemoryVault`, enter another path, or type `skip` to configure it later.
 
 Check that it works:
 
@@ -24,8 +27,16 @@ Check that it works:
 memora status --json
 ```
 
-The installer stores `~/MemoryVault` as the default vault in the `memora`
-wrapper, so normal commands do not need `--vault`.
+The installer stores your selected default vault in the `memora` wrapper, so
+normal commands do not need `--vault`.
+
+To move the default later, initialize the new vault and point the wrapper at it:
+
+```bash
+memora init ~/NewMemoryVault --set-default
+# or, for an existing initialized vault:
+memora vault set ~/ExistingMemoryVault
+```
 
 <details>
 <summary>Advanced install options</summary>
@@ -33,10 +44,11 @@ wrapper, so normal commands do not need `--vault`.
 ```bash
 ./scripts/install.sh --help
 ./scripts/install.sh --vault ~/MemoryVault --with-test
+./scripts/install.sh --no-vault
 ```
 
 Common options to add when needed: `--install-dir <path>`, `--bin-dir <path>`,
-`--python <path>`, `--dry-run`, `--force`.
+`--python <path>`, `--no-vault`, `--dry-run`, `--force`.
 
 The installer creates a managed virtual environment, installs Memora from the
 cloned repository, writes the `memora` wrapper, and initializes the vault when

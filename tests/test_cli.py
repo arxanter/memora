@@ -13,6 +13,24 @@ from sources import lookup_source
 runner = CliRunner()
 
 
+def _write_memora_wrapper(path):
+    path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "# memora default vault (managed)",
+                ":",
+                'export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-/tmp/memora}"',
+                'exec "/usr/bin/python3" -m cli "$@"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def test_init_command_creates_vault_layout(tmp_path):
     vault = tmp_path / "memory-vault"
 
@@ -27,6 +45,52 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert (vault / "raw" / "processed").is_dir()
     assert (vault / "raw" / "quarantine").is_dir()
     assert (vault / "Memories" / "decisions").is_dir()
+
+
+def test_init_command_can_set_default_vault_in_wrapper(tmp_path):
+    vault = tmp_path / "memory-vault"
+    wrapper = tmp_path / "memora"
+    _write_memora_wrapper(wrapper)
+
+    result = runner.invoke(app, ["init", str(vault), "--set-default", "--wrapper", str(wrapper), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["default_vault"]["vault_path"] == str(vault.resolve())
+    assert f'export MEMORA_DEFAULT_VAULT="{vault.resolve()}"' in wrapper.read_text(encoding="utf-8")
+
+
+def test_vault_set_updates_managed_wrapper_default(tmp_path):
+    vault = tmp_path / "memory-vault"
+    wrapper = tmp_path / "memora"
+    _write_memora_wrapper(wrapper)
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    result = runner.invoke(app, ["vault", "set", str(vault), "--wrapper", str(wrapper), "--json"])
+    show_result = runner.invoke(app, ["vault", "show", "--wrapper", str(wrapper), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["vault_path"] == str(vault.resolve())
+    assert show_result.exit_code == 0, show_result.output
+    show_payload = json.loads(show_result.output)
+    assert show_payload["configured"] is True
+    assert show_payload["vault_path"] == str(vault.resolve())
+
+
+def test_vault_set_requires_initialized_vault(tmp_path):
+    vault = tmp_path / "memory-vault"
+    wrapper = tmp_path / "memora"
+    _write_memora_wrapper(wrapper)
+
+    result = runner.invoke(app, ["vault", "set", str(vault), "--wrapper", str(wrapper), "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "config_error"
+    assert "config not found" in payload["error"]["message"]
 
 
 def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
@@ -129,6 +193,8 @@ def test_help_command_lists_grouped_commands():
         "init <vault>",
         "setup [vault]",
         "conflicts",
+        "vault show",
+        "vault set <vault>",
         "agent rules",
         "agent integrate",
         "agent update",

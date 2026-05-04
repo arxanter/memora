@@ -8,7 +8,9 @@ Usage: scripts/install.sh [options]
 Install Memora locally without manual venv activation.
 
 Options:
-  --vault PATH              Initialize/use this Memora vault.
+  --vault PATH              Initialize/use this Memora vault and store it as
+                            the wrapper default.
+  --no-vault                Do not prompt for or configure a default vault.
   --install-dir PATH        Install managed venv and metadata here.
                             Default: ~/.local/share/memora
   --bin-dir PATH            Install wrapper commands here.
@@ -40,6 +42,33 @@ warn() {
 fail() {
   printf '%s\n' "error: $*" >&2
   exit 1
+}
+
+is_interactive() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+prompt_for_vault() {
+  local default_display="~/MemoryVault"
+  local reply
+
+  printf '%s\n' ""
+  printf '%s\n' "Choose a default Memora vault."
+  printf '%s\n' "Press Enter for $default_display, or type 'skip' to configure it later."
+  printf 'Vault path [%s]: ' "$default_display"
+  IFS= read -r reply
+
+  case "$reply" in
+    "")
+      VAULT_PATH="$default_display"
+      ;;
+    skip|SKIP|none|NONE|no|NO)
+      VAULT_PATH=""
+      ;;
+    *)
+      VAULT_PATH="$reply"
+      ;;
+  esac
 }
 
 expand_path() {
@@ -145,6 +174,7 @@ INSTALL_DIR="${MEMORA_INSTALL_DIR:-$HOME/.local/share/memora}"
 BIN_DIR="${MEMORA_BIN_DIR:-$HOME/.local/bin}"
 PYTHON_BIN="${PYTHON:-}"
 VAULT_PATH="${MEMORA_VAULT:-}"
+NO_VAULT=0
 USE_VENV=1
 SKIP_INSTALL=0
 WITH_TEST=0
@@ -157,6 +187,11 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || fail "--vault requires a path"
       VAULT_PATH="$2"
       shift 2
+      ;;
+    --no-vault)
+      NO_VAULT=1
+      VAULT_PATH=""
+      shift
       ;;
     --install-dir)
       [ "$#" -ge 2 ] || fail "--install-dir requires a path"
@@ -203,6 +238,10 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ -z "$VAULT_PATH" ] && [ "$NO_VAULT" != "1" ] && is_interactive; then
+  prompt_for_vault
+fi
+
 INSTALL_DIR="$(abs_path "$INSTALL_DIR")"
 BIN_DIR="$(abs_path "$BIN_DIR")"
 if [ -n "$VAULT_PATH" ]; then
@@ -226,6 +265,11 @@ log "repo: $REPO_ROOT"
 log "python: $PYTHON_BIN ($(python_version "$PYTHON_BIN"))"
 log "install dir: $INSTALL_DIR"
 log "bin dir: $BIN_DIR"
+if [ -n "$VAULT_PATH" ]; then
+  log "default vault: $VAULT_PATH"
+else
+  log "default vault: not configured"
+fi
 
 if [ "$SKIP_INSTALL" != "1" ]; then
   if [ "$USE_VENV" = "1" ]; then
@@ -256,6 +300,7 @@ fi
 
 MEMORA_WRAPPER='#!/usr/bin/env bash
 set -euo pipefail
+# memora default vault (managed)
 __DEFAULT_VAULT_EXPORT__
 export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-__INSTALL_DIR__}"
 if [ -n "${MEMORA_DEFAULT_VAULT:-}" ] && [ -z "${MEMORA_VAULT:-}" ]; then
@@ -293,6 +338,9 @@ CLI:
   memora status
   memora reindex --clean
   memora agent integrate --client all --dry-run
+
+Change the default vault later:
+  memora vault set /path/to/initialized-vault
 
 Notes:
   - Use generated agent instructions and CLI JSON commands for coding-agent integrations.

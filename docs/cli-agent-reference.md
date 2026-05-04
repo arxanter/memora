@@ -38,13 +38,22 @@ and report the CLI gap.
 
 ## Setup And Health
 
-`memora init <vault> [--json]`
+`memora init <vault> [--set-default] [--wrapper PATH] [--json]`
 
 - Create vault layout and `.memora/config.yaml`.
+- With `--set-default`, also update the installed `memora` wrapper default.
 
 `memora setup [vault] [--dry-run] [--json]`
 
 - Preview or create default vault layout.
+
+`memora vault show [--wrapper PATH] [--json]`
+
+- Show the default vault configured in the installed wrapper.
+
+`memora vault set <vault> [--wrapper PATH] [--json]`
+
+- Validate that `<vault>` is initialized, then set it as the installed wrapper default.
 
 `memora help [--json]`
 

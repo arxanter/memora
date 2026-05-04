@@ -53,6 +53,7 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "would write" in result.stdout
     assert "memora agent integrate --client all --dry-run" in result.stdout
+    assert "memora vault set /path/to/initialized-vault" in result.stdout
     assert not install_dir.exists()
     assert not bin_dir.exists()
     assert not vault.exists()
@@ -70,6 +71,8 @@ def test_install_help_documents_python_selection():
     assert result.returncode == 0, result.stderr
     assert "python3.12/3.11/3.10/python3" in result.stdout
     assert "Python interpreter to use" in result.stdout
+    assert "--no-vault" in result.stdout
+    assert "wrapper default" in result.stdout
 
 
 def test_cli_module_invocation_runs_typer_app():
@@ -95,7 +98,10 @@ def test_local_install_docs_reference_existing_scripts():
         assert (SCRIPTS / script_name).exists()
 
     assert "git clone https://github.com/arxanter/memora.git ~/.local/src/memora" in readme
-    assert "./scripts/install.sh --vault ~/MemoryVault" in readme
+    assert "./scripts/install.sh" in readme
+    assert "Press Enter to use" in readme
+    assert "memora init ~/NewMemoryVault --set-default" in readme
+    assert "memora vault set ~/ExistingMemoryVault" in readme
     assert "./scripts/uninstall.sh --remove-venv" in readme
     assert "normal commands do not need `--vault`" in readme
     assert "Python 3.10" in readme and "newer" in readme
