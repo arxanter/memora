@@ -111,10 +111,18 @@ def test_brief_surfaces_graph_warnings_and_conflicts(tmp_path):
     response = brief_memory(config, "graph brief", budget=220, include_related=True)
     payload = response.to_dict()
 
-    assert "Superseded memory: mem_20260430_old is superseded by mem_20260430_new." in response.markdown
-    assert "Conflict detected: mem_20260430_new contradicts mem_20260430_other." in response.markdown
+    assert (
+        "Superseded memory: mem_20260430_old is superseded by mem_20260430_new."
+        in response.markdown
+    )
+    assert (
+        "Conflict detected: mem_20260430_new contradicts mem_20260430_other." in response.markdown
+    )
     assert payload["sections"]["warnings"][0]["text"].startswith("Superseded memory:")
-    assert any(item["text"].startswith("Conflict detected:") for item in payload["sections"]["open_questions"])
+    assert any(
+        item["text"].startswith("Conflict detected:")
+        for item in payload["sections"]["open_questions"]
+    )
     assert response.used_tokens_estimate <= response.budget
 
 
@@ -141,7 +149,10 @@ def test_explicit_stale_brief_keeps_stale_memory_out_of_main_sections(tmp_path):
 
     assert payload["sections"]["current_relevant_facts"] == []
     assert payload["sections"]["current_decisions"] == []
-    assert payload["sections"]["warnings"][0]["text"] == "Stale: Stale brief memory should only appear as a warning."
+    assert (
+        payload["sections"]["warnings"][0]["text"]
+        == "Stale: Stale brief memory should only appear as a warning."
+    )
 
 
 def _write_memory(

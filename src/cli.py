@@ -110,7 +110,10 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("raw add <path>", "Copy one raw file into raw staging with sidecar metadata."),
             ("raw list", "List raw inbox/archive files."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
-            ("source add <source.md>", "Save curated source text and optional extract under Sources/."),
+            (
+                "source add <source.md>",
+                "Save curated source text and optional extract under Sources/.",
+            ),
         ),
     ),
     (
@@ -146,8 +149,12 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 @app.command("init")
 def init_command(
     vault: Path = typer.Argument(..., help="Vault directory to initialize."),
-    set_default: bool = typer.Option(False, "--set-default", help="Set this vault as the installed wrapper default."),
-    wrapper: Optional[Path] = typer.Option(None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."),
+    set_default: bool = typer.Option(
+        False, "--set-default", help="Set this vault as the installed wrapper default."
+    ),
+    wrapper: Optional[Path] = typer.Option(
+        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Create an Obsidian-compatible vault layout and config."""
@@ -156,7 +163,9 @@ def init_command(
         result = init_vault(vault)
         payload = result.to_dict()
         if set_default:
-            payload["default_vault"] = _set_default_vault_payload(Path(payload["vault_path"]), wrapper=wrapper)
+            payload["default_vault"] = _set_default_vault_payload(
+                Path(payload["vault_path"]), wrapper=wrapper
+            )
     except Exception as exc:  # pragma: no cover - exercised through CLI error handling
         _handle_error(exc, json_output=json_output, code="init_failed")
 
@@ -175,8 +184,12 @@ def init_command(
 
 @app.command("setup")
 def setup_command(
-    vault: Optional[Path] = typer.Argument(None, help="Vault directory; defaults to MEMORA_VAULT, then current directory."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview setup actions without writing files."),
+    vault: Optional[Path] = typer.Argument(
+        None, help="Vault directory; defaults to MEMORA_VAULT, then current directory."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview setup actions without writing files."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Preview or create the default CLI-first Memora vault layout."""
@@ -204,7 +217,9 @@ def setup_command(
 
 @vault_app.command("show")
 def vault_show_command(
-    wrapper: Optional[Path] = typer.Option(None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."),
+    wrapper: Optional[Path] = typer.Option(
+        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show the default vault configured in the installed wrapper."""
@@ -229,7 +244,9 @@ def vault_show_command(
 @vault_app.command("set")
 def vault_set_command(
     vault: Path = typer.Argument(..., help="Initialized vault directory to use by default."),
-    wrapper: Optional[Path] = typer.Option(None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."),
+    wrapper: Optional[Path] = typer.Option(
+        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Set the installed wrapper default vault after validating it exists."""
@@ -293,10 +310,16 @@ def help_command(
 
 @agent_app.command("rules")
 def agent_group_rules_command(
-    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "agents", "--client", help="Client: agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Scope for examples: project or user."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in examples."),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path to embed in examples."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project name to embed in examples."
+    ),
     alias: list[str] = typer.Option(
         [],
         "--alias",
@@ -327,9 +350,13 @@ def agent_group_rules_command(
 
 @agent_app.command("targets", hidden=True)
 def agent_targets_command(
-    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "all", "--client", help="Client: all, agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Target scope: project or user."),
-    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
+    project: Optional[Path] = typer.Option(
+        None, "--project", help="Project directory used for project-scope targets."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show resolved coding-agent integration targets."""
@@ -345,16 +372,26 @@ def agent_targets_command(
         return
 
     for target in payload["targets"]:
-        console.print(f"{target['client']}: {target['path']} ({target['support']}, {target['reason']})")
+        console.print(
+            f"{target['client']}: {target['path']} ({target['support']}, {target['reason']})"
+        )
 
 
 @agent_app.command("integrate")
 def agent_integrate_command(
-    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "all", "--client", help="Client: all, agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
-    target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    project: Optional[Path] = typer.Option(
+        None, "--project", help="Project directory used for project-scope targets."
+    ),
+    target: Optional[Path] = typer.Option(
+        None, "--target", help="Explicit target file path; only valid for one client."
+    ),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path to embed in examples."
+    ),
     alias: list[str] = typer.Option(
         [],
         "--alias",
@@ -391,11 +428,19 @@ def agent_integrate_command(
 
 @agent_app.command("update")
 def agent_update_command(
-    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "all", "--client", help="Client: all, agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
-    target: Optional[Path] = typer.Option(None, "--target", help="Explicit target file path; only valid for one client."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to embed in examples."),
+    project: Optional[Path] = typer.Option(
+        None, "--project", help="Project directory used for project-scope targets."
+    ),
+    target: Optional[Path] = typer.Option(
+        None, "--target", help="Explicit target file path; only valid for one client."
+    ),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path to embed in examples."
+    ),
     alias: list[str] = typer.Option(
         [],
         "--alias",
@@ -432,10 +477,16 @@ def agent_update_command(
 
 @agent_app.command("status")
 def agent_status_command(
-    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "all", "--client", help="Client: all, agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path used to calculate expected content."),
+    project: Optional[Path] = typer.Option(
+        None, "--project", help="Project directory used for project-scope targets."
+    ),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path used to calculate expected content."
+    ),
     alias: list[str] = typer.Option(
         [],
         "--alias",
@@ -468,10 +519,16 @@ def agent_status_command(
 
 @agent_app.command("doctor", hidden=True)
 def agent_doctor_command(
-    client: str = typer.Option("all", "--client", help="Client: all, agents, cursor, claude, or codex."),
+    client: str = typer.Option(
+        "all", "--client", help="Client: all, agents, cursor, claude, or codex."
+    ),
     scope: str = typer.Option("project", "--scope", help="Integration scope: project or user."),
-    project: Optional[Path] = typer.Option(None, "--project", help="Project directory used for project-scope targets."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path to validate when available."),
+    project: Optional[Path] = typer.Option(
+        None, "--project", help="Project directory used for project-scope targets."
+    ),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path to validate when available."
+    ),
     alias: list[str] = typer.Option(
         [],
         "--alias",
@@ -501,7 +558,9 @@ def agent_doctor_command(
         return
 
     if payload["ok"]:
-        console.print(f"[green]Agent doctor passed[/green] with {payload['warning_count']} warning(s).")
+        console.print(
+            f"[green]Agent doctor passed[/green] with {payload['warning_count']} warning(s)."
+        )
     else:
         console.print(f"[red]Agent doctor found {payload['issue_count']} issue(s).[/red]")
         raise typer.Exit(1)
@@ -511,7 +570,9 @@ def agent_doctor_command(
 
 @agent_aliases_app.command("list")
 def agent_aliases_list_command(
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path; default: resolve from cwd."),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path; default: resolve from cwd."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show assistant names from agent_policy.aliases."""
@@ -543,7 +604,9 @@ def agent_aliases_list_command(
 @agent_aliases_app.command("set")
 def agent_aliases_set_command(
     names: list[str] = typer.Argument(..., help="Distinct assistant names in display order."),
-    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path; default: resolve from cwd."),
+    vault: Optional[Path] = typer.Option(
+        None, "--vault", "-v", help="Vault path; default: resolve from cwd."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Persist assistant names to .memora/config.yaml (agent_policy.aliases)."""
@@ -575,9 +638,15 @@ def agent_aliases_set_command(
 
 @agent_app.command("scheduled-template", hidden=True)
 def agent_scheduled_template_command(
-    kind: str = typer.Option("custom", "--kind", help="Template kind: email, calendar, slack, web, or custom."),
-    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in the template."),
+    kind: str = typer.Option(
+        "custom", "--kind", help="Template kind: email, calendar, slack, web, or custom."
+    ),
+    client: str = typer.Option(
+        "agents", "--client", help="Client: agents, cursor, claude, or codex."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project name to embed in the template."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Render a minimal scheduled-memory task template."""
@@ -596,8 +665,12 @@ def agent_scheduled_template_command(
 
 @agent_app.command("session-template", hidden=True)
 def agent_session_template_command(
-    client: str = typer.Option("agents", "--client", help="Client: agents, cursor, claude, or codex."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project name to embed in the template."),
+    client: str = typer.Option(
+        "agents", "--client", help="Client: agents, cursor, claude, or codex."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project name to embed in the template."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Render a minimal session-end capture template."""
@@ -617,15 +690,29 @@ def agent_session_template_command(
 @agent_app.command("capture", hidden=True)
 def agent_capture_command(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
-    source_title: Optional[str] = typer.Option(None, "--source-title", help="Title for the saved source material."),
-    source_file: Path = typer.Option(..., "--source-file", help="Already-read raw source material file."),
-    summary_file: Path = typer.Option(..., "--summary-file", help="Agent-authored source extract/summary file."),
-    memories_file: Path = typer.Option(..., "--memories-file", help="JSON list or object with proposed memories."),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project metadata for source and memories."
+    ),
+    source_title: Optional[str] = typer.Option(
+        None, "--source-title", help="Title for the saved source material."
+    ),
+    source_file: Path = typer.Option(
+        ..., "--source-file", help="Already-read raw source material file."
+    ),
+    summary_file: Path = typer.Option(
+        ..., "--summary-file", help="Agent-authored source extract/summary file."
+    ),
+    memories_file: Path = typer.Option(
+        ..., "--memories-file", help="JSON list or object with proposed memories."
+    ),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
-    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Default confidence for proposals."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview without writing to the vault."),
+    confidence: float = typer.Option(
+        0.75, "--confidence", min=0, max=1, help="Default confidence for proposals."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate and preview without writing to the vault."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Batch-save an agent-analyzed source and pending atomic memories."""
@@ -663,16 +750,28 @@ def agent_capture_command(
 @session_app.command("finalize")
 def session_finalize_command(
     transcript_arg: Optional[Path] = typer.Argument(None, help="AI-agent transcript/session file."),
-    transcript_option: Optional[Path] = typer.Option(None, "--transcript", help="AI-agent transcript/session file."),
+    transcript_option: Optional[Path] = typer.Option(
+        None, "--transcript", help="AI-agent transcript/session file."
+    ),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    summary_file: Path = typer.Option(..., "--summary-file", help="Agent-authored concise session summary file."),
-    memories_file: Optional[Path] = typer.Option(None, "--memories-file", help="JSON list or object with proposed memories."),
+    summary_file: Path = typer.Option(
+        ..., "--summary-file", help="Agent-authored concise session summary file."
+    ),
+    memories_file: Optional[Path] = typer.Option(
+        None, "--memories-file", help="JSON list or object with proposed memories."
+    ),
     session_format: str = typer.Option("text", "--format", help="Transcript format metadata."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for source and memories."),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project metadata for source and memories."
+    ),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
-    confidence: float = typer.Option(0.75, "--confidence", min=0, max=1, help="Default confidence for proposed memories."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and preview without writing to the vault."),
+    confidence: float = typer.Option(
+        0.75, "--confidence", min=0, max=1, help="Default confidence for proposed memories."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate and preview without writing to the vault."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Finalize an AI-agent session with a source, summary memory, and proposals."""
@@ -704,13 +803,17 @@ def session_finalize_command(
             f"[yellow]Dry run:[/yellow] would save session and {payload['pending_count']} pending memory item(s)."
         )
         return
-    console.print(f"[green]Finalized session source:[/green] {payload['source']['relative_source_path']}")
+    console.print(
+        f"[green]Finalized session source:[/green] {payload['source']['relative_source_path']}"
+    )
     console.print(f"Pending memories: {payload['pending_count']}")
 
 
 @raw_app.command("list")
 def raw_list_command(
-    path: Optional[Path] = typer.Argument(None, help="Raw directory to list; defaults to <vault>/raw."),
+    path: Optional[Path] = typer.Argument(
+        None, help="Raw directory to list; defaults to <vault>/raw."
+    ),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
@@ -727,7 +830,10 @@ def raw_list_command(
             "raw_path": str(raw_path),
             "relative_path": _relative_to_vault(config, raw_path),
             "file_count": len(candidates),
-            "files": [_raw_file_payload(config, candidate, include_preview=False) for candidate in candidates],
+            "files": [
+                _raw_file_payload(config, candidate, include_preview=False)
+                for candidate in candidates
+            ],
         }
     except Exception as exc:
         _handle_error(exc, json_output=json_output, code="raw_list_failed")
@@ -736,7 +842,9 @@ def raw_list_command(
         _print_json(payload)
         return
 
-    console.print(f"[green]Raw files:[/green] {payload['file_count']} [dim]{payload['relative_path']}[/dim]")
+    console.print(
+        f"[green]Raw files:[/green] {payload['file_count']} [dim]{payload['relative_path']}[/dim]"
+    )
     for item in payload["files"]:
         marker = "" if item["processable"] else " [yellow](unsupported)[/yellow]"
         console.print(f"- {item['relative_path']}{marker}")
@@ -747,12 +855,20 @@ def raw_add_command(
     path: Path = typer.Argument(..., help="Local file to copy into raw staging."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     kind: str = typer.Option(..., "--kind", help="Raw source kind: pdf, zoom, slack, or text."),
-    source_format: str = typer.Option(..., "--format", help="Raw file format: pdf, markdown, json, or txt."),
-    title: Optional[str] = typer.Option(None, "--title", help="Optional human title for the raw material."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the raw material."),
+    source_format: str = typer.Option(
+        ..., "--format", help="Raw file format: pdf, markdown, json, or txt."
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Optional human title for the raw material."
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project metadata for the raw material."
+    ),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show the staging plan without copying files."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the staging plan without copying files."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Copy one raw file into raw staging with metadata only."""
@@ -778,7 +894,9 @@ def raw_add_command(
         return
 
     if payload["dry_run"]:
-        console.print(f"[yellow]Dry run:[/yellow] would stage raw file at {payload['relative_path']}")
+        console.print(
+            f"[yellow]Dry run:[/yellow] would stage raw file at {payload['relative_path']}"
+        )
         return
     console.print(f"[green]Staged raw file:[/green] {payload['relative_path']}")
     console.print(f"Metadata: {payload['relative_metadata_path']}")
@@ -823,12 +941,20 @@ def raw_inspect_command(
 def source_add_command(
     path: Path = typer.Argument(..., help="Markdown/text source file to save under Sources/."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    extract: Optional[Path] = typer.Option(None, "--extract", "--extract-file", help="Optional extract Markdown/text file."),
+    extract: Optional[Path] = typer.Option(
+        None, "--extract", "--extract-file", help="Optional extract Markdown/text file."
+    ),
     kind: str = typer.Option("text", "--kind", help="Source kind: pdf, zoom, slack, or text."),
-    source_format: str = typer.Option("markdown", "--format", help="Source format: markdown, json, txt, or pdf."),
-    title: Optional[str] = typer.Option(None, "--title", help="Source title; defaults to file stem."),
+    source_format: str = typer.Option(
+        "markdown", "--format", help="Source format: markdown, json, txt, or pdf."
+    ),
+    title: Optional[str] = typer.Option(
+        None, "--title", help="Source title; defaults to file stem."
+    ),
     url: Optional[str] = typer.Option(None, "--url", help="Optional source URL or permalink."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for the source."),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project metadata for the source."
+    ),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -867,7 +993,9 @@ def remember(
     text: str = typer.Option(..., "--text", help="Memory body text."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope."),
-    project: Optional[str] = typer.Option(None, "--project", help="Project name for project scope."),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Project name for project scope."
+    ),
     status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
@@ -904,16 +1032,24 @@ def memory_update_command(
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Replace recall scope."),
     project: Optional[str] = typer.Option(None, "--project", help="Replace project metadata."),
     clear_project: bool = typer.Option(False, "--clear-project", help="Clear project metadata."),
-    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Replace lifecycle status."),
-    confidence: Optional[float] = typer.Option(None, "--confidence", min=0, max=1, help="Replace confidence."),
-    clear_confidence: bool = typer.Option(False, "--clear-confidence", help="Clear confidence metadata."),
+    status: Optional[LifecycleStatus] = typer.Option(
+        None, "--status", help="Replace lifecycle status."
+    ),
+    confidence: Optional[float] = typer.Option(
+        None, "--confidence", min=0, max=1, help="Replace confidence."
+    ),
+    clear_confidence: bool = typer.Option(
+        False, "--clear-confidence", help="Clear confidence metadata."
+    ),
     tag: list[str] = typer.Option([], "--tag", help="Replace tags; may be repeated."),
     clear_tags: bool = typer.Option(False, "--clear-tags", help="Clear all tags."),
     title: Optional[str] = typer.Option(None, "--title", help="Replace title metadata."),
     clear_title: bool = typer.Option(False, "--clear-title", help="Clear title metadata."),
     text: Optional[str] = typer.Option(None, "--text", help="Replace memory body text."),
     reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for this update."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the update without writing files."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview the update without writing files."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Update safe editable fields on an existing canonical memory."""
@@ -961,7 +1097,9 @@ def memory_update_command(
 @app.command()
 def reindex(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    clean: bool = typer.Option(False, "--clean", help="Delete the existing SQLite index before rebuilding."),
+    clean: bool = typer.Option(
+        False, "--clean", help="Delete the existing SQLite index before rebuilding."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Rebuild the local SQLite index from Markdown."""
@@ -981,9 +1119,13 @@ def reindex(
         f"Documents: {payload['documents_indexed']} indexed, "
         f"{payload['documents_skipped']} skipped, {payload['documents_removed']} removed"
     )
-    console.print(f"Chunks: {payload['chunks_indexed']} indexed, {payload['chunks_skipped']} skipped")
+    console.print(
+        f"Chunks: {payload['chunks_indexed']} indexed, {payload['chunks_skipped']} skipped"
+    )
     if not payload["graph_ok"]:
-        console.print(f"[yellow]Graph warnings:[/yellow] {payload['orphan_count']} orphan relation(s)")
+        console.print(
+            f"[yellow]Graph warnings:[/yellow] {payload['orphan_count']} orphan relation(s)"
+        )
 
 
 @app.command()
@@ -992,15 +1134,29 @@ def search(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
-    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    status: Optional[LifecycleStatus] = typer.Option(
+        None, "--status", help="Lifecycle status filter."
+    ),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
-    created_after: Optional[str] = typer.Option(None, "--created-after", help="Created-at lower bound."),
-    created_before: Optional[str] = typer.Option(None, "--created-before", help="Created-at upper bound."),
-    updated_after: Optional[str] = typer.Option(None, "--updated-after", help="Updated-at lower bound."),
-    updated_before: Optional[str] = typer.Option(None, "--updated-before", help="Updated-at upper bound."),
-    valid_from: Optional[str] = typer.Option(None, "--valid-from", help="Valid-from lower bound date."),
+    created_after: Optional[str] = typer.Option(
+        None, "--created-after", help="Created-at lower bound."
+    ),
+    created_before: Optional[str] = typer.Option(
+        None, "--created-before", help="Created-at upper bound."
+    ),
+    updated_after: Optional[str] = typer.Option(
+        None, "--updated-after", help="Updated-at lower bound."
+    ),
+    updated_before: Optional[str] = typer.Option(
+        None, "--updated-before", help="Updated-at upper bound."
+    ),
+    valid_from: Optional[str] = typer.Option(
+        None, "--valid-from", help="Valid-from lower bound date."
+    ),
     valid_to: Optional[str] = typer.Option(None, "--valid-to", help="Valid-to upper bound date."),
-    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    include_related: bool = typer.Option(
+        False, "--include-related", help="Include graph-related memories."
+    ),
     semantic: Optional[bool] = typer.Option(
         None,
         "--semantic/--no-semantic",
@@ -1063,17 +1219,25 @@ def recall(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
-    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    status: Optional[LifecycleStatus] = typer.Option(
+        None, "--status", help="Lifecycle status filter."
+    ),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
-    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
-    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    task_class: str = typer.Option(
+        "default", "--task-class", help="Recall policy class: default, coding, planning, or review."
+    ),
+    include_related: bool = typer.Option(
+        False, "--include-related", help="Include graph-related memories."
+    ),
     semantic: Optional[bool] = typer.Option(
         None,
         "--semantic/--no-semantic",
         help="Override semantic search config for this query.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
-    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Client-controlled recall session id."
+    ),
     loaded_memory_id: list[str] = typer.Option(
         [],
         "--loaded-memory-id",
@@ -1164,10 +1328,16 @@ def explain_recall_command(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
-    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    status: Optional[LifecycleStatus] = typer.Option(
+        None, "--status", help="Lifecycle status filter."
+    ),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
-    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
-    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    task_class: str = typer.Option(
+        "default", "--task-class", help="Recall policy class: default, coding, planning, or review."
+    ),
+    include_related: bool = typer.Option(
+        False, "--include-related", help="Include graph-related memories."
+    ),
     semantic: Optional[bool] = typer.Option(
         None,
         "--semantic/--no-semantic",
@@ -1215,7 +1385,9 @@ def explain_recall_command(
         _handle_error(
             exc,
             json_output=json_output,
-            code="index_missing" if isinstance(exc, RetrievalIndexError) else "explain_recall_failed",
+            code="index_missing"
+            if isinstance(exc, RetrievalIndexError)
+            else "explain_recall_failed",
         )
 
     if json_output:
@@ -1239,10 +1411,14 @@ def explain_recall_command(
 @app.command("lookup-source")
 def lookup_source_command(
     source_id: str = typer.Argument(..., help="Source directory id under Sources/."),
-    query: Optional[str] = typer.Option(None, "--query", help="Optional query used to rank source chunks."),
+    query: Optional[str] = typer.Option(
+        None, "--query", help="Optional query used to rank source chunks."
+    ),
     budget: int = typer.Option(800, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Client-controlled recall session id."
+    ),
     loaded_source_id: list[str] = typer.Option(
         [],
         "--loaded-source-id",
@@ -1301,17 +1477,25 @@ def brief(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
     memory_type: Optional[MemoryType] = typer.Option(None, "--type", help="Memory type filter."),
-    status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status filter."),
+    status: Optional[LifecycleStatus] = typer.Option(
+        None, "--status", help="Lifecycle status filter."
+    ),
     scope: Optional[MemoryScope] = typer.Option(None, "--scope", help="Recall scope filter."),
-    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
-    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    task_class: str = typer.Option(
+        "default", "--task-class", help="Recall policy class: default, coding, planning, or review."
+    ),
+    include_related: bool = typer.Option(
+        False, "--include-related", help="Include graph-related memories."
+    ),
     semantic: Optional[bool] = typer.Option(
         None,
         "--semantic/--no-semantic",
         help="Override semantic search config for this brief.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
-    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Client-controlled recall session id."
+    ),
     loaded_memory_id: list[str] = typer.Option(
         [],
         "--loaded-memory-id",
@@ -1382,8 +1566,12 @@ def build_context_command(
     budget: Optional[int] = typer.Option(None, "--budget", min=1, help="Token budget."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
-    task_class: str = typer.Option("default", "--task-class", help="Recall policy class: default, coding, planning, or review."),
-    include_related: bool = typer.Option(False, "--include-related", help="Include graph-related memories."),
+    task_class: str = typer.Option(
+        "default", "--task-class", help="Recall policy class: default, coding, planning, or review."
+    ),
+    include_related: bool = typer.Option(
+        False, "--include-related", help="Include graph-related memories."
+    ),
     include_profile: Optional[bool] = typer.Option(
         None,
         "--include-profile/--no-include-profile",
@@ -1395,7 +1583,9 @@ def build_context_command(
         help="Override semantic search config for this context.",
     ),
     mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
-    session_id: Optional[str] = typer.Option(None, "--session-id", help="Client-controlled recall session id."),
+    session_id: Optional[str] = typer.Option(
+        None, "--session-id", help="Client-controlled recall session id."
+    ),
     loaded_memory_id: list[str] = typer.Option(
         [],
         "--loaded-memory-id",
@@ -1431,7 +1621,9 @@ def build_context_command(
                 "confidence": 0.0,
                 "trigger_count": 0,
                 "triggers": [],
-                "reason": "agent memory is disabled" if not config.agent_policy.enabled else "agent auto recall is disabled",
+                "reason": "agent memory is disabled"
+                if not config.agent_policy.enabled
+                else "agent auto recall is disabled",
             }
         else:
             decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
@@ -1531,7 +1723,9 @@ def build_context_command(
         _handle_error(
             exc,
             json_output=json_output,
-            code="index_missing" if isinstance(exc, RetrievalIndexError) else "build_context_failed",
+            code="index_missing"
+            if isinstance(exc, RetrievalIndexError)
+            else "build_context_failed",
         )
 
     if json_output:
@@ -1621,7 +1815,9 @@ def inspect(
 def open_command(
     memory_id: str = typer.Argument(..., help="Memory id to locate."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    launch: bool = typer.Option(False, "--launch", help="Open the Obsidian URI with the system `open` command."),
+    launch: bool = typer.Option(
+        False, "--launch", help="Open the Obsidian URI with the system `open` command."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Print the Markdown path and Obsidian URI for a memory."""
@@ -1699,7 +1895,9 @@ def doctor(
         return
 
     if payload["ok"]:
-        console.print(f"[green]Doctor passed[/green]: {payload['documents']} memory files validated.")
+        console.print(
+            f"[green]Doctor passed[/green]: {payload['documents']} memory files validated."
+        )
         if payload.get("warning_count"):
             console.print(f"[yellow]Warnings:[/yellow] {payload['warning_count']}")
             for warning in payload.get("warnings", []):
@@ -1751,7 +1949,9 @@ def conflicts(
 def review(
     ctx: typer.Context,
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    group_by: Optional[str] = typer.Option(None, "--group-by", help="Group human output by: source."),
+    group_by: Optional[str] = typer.Option(
+        None, "--group-by", help="Group human output by: source."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """List pending agent-generated memories awaiting review."""
@@ -1787,7 +1987,9 @@ def review_approve(
     memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to approve."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for approval."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview approvals without writing files."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview approvals without writing files."
+    ),
     override_unsafe: bool = typer.Option(
         False,
         "--override-unsafe",
@@ -1813,7 +2015,9 @@ def review_reject(
     memory_ids: list[str] = typer.Argument(..., help="Pending memory ids to reject."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     reason: Optional[str] = typer.Option(None, "--reason", help="Audit reason for rejection."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview rejections without writing files."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview rejections without writing files."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Reject pending agent-generated memories by id."""
@@ -1835,7 +2039,9 @@ def _print_graph_links(title: str, links: list[dict[str, Any]]) -> None:
         return
     for link in links:
         other = link.get("other") or {}
-        other_id = other.get("id") or (link["to_id"] if link["direction"] == "outgoing" else link["from_id"])
+        other_id = other.get("id") or (
+            link["to_id"] if link["direction"] == "outgoing" else link["from_id"]
+        )
         path = other.get("path") or "-"
         console.print(f"  - {link['relation']}: {other_id} [dim]{path}[/dim]")
 
@@ -1971,7 +2177,9 @@ def _raw_files(path: Path) -> list[Path]:
         raise ValueError(f"raw path not found: {path}")
     if path.is_file():
         return [] if _is_raw_metadata_path(path) else [path]
-    return sorted(item for item in path.rglob("*") if item.is_file() and not _is_raw_metadata_path(item))
+    return sorted(
+        item for item in path.rglob("*") if item.is_file() and not _is_raw_metadata_path(item)
+    )
 
 
 def _is_processable_raw(path: Path) -> bool:
@@ -2118,7 +2326,9 @@ def _raw_add_payload(
         return payload
     target_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_path)
-    metadata_path.write_text(json_module.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_path.write_text(
+        json_module.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return payload
 
 
@@ -2224,7 +2434,9 @@ def _cli_budget(budget: Optional[int], task_policy: Any) -> int:
     return selected
 
 
-def _resolve_profile_request(config: Any, task_policy: Any, override: Optional[bool]) -> tuple[bool, list[str]]:
+def _resolve_profile_request(
+    config: Any, task_policy: Any, override: Optional[bool]
+) -> tuple[bool, list[str]]:
     sources: list[str] = []
     if override is not None:
         return bool(override), ["cli"]
@@ -2301,7 +2513,9 @@ def _print_agent_brief(payload: Mapping[str, Any], *, heading: str = "Memory con
     sections = payload.get("sections")
     if not isinstance(sections, Mapping):
         markdown = str(payload.get("markdown") or "")
-        console.print(markdown, markup=False, end="" if markdown.endswith("\n") else "\n", soft_wrap=True)
+        console.print(
+            markdown, markup=False, end="" if markdown.endswith("\n") else "\n", soft_wrap=True
+        )
         return
 
     items = list(_agent_brief_items(sections))
@@ -2317,7 +2531,9 @@ def _print_agent_brief(payload: Mapping[str, Any], *, heading: str = "Memory con
         marker = str(citations[0]) if citations else "C?"
         memory_id = str(item.get("source_id") or "")
         type_status = _agent_type_status(item)
-        console.print(f"[{marker}] {section_label}: {memory_id} {type_status}".rstrip(), markup=False)
+        console.print(
+            f"[{marker}] {section_label}: {memory_id} {type_status}".rstrip(), markup=False
+        )
         console.print(f"Summary: {_agent_one_line(item.get('text'))}", markup=False)
         if memory_id:
             console.print(f"Inspect: memora inspect {shlex.quote(memory_id)}", markup=False)
@@ -2582,7 +2798,9 @@ def _agent_capture_payload(
         )
 
     memories = proposal_result["memories"]
-    pending_count = sum(1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value)
+    pending_count = sum(
+        1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value
+    )
     return {
         "ok": True,
         "implemented": True,
@@ -2718,7 +2936,9 @@ def _session_finalize_payload(
 
     atomic_memories = proposal_result["memories"]
     memories = [summary_memory, *atomic_memories]
-    pending_count = sum(1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value)
+    pending_count = sum(
+        1 for memory in memories if memory.get("status") == LifecycleStatus.PENDING.value
+    )
     return {
         "ok": True,
         "implemented": True,
@@ -2832,8 +3052,12 @@ def _normalize_memora_proposal(
     except ValueError as exc:
         raise ValueError(f"unsupported memory type: {raw_type}") from exc
     if memory_type not in AGENT_CAPTURE_ALLOWED_MEMORY_TYPES:
-        allowed = ", ".join(sorted(memory_type.value for memory_type in AGENT_CAPTURE_ALLOWED_MEMORY_TYPES))
-        raise ValueError(f"unsupported memory type for batch capture: {memory_type.value}; allowed: {allowed}")
+        allowed = ", ".join(
+            sorted(memory_type.value for memory_type in AGENT_CAPTURE_ALLOWED_MEMORY_TYPES)
+        )
+        raise ValueError(
+            f"unsupported memory type for batch capture: {memory_type.value}; allowed: {allowed}"
+        )
 
     text = _memory_text_from_proposal(proposal)
     raw_confidence = proposal.get("confidence", default_confidence)
@@ -2930,7 +3154,11 @@ def _planned_agent_source_payload(
         "safety": safety.to_dict(),
         "citations": [
             {"id": "<source_id>", "path": "Sources/<source_id>/source.md", "kind": "source"},
-            {"id": "<source_id>", "path": "Sources/<source_id>/extract.md", "kind": "source_extract"},
+            {
+                "id": "<source_id>",
+                "path": "Sources/<source_id>/extract.md",
+                "kind": "source_extract",
+            },
         ],
         "would_write": "Sources/<source_id>/{source.md,extract.md}",
     }
@@ -3009,7 +3237,9 @@ def _resolve_session_transcript(
         raise ValueError("provide a transcript path as an argument or with --transcript")
     if transcript_arg is not None and transcript_option is not None:
         if transcript_arg.expanduser() != transcript_option.expanduser():
-            raise ValueError("provide transcript either as an argument or with --transcript, not both")
+            raise ValueError(
+                "provide transcript either as an argument or with --transcript, not both"
+            )
     return transcript_option or transcript_arg  # type: ignore[return-value]
 
 
@@ -3020,7 +3250,9 @@ def _agent_sensitivity(value: str) -> str:
     return selected
 
 
-def _proposal_scope(proposal: Mapping[str, Any], *, default_project: Optional[str]) -> Optional[MemoryScope]:
+def _proposal_scope(
+    proposal: Mapping[str, Any], *, default_project: Optional[str]
+) -> Optional[MemoryScope]:
     raw_scope = _clean_optional_string(proposal.get("scope"))
     if raw_scope:
         return MemoryScope(raw_scope)
@@ -3192,7 +3424,9 @@ def _read_default_vault_from_wrapper(wrapper_path: Path) -> Optional[Path]:
         try:
             parts = shlex.split(stripped)
         except ValueError as exc:
-            raise ValueError(f"could not parse MEMORA_DEFAULT_VAULT in {wrapper_path}: {exc}") from exc
+            raise ValueError(
+                f"could not parse MEMORA_DEFAULT_VAULT in {wrapper_path}: {exc}"
+            ) from exc
         for part in parts:
             if part.startswith("MEMORA_DEFAULT_VAULT="):
                 value = part.split("=", 1)[1]
@@ -3230,7 +3464,9 @@ def _write_default_vault_to_wrapper(wrapper_path: Path, vault_path: Path) -> Non
 
     if not updated:
         for index in range(len(lines) - 1):
-            if lines[index].strip() == ":" and lines[index + 1].startswith("export MEMORA_INSTALL_DIR="):
+            if lines[index].strip() == ":" and lines[index + 1].startswith(
+                "export MEMORA_INSTALL_DIR="
+            ):
                 lines[index] = marker
                 lines.insert(index + 1, default_line)
                 updated = True
@@ -3253,10 +3489,7 @@ def _write_default_vault_to_wrapper(wrapper_path: Path, vault_path: Path) -> Non
 
 def _shell_double_quoted(value: str) -> str:
     escaped = (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("$", "\\$")
-        .replace("`", "\\`")
+        value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     )
     return f'"{escaped}"'
 
@@ -3274,7 +3507,9 @@ def _print_json(payload: dict[str, Any]) -> None:
 
 def _print_agent_operation_results(payload: Mapping[str, Any], *, dry_run_label: str) -> None:
     label = dry_run_label if payload.get("dry_run") else "Agent integration"
-    console.print(f"[green]{label}:[/green] {payload['would_write_count']} writable, {payload['blocked_count']} blocked")
+    console.print(
+        f"[green]{label}:[/green] {payload['would_write_count']} writable, {payload['blocked_count']} blocked"
+    )
     for result in payload["results"]:
         if result["blocked"]:
             status = "blocked: manual merge needed"

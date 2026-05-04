@@ -84,7 +84,9 @@ class PackedChunk:
             "token_estimate": self.token_estimate,
             "score": round(self.score, 6),
             "metadata": dict(self.metadata),
-            "score_breakdown": {key: round(value, 6) for key, value in self.score_breakdown.items()},
+            "score_breakdown": {
+                key: round(value, 6) for key, value in self.score_breakdown.items()
+            },
             "truncated": self.truncated,
             "citation": self.citation,
         }
@@ -358,7 +360,9 @@ def explain_recall(
                 )
             packable = tuple(packable_items)
 
-    packing = pack_candidates_with_trace(packable, budget=selected_budget, recall_config=config.recall)
+    packing = pack_candidates_with_trace(
+        packable, budget=selected_budget, recall_config=config.recall
+    )
     selected_trace = tuple(item for item in packing.trace if item.action == "selected")
     skipped_trace = [
         *trace_prefix,
@@ -468,11 +472,18 @@ def pack_candidates_with_trace(
                     action="skipped",
                     reason="cap_filtered",
                     candidate=candidate,
-                    details={"cap": "memory_type", "limit": type_cap, "value": candidate.memory_type},
+                    details={
+                        "cap": "memory_type",
+                        "limit": type_cap,
+                        "value": candidate.memory_type,
+                    },
                 )
             )
             continue
-        if candidate.project and project_counts.get(candidate.project, 0) >= config.max_chunks_per_project:
+        if (
+            candidate.project
+            and project_counts.get(candidate.project, 0) >= config.max_chunks_per_project
+        ):
             trace.append(
                 PackingTrace(
                     action="skipped",
@@ -501,16 +512,16 @@ def pack_candidates_with_trace(
             continue
 
         packed_chunk = PackedChunk(
-                chunk_id=candidate.chunk_id,
-                document_id=candidate.document_id,
-                chunk_type=candidate.chunk_type,
-                text=text,
-                path=candidate.path,
-                token_estimate=token_estimate,
-                score=_packing_score(candidate),
-                metadata=candidate.metadata,
-                score_breakdown=candidate.score_breakdown,
-                truncated=truncated or token_estimate < candidate.token_estimate,
+            chunk_id=candidate.chunk_id,
+            document_id=candidate.document_id,
+            chunk_type=candidate.chunk_type,
+            text=text,
+            path=candidate.path,
+            token_estimate=token_estimate,
+            score=_packing_score(candidate),
+            metadata=candidate.metadata,
+            score_breakdown=candidate.score_breakdown,
+            truncated=truncated or token_estimate < candidate.token_estimate,
         )
         packed.append(packed_chunk)
         trace.append(
@@ -531,8 +542,12 @@ def pack_candidates_with_trace(
     return PackingResult(chunks=tuple(packed), trace=tuple(trace))
 
 
-def _candidates_from_search(config: MemoryConfig, results: Sequence[Any]) -> tuple[RecallCandidate, ...]:
-    chunk_ids = [str(result.metadata["chunk_id"]) for result in results if result.metadata.get("chunk_id")]
+def _candidates_from_search(
+    config: MemoryConfig, results: Sequence[Any]
+) -> tuple[RecallCandidate, ...]:
+    chunk_ids = [
+        str(result.metadata["chunk_id"]) for result in results if result.metadata.get("chunk_id")
+    ]
     if not chunk_ids:
         return ()
 
@@ -630,7 +645,9 @@ def _source_metadata(config: MemoryConfig, relative_path: str) -> dict[str, str]
         return {}
 
     source_path = _optional_source_string(source.get("path"))
-    source_id = _optional_source_string(source.get("source_id")) or _source_id_from_path(source_path)
+    source_id = _optional_source_string(source.get("source_id")) or _source_id_from_path(
+        source_path
+    )
     metadata: dict[str, str] = {}
     if source_id is not None:
         metadata["source_id"] = source_id
@@ -673,7 +690,9 @@ def _remove_superseded_targets(
     superseded_by = _superseded_replacements(config, candidates)
     if not superseded_by:
         return tuple(candidates)
-    return tuple(candidate for candidate in candidates if candidate.document_id not in superseded_by)
+    return tuple(
+        candidate for candidate in candidates if candidate.document_id not in superseded_by
+    )
 
 
 def _superseded_replacements(
@@ -759,7 +778,10 @@ def _with_status(filters: SearchFilters, status: str) -> SearchFilters:
 
 
 def _rerank_candidates(candidates: Sequence[RecallCandidate]) -> list[RecallCandidate]:
-    return sorted(candidates, key=lambda candidate: (-_packing_score(candidate), candidate.path, candidate.chunk_id))
+    return sorted(
+        candidates,
+        key=lambda candidate: (-_packing_score(candidate), candidate.path, candidate.chunk_id),
+    )
 
 
 def _packing_score(candidate: RecallCandidate) -> float:

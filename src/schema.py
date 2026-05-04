@@ -14,7 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 SCHEMA_VERSION = 1
 
-_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(?P<yaml>.*?)(?:\n---[ \t]*)(?:\n(?P<body>.*))?\Z", re.DOTALL)
+_FRONTMATTER_RE = re.compile(
+    r"\A---[ \t]*\n(?P<yaml>.*?)(?:\n---[ \t]*)(?:\n(?P<body>.*))?\Z", re.DOTALL
+)
 _MEMORY_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
 
 
@@ -283,7 +285,9 @@ class VaultValidationReport:
         return not self.issues
 
 
-def parse_markdown_document(markdown: str, path: Optional[Union[Path, str]] = None) -> MemoryDocument:
+def parse_markdown_document(
+    markdown: str, path: Optional[Union[Path, str]] = None
+) -> MemoryDocument:
     """Parse one Obsidian-compatible Markdown memory and validate frontmatter."""
 
     match = _FRONTMATTER_RE.match(markdown)
@@ -295,7 +299,9 @@ def parse_markdown_document(markdown: str, path: Optional[Union[Path, str]] = No
         raise ValueError("frontmatter must be a YAML mapping")
 
     frontmatter = MemoryFrontmatter.model_validate(_normalize_yaml_values(loaded))
-    return MemoryDocument(frontmatter=frontmatter, body=match.group("body") or "", path=Path(path) if path else None)
+    return MemoryDocument(
+        frontmatter=frontmatter, body=match.group("body") or "", path=Path(path) if path else None
+    )
 
 
 def validate_markdown_file(path: Union[Path, str]) -> MemoryDocument:
@@ -322,7 +328,9 @@ def validate_vault(vault_path: Union[Path, str]) -> VaultValidationReport:
     if not memories_path.exists():
         return VaultValidationReport(
             documents=(),
-            issues=(ValidationIssue(path=memories_path, message="vault is missing Memories directory"),),
+            issues=(
+                ValidationIssue(path=memories_path, message="vault is missing Memories directory"),
+            ),
         )
 
     documents: list[MemoryDocument] = []

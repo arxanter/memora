@@ -309,7 +309,7 @@ def validate_graph(config: MemoryConfig) -> GraphValidationReport:
 
 
 def validate_graph_documents(
-    documents: Sequence[tuple[MemoryDocument, str, str]]
+    documents: Sequence[tuple[MemoryDocument, str, str]],
 ) -> GraphValidationReport:
     """Return orphan relation issues for already parsed memory documents."""
 
@@ -414,7 +414,9 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(word_count / 0.75))
 
 
-def _read_valid_memory_documents(config: MemoryConfig) -> tuple[tuple[MemoryDocument, str, str], ...]:
+def _read_valid_memory_documents(
+    config: MemoryConfig,
+) -> tuple[tuple[MemoryDocument, str, str], ...]:
     parsed: list[tuple[MemoryDocument, str, str]] = []
     issues: list[ValidationIssue] = []
     for path in iter_memory_markdown_files(config.vault_path):
@@ -547,7 +549,9 @@ def _replace_observations(
     connection.execute("DELETE FROM observations WHERE document_id = ?", (frontmatter.id,))
     for index, observation in enumerate(frontmatter.observations, start=1):
         observation_text = observation.text.strip()
-        observation_hash = content_hash(f"{document_hash}:{observation.category}:{observation_text}")
+        observation_hash = content_hash(
+            f"{document_hash}:{observation.category}:{observation_text}"
+        )
         connection.execute(
             """
             INSERT INTO observations (id, document_id, category, text, confidence, content_hash)
@@ -613,12 +617,16 @@ def _delete_conflicting_path(
 
 
 def _document_hash(connection: sqlite3.Connection, document_id: str) -> Optional[str]:
-    row = connection.execute("SELECT content_hash FROM documents WHERE id = ?", (document_id,)).fetchone()
+    row = connection.execute(
+        "SELECT content_hash FROM documents WHERE id = ?", (document_id,)
+    ).fetchone()
     return str(row[0]) if row else None
 
 
 def _chunk_count(connection: sqlite3.Connection, document_id: str) -> int:
-    row = connection.execute("SELECT COUNT(*) FROM chunks WHERE document_id = ?", (document_id,)).fetchone()
+    row = connection.execute(
+        "SELECT COUNT(*) FROM chunks WHERE document_id = ?", (document_id,)
+    ).fetchone()
     return int(row[0]) if row else 0
 
 

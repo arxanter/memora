@@ -25,9 +25,18 @@ def test_project_targets_match_existing_agent_rule_defaults(tmp_path):
     assert resolve_integration_target("cursor", project_path=project).path == (
         project.resolve() / ".cursor" / "rules" / "memora.mdc"
     )
-    assert resolve_integration_target("claude", project_path=project).path == project.resolve() / "CLAUDE.md"
-    assert resolve_integration_target("codex", project_path=project).path == project.resolve() / "AGENTS.md"
-    assert resolve_integration_target("agents", project_path=project).path == project.resolve() / "AGENTS.md"
+    assert (
+        resolve_integration_target("claude", project_path=project).path
+        == project.resolve() / "CLAUDE.md"
+    )
+    assert (
+        resolve_integration_target("codex", project_path=project).path
+        == project.resolve() / "AGENTS.md"
+    )
+    assert (
+        resolve_integration_target("agents", project_path=project).path
+        == project.resolve() / "AGENTS.md"
+    )
 
 
 def test_select_agent_clients_all_skips_duplicate_agents_target():
@@ -53,7 +62,7 @@ def test_render_agent_rules_preserves_phase_one_content(tmp_path):
     assert f'--vault "{tmp_path / "vault"}"' in content
     assert '--project "memora"' in content
     assert "prefer the default compact agent output" in content
-    assert "memora search \"<query>\"" in content
+    assert 'memora search "<query>"' in content
     assert "Choose recall/search scope deliberately" in content
     assert "For unscoped recall/search, omit the project filter" in content
     assert "During a session, notice memory-worthy information" in content
@@ -114,7 +123,9 @@ def test_user_scope_targets_use_real_global_files_when_supported(tmp_path):
     assert cursor_target.client == AgentClient.CURSOR
     assert cursor_target.scope == IntegrationScope.USER
     assert cursor_target.support == TargetSupport.FALLBACK
-    assert cursor_target.path == tmp_path.resolve() / ".memora" / "integrations" / "cursor-memora.mdc"
+    assert (
+        cursor_target.path == tmp_path.resolve() / ".memora" / "integrations" / "cursor-memora.mdc"
+    )
     assert claude_target.client == AgentClient.CLAUDE
     assert claude_target.support == TargetSupport.SUPPORTED
     assert claude_target.path == tmp_path.resolve() / ".claude" / "CLAUDE.md"
@@ -194,9 +205,9 @@ def test_plan_managed_agent_write_keeps_cursor_frontmatter_first(tmp_path):
     assert plan["action"] == "create"
     assert str(plan["planned_content"]).startswith("---\ndescription:")
     assert "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->" in str(plan["planned_content"])
-    assert str(plan["planned_content"]).index("---\ndescription:") < str(plan["planned_content"]).index(
-        "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->"
-    )
+    assert str(plan["planned_content"]).index("---\ndescription:") < str(
+        plan["planned_content"]
+    ).index("<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->")
 
 
 def test_plan_managed_agent_write_appends_to_unmanaged_memora_text_target(tmp_path):
@@ -205,7 +216,7 @@ def test_plan_managed_agent_write_appends_to_unmanaged_memora_text_target(tmp_pa
         "# Project Instructions\n\n"
         "Keep this user-owned intro.\n\n"
         "## Memora Usage\n\n"
-        "Use `memora build-context \"<task>\"` for recall.\n\n"
+        'Use `memora build-context "<task>"` for recall.\n\n'
         "Use `memora review --json` for pending memory.\n\n"
         "## Project Rules\n\n"
         "Keep this user-owned outro.\n",
@@ -232,7 +243,7 @@ def test_plan_managed_agent_write_appends_to_unmanaged_memora_text_target(tmp_pa
     assert "<!-- BEGIN AGENT MEMORY MANAGED BLOCK -->" in str(plan["planned_content"])
     assert "Keep this user-owned intro." in str(plan["planned_content"])
     assert "Keep this user-owned outro." in str(plan["planned_content"])
-    assert "Use `memora build-context \"<task>\"` for recall." in str(plan["planned_content"])
+    assert 'Use `memora build-context "<task>"` for recall.' in str(plan["planned_content"])
 
 
 def test_replace_managed_block_preserves_surrounding_user_content():
@@ -273,7 +284,7 @@ def test_agent_status_detects_unmanaged_target_as_appendable(tmp_path):
     target = project / "AGENTS.md"
     target.write_text(
         "## Memora Usage\n\n"
-        "Use `memora build-context \"<task>\"` for recall.\n\n"
+        'Use `memora build-context "<task>"` for recall.\n\n'
         "Use `memora review --json` for pending memory.\n",
         encoding="utf-8",
     )

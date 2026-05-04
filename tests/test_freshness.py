@@ -48,7 +48,9 @@ def test_detect_freshness_change_reports_missing_index_even_with_previous_snapsh
     current = FreshnessSnapshot(files=(TrackedFile("Memories/facts/a.md", 1, 10),))
     previous = FreshnessSnapshot(files=(TrackedFile("Memories/facts/a.md", 1, 10),))
 
-    change = detect_freshness_change(current, previous=previous, index_path=tmp_path / "missing.sqlite")
+    change = detect_freshness_change(
+        current, previous=previous, index_path=tmp_path / "missing.sqlite"
+    )
 
     assert change.changed is True
     assert change.index_missing is True

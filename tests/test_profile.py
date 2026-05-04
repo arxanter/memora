@@ -9,7 +9,9 @@ from memora_profile import build_context_profile_payload, generate_profile_conte
 from vault import init_vault
 
 
-def test_generate_user_profile_context_uses_active_user_and_global_memories_without_mutation(tmp_path):
+def test_generate_user_profile_context_uses_active_user_and_global_memories_without_mutation(
+    tmp_path,
+):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
     _write_memory(

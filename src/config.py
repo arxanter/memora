@@ -219,7 +219,9 @@ class AgentPolicyConfig(BaseModel):
     @model_validator(mode="after")
     def validate_thresholds(self) -> AgentPolicyConfig:
         if self.min_active_confidence < self.min_pending_confidence:
-            raise ValueError("min_active_confidence must be greater than or equal to min_pending_confidence")
+            raise ValueError(
+                "min_active_confidence must be greater than or equal to min_pending_confidence"
+            )
         return self
 
 
@@ -263,7 +265,9 @@ class MemoryConfig(BaseModel):
     default_author_name: str = "Memora CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
-    recall_policies: dict[str, TaskRecallPolicyConfig] = Field(default_factory=_default_recall_policies)
+    recall_policies: dict[str, TaskRecallPolicyConfig] = Field(
+        default_factory=_default_recall_policies
+    )
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
@@ -332,7 +336,9 @@ def set_agent_aliases(vault_path: Union[Path, str], aliases: Sequence[str]) -> l
 
     normalized = AgentPolicyConfig(aliases=list(aliases)).aliases
     config = load_config(vault_path)
-    updated = config.model_copy(update={"agent_policy": config.agent_policy.model_copy(update={"aliases": normalized})})
+    updated = config.model_copy(
+        update={"agent_policy": config.agent_policy.model_copy(update={"aliases": normalized})}
+    )
     write_config(updated, overwrite=True)
     return updated.agent_policy.aliases
 
@@ -377,7 +383,9 @@ def load_config(
         raise ConfigError("config must be a YAML mapping")
 
     try:
-        return MemoryConfig.model_validate(_apply_environment_overrides({**loaded, "vault_path": resolved_vault}))
+        return MemoryConfig.model_validate(
+            _apply_environment_overrides({**loaded, "vault_path": resolved_vault})
+        )
     except ValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -466,7 +474,12 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             profile_overrides[field_name] = value
 
-    if not semantic_overrides and not freshness_overrides and not agent_policy_overrides and not profile_overrides:
+    if (
+        not semantic_overrides
+        and not freshness_overrides
+        and not agent_policy_overrides
+        and not profile_overrides
+    ):
         return config_data
 
     semantic_config = config_data.get("semantic") or {}

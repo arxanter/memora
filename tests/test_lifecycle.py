@@ -189,7 +189,9 @@ def test_retrieval_hides_superseded_pending_and_rejected_by_default(tmp_path):
 
     default_ids = [
         result["id"]
-        for result in search_memory(config, "lifecycle filtering default query", limit=10).to_dict()["results"]
+        for result in search_memory(
+            config, "lifecycle filtering default query", limit=10
+        ).to_dict()["results"]
     ]
     explicit_superseded_ids = [
         result["id"]
@@ -635,7 +637,10 @@ def test_review_queue_surfaces_duplicate_candidates_without_mutating_memories(tm
         "candidate": ["body", "observation"],
     }
     assert item["contradiction_candidates"] == []
-    assert payload["source_groups"][0]["items"][0]["duplicate_candidates"] == item["duplicate_candidates"]
+    assert (
+        payload["source_groups"][0]["items"][0]["duplicate_candidates"]
+        == item["duplicate_candidates"]
+    )
     assert payload["source_groups"][0]["items"][0]["contradiction_candidates"] == []
 
 
@@ -688,7 +693,9 @@ def test_review_queue_surfaces_near_duplicate_candidates_without_mutating_memori
     assert item["curation"]["signals"][0]["reason"] == "normalized_content_near_match"
 
 
-def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutating_memories(tmp_path):
+def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutating_memories(
+    tmp_path,
+):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
     _write_memory(
@@ -790,13 +797,12 @@ def test_review_queue_surfaces_explicit_contradiction_candidates_without_mutatin
     assert "has_contradictions" not in normal_item["risk_flags"]
     assert normal_item["recommended_action"] == "approve"
     source_items = {
-        item["id"]: item
-        for group in payload["source_groups"]
-        for item in group["items"]
+        item["id"]: item for group in payload["source_groups"] for item in group["items"]
     }
-    assert source_items["mem_20260430_pending_contradicts"]["contradiction_candidates"] == frontmatter_item[
-        "contradiction_candidates"
-    ]
+    assert (
+        source_items["mem_20260430_pending_contradicts"]["contradiction_candidates"]
+        == frontmatter_item["contradiction_candidates"]
+    )
 
 
 def test_review_queue_surfaces_high_signal_opposite_claims_without_mutating_memories(tmp_path):
@@ -866,7 +872,9 @@ def test_review_queue_surfaces_high_signal_opposite_claims_without_mutating_memo
         }
     ]
     assert contradiction_item["curation"]["contradiction_candidate_count"] == 1
-    assert contradiction_item["curation"]["signals"][0]["reason"] == "opposite_claim:use_vs_do_not_use"
+    assert (
+        contradiction_item["curation"]["signals"][0]["reason"] == "opposite_claim:use_vs_do_not_use"
+    )
 
     unrelated_item = items["mem_20260430_pending_unrelated_claim"]
     assert unrelated_item["contradiction_candidates"] == []
@@ -952,7 +960,9 @@ def test_curation_plan_proposes_conservative_actions_without_mutating_memories(t
     contradiction_item = items["mem_20260430_pending_contradiction"]
     assert contradiction_item["recommended_action"] == "inspect_contradiction"
     assert contradiction_item["curation"]["proposal_only"] is True
-    assert contradiction_item["curation"]["reason"] == "likely_contradiction_requires_human_inspection"
+    assert (
+        contradiction_item["curation"]["reason"] == "likely_contradiction_requires_human_inspection"
+    )
     assert contradiction_item["candidate_summaries"] == [
         {
             "kind": "contradiction",
@@ -999,7 +1009,10 @@ def test_review_queue_groups_pending_memories_by_source(tmp_path):
     assert len(payload["source_groups"]) == 1
     assert payload["source_groups"][0]["source"]["path"] == "Sources/2026-04-30_shared/extract.md"
     assert payload["source_groups"][0]["item_count"] == 2
-    assert set(payload["source_groups"][0]["memory_ids"]) == {"mem_20260430_first", "mem_20260430_second"}
+    assert set(payload["source_groups"][0]["memory_ids"]) == {
+        "mem_20260430_first",
+        "mem_20260430_second",
+    }
 
 
 def _write_memory(
@@ -1028,11 +1041,7 @@ def _write_memory(
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
     importance_block = "" if importance is None else "importance: {0}\n".format(importance)
-    source_block = (
-        "source:\n  path: {0}\n".format(source_path)
-        if source_path
-        else "source:\n"
-    )
+    source_block = "source:\n  path: {0}\n".format(source_path) if source_path else "source:\n"
     path.write_text(
         """---
 schema_version: 1

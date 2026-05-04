@@ -52,7 +52,9 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "would write" in result.stdout
-    assert "memora agent integrate --client all --project /path/to/project --dry-run" in result.stdout
+    assert (
+        "memora agent integrate --client all --project /path/to/project --dry-run" in result.stdout
+    )
     assert "memora vault set /path/to/initialized-vault" in result.stdout
     assert not install_dir.exists()
     assert not bin_dir.exists()
@@ -69,10 +71,45 @@ def test_install_help_documents_python_selection():
     )
 
     assert result.returncode == 0, result.stderr
+    assert "without manual venv activation" in result.stdout
+    assert "Do not install the package" in result.stdout
+    assert "Install test extra too: .[test]" in result.stdout
     assert "python3.12/3.11/3.10/python3" in result.stdout
     assert "Python interpreter to use" in result.stdout
+    assert "Optional uv executable to prefer" in result.stdout
     assert "--no-vault" in result.stdout
     assert "wrapper default" in result.stdout
+
+
+def test_install_dry_run_falls_back_when_uv_is_missing(tmp_path):
+    install_dir = tmp_path / "install"
+    bin_dir = tmp_path / "bin"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPTS / "install.sh"),
+            "--dry-run",
+            "--force",
+            "--install-dir",
+            str(install_dir),
+            "--bin-dir",
+            str(bin_dir),
+            "--no-vault",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "UV": str(tmp_path / "missing-uv")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "uv not found; falling back to Python venv and pip" in result.stderr
+    assert "installer: pip fallback" in result.stdout
+    assert " -m pip install -e " in result.stdout
+    assert not install_dir.exists()
+    assert not bin_dir.exists()
 
 
 def test_cli_module_invocation_runs_typer_app():
@@ -108,6 +145,11 @@ def test_local_install_docs_reference_existing_scripts():
     assert "./scripts/uninstall.sh --remove-venv" in readme
     assert "normal commands do not need `--vault`" in readme
     assert "Python 3.10" in readme and "newer" in readme
+    assert "and `uv`" not in readme
+    assert "falls back to Python" in readme
+    assert "uv sync --group test --group lint" in readme
+    assert "uv run --group lint ruff check ." in readme
+    assert "uv run --group test pytest" in readme
     assert "WSL2" in readme
     assert "CLI command reference for agents" in readme
     assert "raw add" not in readme

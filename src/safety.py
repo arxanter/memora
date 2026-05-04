@@ -42,7 +42,9 @@ _PROMPT_INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "reveal_secrets",
-        re.compile(r"\breveal\s+(?:the\s+)?(?:system\s+prompt|secrets?|credentials?)\b", re.IGNORECASE),
+        re.compile(
+            r"\breveal\s+(?:the\s+)?(?:system\s+prompt|secrets?|credentials?)\b", re.IGNORECASE
+        ),
     ),
     (
         "exfiltrate_credentials",
@@ -50,7 +52,9 @@ _PROMPT_INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "send_credentials",
-        re.compile(r"\bsend\s+(?:the\s+)?(?:credentials|tokens?|api\s+keys?|secrets?)\b", re.IGNORECASE),
+        re.compile(
+            r"\bsend\s+(?:the\s+)?(?:credentials|tokens?|api\s+keys?|secrets?)\b", re.IGNORECASE
+        ),
     ),
 )
 
@@ -188,7 +192,10 @@ def scan_metadata(metadata: Optional[Mapping[str, Any]]) -> SafetyScanResult:
                     field=key,
                 )
             )
-        elif key in {"status", "quality", "source_quality", "safety_status"} and value in _UNSAFE_METADATA_VALUES:
+        elif (
+            key in {"status", "quality", "source_quality", "safety_status"}
+            and value in _UNSAFE_METADATA_VALUES
+        ):
             findings.append(
                 SafetyFinding(
                     flag=UNSAFE_METADATA_FLAG,

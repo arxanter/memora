@@ -10,7 +10,12 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from config import MemoryConfig
-from schema import MemoryDocument, iter_memory_markdown_files, validate_markdown_file, validate_vault
+from schema import (
+    MemoryDocument,
+    iter_memory_markdown_files,
+    validate_markdown_file,
+    validate_vault,
+)
 
 
 class MemoryNotFoundError(ValueError):
@@ -58,7 +63,9 @@ def open_memory(config: MemoryConfig, memory_id: str, *, launch: bool = False) -
             )
             opened = completed.returncode == 0
             if not opened:
-                launch_error = (completed.stderr or completed.stdout or "open command failed").strip()
+                launch_error = (
+                    completed.stderr or completed.stdout or "open command failed"
+                ).strip()
 
     return {
         "ok": True,
@@ -194,7 +201,9 @@ def _document_row(connection: sqlite3.Connection, memory_id: str) -> Optional[di
     }
 
 
-def _index_links(connection: sqlite3.Connection, memory_id: str, *, direction: str) -> list[dict[str, Any]]:
+def _index_links(
+    connection: sqlite3.Connection, memory_id: str, *, direction: str
+) -> list[dict[str, Any]]:
     if direction == "outgoing":
         where_sql = "l.from_id = ?"
         other_column = "l.to_id"
@@ -277,7 +286,9 @@ def _markdown_edges(document: MemoryDocument) -> list[dict[str, Any]]:
     return edges
 
 
-def _document_summary(document: Optional[MemoryDocument], paths_by_id: dict[str, str]) -> Optional[dict[str, Any]]:
+def _document_summary(
+    document: Optional[MemoryDocument], paths_by_id: dict[str, str]
+) -> Optional[dict[str, Any]]:
     if document is None:
         return None
     frontmatter = document.frontmatter

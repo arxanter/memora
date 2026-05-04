@@ -50,7 +50,9 @@ class FreshnessChange:
 
     @property
     def changed(self) -> bool:
-        return bool(self.added or self.modified or self.removed or self.index_missing or self.index_stale)
+        return bool(
+            self.added or self.modified or self.removed or self.index_missing or self.index_stale
+        )
 
     @property
     def count(self) -> int:
@@ -248,7 +250,9 @@ def refresh_index_if_needed(
     """Run `memora reindex` only when tracked durable files changed."""
 
     resolved_state_path = state_path or default_freshness_state_path(config)
-    resolved_debounce = config.index_freshness.debounce_seconds if debounce_seconds is None else debounce_seconds
+    resolved_debounce = (
+        config.index_freshness.debounce_seconds if debounce_seconds is None else debounce_seconds
+    )
     resolved_clean = config.index_freshness.clean if clean is None else clean
     current = scan_freshness_snapshot(config)
 
@@ -278,7 +282,9 @@ def refresh_index_if_needed(
         )
 
     stable_snapshot = wait_for_quiet_snapshot(config, current, resolved_debounce, sleep=sleep)
-    reindex_fn = reindex or (lambda active_config: reindex_vault(active_config, clean=resolved_clean))
+    reindex_fn = reindex or (
+        lambda active_config: reindex_vault(active_config, clean=resolved_clean)
+    )
     reindex_result = reindex_fn(config)
     save_freshness_snapshot(resolved_state_path, stable_snapshot)
     return RefreshResult(

@@ -9,7 +9,7 @@ decisions without editing memory files directly.
 
 ## Install
 
-Requirements: macOS or Linux, Python 3.10 or newer, `git`.
+Requirements: macOS or Linux, Python 3.10 or newer, and `git`.
 
 ```bash
 git clone https://github.com/arxanter/memora.git ~/.local/src/memora
@@ -66,11 +66,25 @@ Common options to add when needed: `--install-dir <path>`, `--bin-dir <path>`,
 
 The installer creates a managed virtual environment, installs Memora from the
 cloned repository, writes the `memora` wrapper, and initializes the vault when
-`--vault` is provided.
+`--vault` is provided. When `uv` is available, the installer uses it for faster
+environment creation and package installation; otherwise it falls back to Python
+`venv` and `pip`.
 
 On Windows, use WSL2 and run the same commands inside Linux.
 
 </details>
+
+## Developer Tooling
+
+Memora uses `uv` for dependency management, environment synchronization, linting,
+and test execution:
+
+```bash
+uv sync --group test --group lint
+uv run --group lint ruff check .
+uv run --group lint ruff format --check .
+uv run --group test pytest
+```
 
 ## Connect An Agent
 

@@ -18,7 +18,7 @@ Options:
   --python PATH             Python interpreter to use.
                             Default: first python3.12/3.11/3.10/python3
   --no-venv                 Install into the current Python environment.
-  --skip-install            Do not run pip install, only generate wrappers.
+  --skip-install            Do not install the package, only generate wrappers.
   --with-test               Install test extra too: .[test].
   --force                   Overwrite existing wrapper commands.
   --dry-run                 Print actions without changing files.
@@ -28,6 +28,8 @@ Environment:
   MEMORA_VAULT        Default vault path when --vault is omitted.
   MEMORA_INSTALL_DIR  Default install directory.
   MEMORA_BIN_DIR      Default wrapper directory.
+  UV                  Optional uv executable to prefer when available.
+                      Default: uv.
 USAGE
 }
 
@@ -120,6 +122,10 @@ run_cmd() {
   "$@"
 }
 
+uv_ok() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 python_ok() {
   local python_bin="$1"
   command -v "$python_bin" >/dev/null 2>&1 || return 1
@@ -173,6 +179,8 @@ PLATFORM="$(detect_platform)"
 INSTALL_DIR="${MEMORA_INSTALL_DIR:-$HOME/.local/share/memora}"
 BIN_DIR="${MEMORA_BIN_DIR:-$HOME/.local/bin}"
 PYTHON_BIN="${PYTHON:-}"
+UV_BIN="${UV:-uv}"
+USE_UV=0
 VAULT_PATH="${MEMORA_VAULT:-}"
 NO_VAULT=0
 USE_VENV=1
@@ -263,6 +271,15 @@ fi
 log "platform: $PLATFORM"
 log "repo: $REPO_ROOT"
 log "python: $PYTHON_BIN ($(python_version "$PYTHON_BIN"))"
+if [ "$SKIP_INSTALL" != "1" ]; then
+  if uv_ok "$UV_BIN"; then
+    USE_UV=1
+    log "installer: uv ($UV_BIN)"
+  else
+    warn "uv not found; falling back to Python venv and pip"
+    log "installer: pip fallback"
+  fi
+fi
 log "install dir: $INSTALL_DIR"
 log "bin dir: $BIN_DIR"
 if [ -n "$VAULT_PATH" ]; then
@@ -279,23 +296,36 @@ if [ "$SKIP_INSTALL" != "1" ]; then
     fi
     if [ ! -x "$VENV_DIR/bin/python" ]; then
       log "creating managed virtual environment"
-      run_cmd "$PYTHON_BIN" -m venv "$VENV_DIR"
+      if [ "$USE_UV" = "1" ]; then
+        run_cmd "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+      else
+        run_cmd "$PYTHON_BIN" -m venv "$VENV_DIR"
+      fi
     fi
-    if ! python_ok "$PYTHON_CMD"; then
+    if [ "$DRY_RUN" != "1" ] && ! python_ok "$PYTHON_CMD"; then
       fail "managed venv Python is $(python_version "$PYTHON_CMD"), but Memora requires Python >= 3.10"
     fi
-    log "upgrading pip"
-    run_cmd "$PYTHON_CMD" -m pip install -U pip
+    if [ "$USE_UV" != "1" ]; then
+      log "upgrading pip"
+      run_cmd "$PYTHON_CMD" -m pip install -U pip
+    fi
   elif ! python_ok "$PYTHON_CMD"; then
     fail "Python >= 3.10 is required, but $PYTHON_CMD is Python $(python_version "$PYTHON_CMD")"
   fi
 
-  EXTRA_SUFFIX=""
+  INSTALL_SPEC="$REPO_ROOT"
+  INSTALL_TARGET="package"
   if [ "$WITH_TEST" = "1" ]; then
-    EXTRA_SUFFIX="[test]"
+    INSTALL_SPEC="$REPO_ROOT[test]"
+    INSTALL_TARGET="package with test extra"
   fi
-  log "installing Memora ${EXTRA_SUFFIX:-package}"
-  run_cmd "$PYTHON_CMD" -m pip install -e "$REPO_ROOT$EXTRA_SUFFIX"
+  if [ "$USE_UV" = "1" ]; then
+    INSTALL_CMD=("$UV_BIN" pip install --python "$PYTHON_CMD" -e "$INSTALL_SPEC")
+  else
+    INSTALL_CMD=("$PYTHON_CMD" -m pip install -e "$INSTALL_SPEC")
+  fi
+  log "installing Memora $INSTALL_TARGET"
+  run_cmd "${INSTALL_CMD[@]}"
 fi
 
 MEMORA_WRAPPER='#!/usr/bin/env bash

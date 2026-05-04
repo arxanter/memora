@@ -91,7 +91,9 @@ class BriefResponse:
             "index_path": str(self.config.index_file),
             "markdown": self.markdown,
             "sections": {
-                section: [item.to_dict(self.citation_keys) for item in self.sections.get(section, ())]
+                section: [
+                    item.to_dict(self.citation_keys) for item in self.sections.get(section, ())
+                ]
                 for section in SECTION_ORDER
             },
             "citations": [dict(citation) for citation in self.citations],
@@ -156,7 +158,9 @@ def brief_memory(
     )
 
 
-def render_brief_markdown(sections: Mapping[str, Sequence[BriefItem]]) -> tuple[str, tuple[dict[str, Any], ...], dict[str, str]]:
+def render_brief_markdown(
+    sections: Mapping[str, Sequence[BriefItem]],
+) -> tuple[str, tuple[dict[str, Any], ...], dict[str, str]]:
     """Render sections into the stable Markdown brief shape."""
 
     citations, citation_keys = _collect_citations(sections)
@@ -191,7 +195,9 @@ def _item_from_chunk(chunk: PackedChunk) -> Optional[BriefItem]:
 
     citation = _chunk_citation(chunk)
     if status in WARNING_STATUSES:
-        label = "Stale" if status == LifecycleStatus.STALE.value else status.replace("_", " ").title()
+        label = (
+            "Stale" if status == LifecycleStatus.STALE.value else status.replace("_", " ").title()
+        )
         return BriefItem(
             section="warnings",
             text=f"{label}: {text}",
@@ -264,8 +270,10 @@ def _graph_items(config: MemoryConfig, chunks: Sequence[PackedChunk]) -> list[Br
         citations = tuple(
             citation
             for citation in (
-                selected_citations.get(from_id) or _document_citation(from_id, row["from_path"], relation),
-                selected_citations.get(to_id) or _document_citation(to_id, row["to_path"], relation),
+                selected_citations.get(from_id)
+                or _document_citation(from_id, row["from_path"], relation),
+                selected_citations.get(to_id)
+                or _document_citation(to_id, row["to_path"], relation),
             )
             if citation is not None
         )
@@ -331,11 +339,15 @@ def _budget_priority(item: BriefItem) -> tuple[int, str, str]:
     return (section_priority.get(item.section, 9), item.source_id or "", item.text)
 
 
-def _freeze_sections(sections: Mapping[str, Sequence[BriefItem]]) -> dict[str, tuple[BriefItem, ...]]:
+def _freeze_sections(
+    sections: Mapping[str, Sequence[BriefItem]],
+) -> dict[str, tuple[BriefItem, ...]]:
     return {section: tuple(sections.get(section, ())) for section in SECTION_ORDER}
 
 
-def _collect_citations(sections: Mapping[str, Sequence[BriefItem]]) -> tuple[tuple[dict[str, Any], ...], dict[str, str]]:
+def _collect_citations(
+    sections: Mapping[str, Sequence[BriefItem]],
+) -> tuple[tuple[dict[str, Any], ...], dict[str, str]]:
     citations: list[dict[str, Any]] = []
     citation_keys: dict[str, str] = {}
     for section in SECTION_ORDER:
@@ -356,8 +368,7 @@ def _citation_key(citation_keys: Mapping[str, str], citation: Mapping[str, Any])
 
 def _citation_signature(citation: Mapping[str, Any]) -> str:
     return "|".join(
-        str(citation.get(key) or "")
-        for key in ("id", "path", "chunk_id", "chunk_type", "relation")
+        str(citation.get(key) or "") for key in ("id", "path", "chunk_id", "chunk_type", "relation")
     )
 
 

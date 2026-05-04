@@ -104,7 +104,9 @@ class SourceCaptureResult:
             "relative_source_path": self.relative_source_path.as_posix(),
             "extract_path": str(self.extract_path) if self.extract_path is not None else None,
             "relative_extract_path": (
-                self.relative_extract_path.as_posix() if self.relative_extract_path is not None else None
+                self.relative_extract_path.as_posix()
+                if self.relative_extract_path is not None
+                else None
             ),
             "url": self.url,
             "title": self.title,
@@ -172,9 +174,7 @@ class SourcePromotionResult:
 
     def to_dict(self) -> dict[str, Any]:
         pending_count = sum(
-            1
-            for memory in self.memories
-            if memory.result.status == LifecycleStatus.PENDING
+            1 for memory in self.memories if memory.result.status == LifecycleStatus.PENDING
         )
         next_steps = ["Review the saved source and extract under Sources/."]
         if pending_count:
@@ -376,7 +376,9 @@ def lookup_source(
             "citations": citations,
             "source_path": relative_path.as_posix(),
             "fallback": bool(query_tokens and not matched),
-            "empty_reason": _source_lookup_empty_reason(raw_chunks, packed_chunks, query_tokens, matched),
+            "empty_reason": _source_lookup_empty_reason(
+                raw_chunks, packed_chunks, query_tokens, matched
+            ),
         }
     )
     return base_payload
@@ -403,7 +405,9 @@ def save_source_material(
     selected_at = captured_at or datetime.now(timezone.utc).astimezone()
     selected_title = _clean_title(title) or _title_from_url(url) or "Untitled source"
     selected_tags = tuple(_clean_list(tags))
-    selected_channel = _normalized_choice(channel, SOURCE_CHANNELS, default="url" if _optional_string(url) else "manual")
+    selected_channel = _normalized_choice(
+        channel, SOURCE_CHANNELS, default="url" if _optional_string(url) else "manual"
+    )
     selected_quality = _normalized_choice(source_quality, SOURCE_QUALITIES, default="user_provided")
     selected_sensitivity = _normalized_choice(sensitivity, SOURCE_SENSITIVITIES, default="normal")
     selected_origin = _clean_mapping(origin)
@@ -951,7 +955,9 @@ def _clean_mapping(value: Optional[Mapping[str, Any]]) -> dict[str, str]:
 
 def _normalized_choice(value: Optional[str], allowed: set[str], *, default: str) -> str:
     selected = (_optional_string(value) or default).strip().lower()
-    if selected not in allowed and not (allowed is SOURCE_CHANNELS and _SCHEDULED_CHANNEL_RE.fullmatch(selected)):
+    if selected not in allowed and not (
+        allowed is SOURCE_CHANNELS and _SCHEDULED_CHANNEL_RE.fullmatch(selected)
+    ):
         raise ValueError(f"value must be one of: {', '.join(sorted(allowed))}")
     return selected
 
@@ -965,9 +971,7 @@ def _plan_promoted_memory(
     memory_type = MemoryType(memory.get("type", MemoryType.FACT.value))
     if memory_type not in _PROMOTABLE_MEMORY_TYPES:
         allowed = ", ".join(sorted(memory_type.value for memory_type in _PROMOTABLE_MEMORY_TYPES))
-        raise ValueError(
-            f"source promotion only supports durable atomic memory types: {allowed}"
-        )
+        raise ValueError(f"source promotion only supports durable atomic memory types: {allowed}")
 
     confidence = float(memory.get("confidence", policy.min_pending_confidence))
     if confidence < 0 or confidence > 1:
@@ -975,7 +979,9 @@ def _plan_promoted_memory(
 
     text = _memory_text(memory)
     safety = scan_text(text, field="memory")
-    risk_flags = normalize_risk_flags((*_clean_list(memory.get("risk_flags", ())), *safety.risk_flags))
+    risk_flags = normalize_risk_flags(
+        (*_clean_list(memory.get("risk_flags", ())), *safety.risk_flags)
+    )
     selected_status = _promoted_memory_status(memory, policy, confidence)
     if risk_flags and selected_status == LifecycleStatus.ACTIVE:
         selected_status = LifecycleStatus.PENDING
@@ -1005,7 +1011,11 @@ def _promoted_memory_status(
     requested = _optional_string(memory.get("status"))
     requested_status = LifecycleStatus(requested) if requested else None
     if requested_status and requested_status != LifecycleStatus.ACTIVE:
-        return requested_status if trust_level == AgentTrustLevel.AUTONOMOUS.value else LifecycleStatus.PENDING
+        return (
+            requested_status
+            if trust_level == AgentTrustLevel.AUTONOMOUS.value
+            else LifecycleStatus.PENDING
+        )
 
     if confidence < policy.min_active_confidence:
         return LifecycleStatus.PENDING

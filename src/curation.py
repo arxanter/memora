@@ -122,7 +122,10 @@ def detect_opposite_claim(left: str, right: str) -> Optional[OppositeClaimSignal
                 continue
             if left_claim.polarity == right_claim.polarity:
                 continue
-            if _subject_similarity(left_claim.subject_tokens, right_claim.subject_tokens) < CONTRADICTION_SUBJECT_THRESHOLD:
+            if (
+                _subject_similarity(left_claim.subject_tokens, right_claim.subject_tokens)
+                < CONTRADICTION_SUBJECT_THRESHOLD
+            ):
                 continue
             signal = _opposite_claim_signal(left_claim, right_claim)
             if best is None or signal.confidence > best.confidence:
@@ -154,13 +157,20 @@ def _claims(text: str) -> tuple[_Claim, ...]:
     for match in _NEGATED_USE_RE.finditer(normalized):
         claims.append(_claim("use", "negative", match.group("subject"), match.group(0)))
     for match in _POSITIVE_USE_RE.finditer(normalized):
-        prefix = normalized[max(0, match.start() - 12): match.start()]
+        prefix = normalized[max(0, match.start() - 12) : match.start()]
         if "do not" in prefix or "don't" in prefix or "never" in prefix:
             continue
         claims.append(_claim("use", "positive", match.group("subject"), match.group(0)))
     for match in _STATE_RE.finditer(normalized):
         state = match.group("state")
-        claims.append(_claim(f"state:{_state_pair(state)}", _STATE_POLARITY[state], match.group("subject"), match.group(0)))
+        claims.append(
+            _claim(
+                f"state:{_state_pair(state)}",
+                _STATE_POLARITY[state],
+                match.group("subject"),
+                match.group(0),
+            )
+        )
     return tuple(claim for claim in claims if len(claim.subject_tokens) >= 2)
 
 
@@ -198,7 +208,11 @@ def _subject_similarity(left: Sequence[str], right: Sequence[str]) -> float:
 
 
 def _opposite_claim_signal(left: _Claim, right: _Claim) -> OppositeClaimSignal:
-    reason = "opposite_claim:use_vs_do_not_use" if left.kind == "use" else f"opposite_claim:{left.kind.split(':', 1)[1]}"
+    reason = (
+        "opposite_claim:use_vs_do_not_use"
+        if left.kind == "use"
+        else f"opposite_claim:{left.kind.split(':', 1)[1]}"
+    )
     confidence = 0.86 if left.kind == "use" else 0.82
     return OppositeClaimSignal(
         match_reason=reason,

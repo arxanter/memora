@@ -55,6 +55,7 @@ class IntegrationTarget:
             "explicit": self.explicit,
         }
 
+
 SUPPORTED_AGENT_RULE_FORMATS = frozenset(client.value for client in AgentClient)
 SUPPORTED_AGENT_RULE_CLIENTS = SUPPORTED_AGENT_RULE_FORMATS
 DEFAULT_AGENT_INTEGRATION_CLIENTS = (AgentClient.CURSOR, AgentClient.CLAUDE, AgentClient.CODEX)
@@ -74,6 +75,7 @@ _CURSOR_RULE_FRONTMATTER = "\n".join(
         "---",
     ]
 )
+
 
 def resolve_rule_aliases(
     *,
@@ -575,8 +577,10 @@ def plan_managed_agent_write(
     existing_content = target_info.path.read_text(encoding="utf-8") if target_exists else ""
     metadata = managed_block_metadata(existing_content) if target_exists else {}
     managed = bool(metadata)
-    existing_hash = metadata.get("content_hash") if managed else (
-        file_content_hash(target_info.path) if target_exists else None
+    existing_hash = (
+        metadata.get("content_hash")
+        if managed
+        else (file_content_hash(target_info.path) if target_exists else None)
     )
     detected_version = metadata.get("template_version")
     needs_update = existing_hash != new_hash
@@ -588,7 +592,9 @@ def plan_managed_agent_write(
         would_write = True
     elif managed:
         action = "update_managed_block" if needs_update else "noop"
-        planned_content = replace_managed_block(existing_content, new_block) if needs_update else existing_content
+        planned_content = (
+            replace_managed_block(existing_content, new_block) if needs_update else existing_content
+        )
         would_write = needs_update
     elif force:
         action = "overwrite"
@@ -653,7 +659,9 @@ def agent_target_status(
         existing = target_info.path.read_text(encoding="utf-8")
         metadata = managed_block_metadata(existing)
         managed = bool(metadata)
-        target_hash = metadata.get("content_hash") if managed else file_content_hash(target_info.path)
+        target_hash = (
+            metadata.get("content_hash") if managed else file_content_hash(target_info.path)
+        )
 
     if not target_exists:
         status = "missing"
@@ -777,7 +785,11 @@ def resolve_integration_target(
     base_project_path = (project_path or Path(".")).expanduser().resolve()
     if target is not None:
         candidate = target.expanduser()
-        resolved = candidate.resolve() if candidate.is_absolute() else (base_project_path / candidate).resolve()
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (base_project_path / candidate).resolve()
+        )
         return IntegrationTarget(
             client=selected_client,
             scope=selected_scope,
@@ -830,7 +842,9 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     search = f'memora search "<query>"{vault_arg}{project_arg}'
     review = f"memora review{vault_arg} --json"
     remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>" --json'
-    raw_add = f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown --json"
+    raw_add = (
+        f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown --json"
+    )
     source_add = f"memora source add <source.md>{vault_arg}{project_arg} --extract <extract.md> --kind text --json"
     session_finalize = f"memora session finalize <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --memories-file <memories.json> --json"
     primary = _primary_latin_alias(aliases)
@@ -851,7 +865,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Choose recall/search scope deliberately:",
         "",
-        "- Use the project filter for questions about this repository, the current product, local implementation details, project decisions, current branch/status, TODOs, roadmap, bugs, tests, CLI behavior, or anything phrased as \"in this project\".",
+        '- Use the project filter for questions about this repository, the current product, local implementation details, project decisions, current branch/status, TODOs, roadmap, bugs, tests, CLI behavior, or anything phrased as "in this project".',
         "- Omit the project filter for general questions about durable user preferences, cross-project conventions, agent behavior, recurring personal/work context, or prior conversations that are not clearly tied to the current project.",
         "- If the request mixes project and general context, start with the narrower project scope when the work is in this repository; run an unscoped lookup only when the answer still needs user-wide history or preferences.",
         "- If scope is unclear, infer from the task target: code/workspace/change requests are project-scoped; preference/history/identity questions are usually unscoped.",
@@ -887,7 +901,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "- Propose saving explicit user preferences, recurring workflow preferences, project decisions, stable constraints, roadmap/status updates, unresolved tasks, important bug findings, or agreed implementation direction.",
         "- Do not propose saving transient implementation chatter, temporary logs, speculative ideas, secrets, raw dumps, sensitive personal data, or facts already obvious from the current code.",
-        "- Keep prompts lightweight: \"This seems useful to remember as <type>. Save it?\" Only write after explicit approval unless the user directly asks to remember/save it.",
+        '- Keep prompts lightweight: "This seems useful to remember as <type>. Save it?" Only write after explicit approval unless the user directly asks to remember/save it.',
         "",
         "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
         "",
@@ -1006,7 +1020,9 @@ def normalize_scheduled_kind(kind: str) -> str:
     if not selected:
         selected = "custom"
     if not _SCHEDULED_KIND_RE.fullmatch(selected):
-        raise ValueError("kind must start with a letter and contain only letters, numbers, underscores, or hyphens")
+        raise ValueError(
+            "kind must start with a letter and contain only letters, numbers, underscores, or hyphens"
+        )
     return selected
 
 

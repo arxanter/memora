@@ -18,12 +18,14 @@ def test_stage12_evaluation_set_runs_representative_coding_agent_questions():
     report = run_evaluation(EVAL_SPEC)
     payload = report.to_dict()
 
-    assert payload["ok"] is True, [
-        case for case in payload["cases"] if not case["passed"]
-    ]
+    assert payload["ok"] is True, [case for case in payload["cases"] if not case["passed"]]
     assert 30 <= payload["case_count"] <= 50
     assert payload["reindex"]["documents_seen"] >= 15
-    assert all(case["used_tokens_estimate"] <= case["max_tokens"] for case in payload["cases"] if case["max_tokens"])
+    assert all(
+        case["used_tokens_estimate"] <= case["max_tokens"]
+        for case in payload["cases"]
+        if case["max_tokens"]
+    )
 
 
 def test_eval_can_run_fixture_directory_smoke_spec():
@@ -53,9 +55,15 @@ def test_fixture_vaults_validate_reindex_and_rebuild_from_markdown(tmp_path):
 
 
 def test_yaml_parsing_schema_migration_and_chunking_from_fixture():
-    yaml_doc = validate_markdown_file(FIXTURES / "vault-basic" / "Memories/facts/yaml-parsing-colons.md")
-    migrated_doc = validate_markdown_file(FIXTURES / "vault-basic" / "Memories/preferences/migrated-preference.md")
-    chunked_doc = validate_markdown_file(FIXTURES / "vault-basic" / "Memories/decisions/sqlite-fts-index.md")
+    yaml_doc = validate_markdown_file(
+        FIXTURES / "vault-basic" / "Memories/facts/yaml-parsing-colons.md"
+    )
+    migrated_doc = validate_markdown_file(
+        FIXTURES / "vault-basic" / "Memories/preferences/migrated-preference.md"
+    )
+    chunked_doc = validate_markdown_file(
+        FIXTURES / "vault-basic" / "Memories/decisions/sqlite-fts-index.md"
+    )
 
     assert yaml_doc.frontmatter.observations[0].text.endswith("prefer key: value examples.")
     assert migrated_doc.frontmatter.migration is not None

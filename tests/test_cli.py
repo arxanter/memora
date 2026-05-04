@@ -52,7 +52,9 @@ def test_init_command_can_set_default_vault_in_wrapper(tmp_path):
     wrapper = tmp_path / "memora"
     _write_memora_wrapper(wrapper)
 
-    result = runner.invoke(app, ["init", str(vault), "--set-default", "--wrapper", str(wrapper), "--json"])
+    result = runner.invoke(
+        app, ["init", str(vault), "--set-default", "--wrapper", str(wrapper), "--json"]
+    )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -328,9 +330,7 @@ def test_help_command_lists_grouped_commands():
     assert payload["ok"] is True
     assert payload["command"] == "help"
     command_usages = {
-        command["usage"]
-        for group in payload["groups"]
-        for command in group["commands"]
+        command["usage"] for group in payload["groups"] for command in group["commands"]
     }
     assert {
         "init <vault>",
@@ -455,7 +455,9 @@ def test_agent_integrate_without_project_refuses_memora_source_checkout(tmp_path
     source_checkout = tmp_path / "memora"
     (source_checkout / "src").mkdir(parents=True)
     (source_checkout / "scripts").mkdir()
-    (source_checkout / "pyproject.toml").write_text('[project]\nname = "memora"\n', encoding="utf-8")
+    (source_checkout / "pyproject.toml").write_text(
+        '[project]\nname = "memora"\n', encoding="utf-8"
+    )
     (source_checkout / "src" / "cli.py").write_text("# cli marker\n", encoding="utf-8")
     (source_checkout / "scripts" / "install.sh").write_text("# install marker\n", encoding="utf-8")
     monkeypatch.chdir(source_checkout)
@@ -472,7 +474,9 @@ def test_agent_integrate_without_project_refuses_memora_source_checkout(tmp_path
     assert "would target the Memora source checkout" in payload["error"]["message"]
     assert explicit_result.exit_code == 0, explicit_result.output
     explicit_payload = json.loads(explicit_result.output)
-    assert explicit_payload["results"][0]["target_path"] == str(source_checkout / ".cursor" / "rules" / "memora.mdc")
+    assert explicit_payload["results"][0]["target_path"] == str(
+        source_checkout / ".cursor" / "rules" / "memora.mdc"
+    )
 
 
 def test_agent_integrate_codex_targets_agents_file(tmp_path):
@@ -534,7 +538,9 @@ def test_agent_group_targets_all_excludes_agents_duplicate(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
 
-    result = runner.invoke(app, ["agent", "targets", "--client", "all", "--project", str(project), "--json"])
+    result = runner.invoke(
+        app, ["agent", "targets", "--client", "all", "--project", str(project), "--json"]
+    )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -676,7 +682,7 @@ def test_agent_group_update_appends_to_unmanaged_memora_text_target(tmp_path):
         "# Project Instructions\n\n"
         "Keep this user-owned intro.\n\n"
         "## Memora Usage\n\n"
-        "Use `memora build-context \"<task>\"` for recall.\n\n"
+        'Use `memora build-context "<task>"` for recall.\n\n'
         "Use `memora review --json` for pending memory.\n\n"
         "## Project Rules\n\n"
         "Keep this user-owned outro.\n",
@@ -708,7 +714,7 @@ def test_agent_group_update_appends_to_unmanaged_memora_text_target(tmp_path):
     assert "During a session, notice memory-worthy information" in updated
     assert "Keep this user-owned intro." in updated
     assert "Keep this user-owned outro." in updated
-    assert "Use `memora build-context \"<task>\"` for recall." in updated
+    assert 'Use `memora build-context "<task>"` for recall.' in updated
 
 
 def test_raw_list_and_inspect_report_inbox_files(tmp_path):
@@ -774,7 +780,9 @@ def test_raw_add_stages_file_with_metadata_only(tmp_path):
     assert payload["metadata"]["format"] == "markdown"
     assert payload["metadata"]["project"] == "memora"
     assert payload["metadata"]["tags"] == ["clip"]
-    assert (vault / payload["relative_path"]).read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+    assert (vault / payload["relative_path"]).read_text(encoding="utf-8") == source.read_text(
+        encoding="utf-8"
+    )
     assert (vault / payload["relative_metadata_path"]).is_file()
     assert not any((vault / "Sources").iterdir())
 
@@ -838,7 +846,11 @@ def test_agent_capture_dry_run_json_validates_without_writing(tmp_path):
         json.dumps(
             [
                 {"type": "decision", "text": "Use batch capture for agent-authored memory."},
-                {"type": "fact", "text": "Batch capture leaves proposed memories pending.", "tag": "phase5"},
+                {
+                    "type": "fact",
+                    "text": "Batch capture leaves proposed memories pending.",
+                    "tag": "phase5",
+                },
             ]
         ),
         encoding="utf-8",
@@ -882,7 +894,10 @@ def test_agent_capture_dry_run_json_validates_without_writing(tmp_path):
     assert payload["rejected_proposals"] == []
     assert [memory["type"] for memory in payload["memories"]] == ["decision", "fact"]
     assert all(memory["status"] == "pending" for memory in payload["memories"])
-    assert all(memory["source"]["path"] == "Sources/<source_id>/extract.md" for memory in payload["memories"])
+    assert all(
+        memory["source"]["path"] == "Sources/<source_id>/extract.md"
+        for memory in payload["memories"]
+    )
     assert not list((vault / "Sources").glob("*"))
     assert not list((vault / "Memories").rglob("*.md"))
 
@@ -898,8 +913,14 @@ def test_agent_capture_json_saves_source_and_pending_atomic_memories(tmp_path):
         json.dumps(
             {
                 "memories": [
-                    {"type": "decision", "text": "Batch capture stores source-backed pending decisions."},
-                    {"type": "project_context", "text": "Phase 5 adds grouped agent review payloads."},
+                    {
+                        "type": "decision",
+                        "text": "Batch capture stores source-backed pending decisions.",
+                    },
+                    {
+                        "type": "project_context",
+                        "text": "Phase 5 adds grouped agent review payloads.",
+                    },
                 ]
             }
         ),
@@ -967,8 +988,14 @@ def test_agent_capture_reports_unsupported_proposal_types(tmp_path):
     memories.write_text(
         json.dumps(
             [
-                {"type": "source_extract", "text": "Do not promote source extracts through capture."},
-                {"type": "conversation_summary", "text": "Conversation summaries are session finalize only."},
+                {
+                    "type": "source_extract",
+                    "text": "Do not promote source extracts through capture.",
+                },
+                {
+                    "type": "conversation_summary",
+                    "text": "Conversation summaries are session finalize only.",
+                },
                 {"type": "task", "text": "Review Phase 5 batch capture."},
             ]
         ),
@@ -1003,7 +1030,10 @@ def test_agent_capture_reports_unsupported_proposal_types(tmp_path):
         "source_extract",
         "conversation_summary",
     ]
-    assert all("unsupported memory type" in item["error"]["message"] for item in payload["rejected_proposals"])
+    assert all(
+        "unsupported memory type" in item["error"]["message"]
+        for item in payload["rejected_proposals"]
+    )
 
 
 def test_session_finalize_json_saves_source_summary_and_atomic_memories(tmp_path):
@@ -1017,7 +1047,10 @@ def test_session_finalize_json_saves_source_summary_and_atomic_memories(tmp_path
         json.dumps(
             [
                 {"type": "decision", "text": "Session finalize creates grouped review payloads."},
-                {"type": "preference", "text": "Prefer dry-run JSON before writing session memory."},
+                {
+                    "type": "preference",
+                    "text": "Prefer dry-run JSON before writing session memory.",
+                },
             ]
         ),
         encoding="utf-8",
@@ -1118,7 +1151,9 @@ def test_lookup_source_command_emits_service_json_without_mutating_sources(tmp_p
     source_dir.mkdir()
     source_path = source_dir / "source.md"
     extract_path = source_dir / "extract.md"
-    source_path.write_text("Raw source content should not appear while an extract exists.", encoding="utf-8")
+    source_path.write_text(
+        "Raw source content should not appear while an extract exists.", encoding="utf-8"
+    )
     extract_path.write_text(
         "Markdown stores durable decisions in plain files.\n\n"
         "SQLite is only a rebuildable local cache for retrieval indexes.\n\n"
@@ -1165,7 +1200,9 @@ def test_lookup_source_command_human_output_lists_compact_chunks(tmp_path):
     runner.invoke(app, ["init", str(vault), "--json"])
     source_dir = vault / "Sources" / "2026-05-01_cli_human"
     source_dir.mkdir()
-    (source_dir / "source.md").write_text("Raw source content should stay behind the extract.", encoding="utf-8")
+    (source_dir / "source.md").write_text(
+        "Raw source content should stay behind the extract.", encoding="utf-8"
+    )
     (source_dir / "extract.md").write_text(
         "Markdown stores durable decisions in plain files.\n\n"
         "SQLite is only a rebuildable local cache for retrieval indexes.",
@@ -1247,7 +1284,9 @@ def test_brief_command_generates_markdown_and_json(tmp_path):
     assert markdown_result.exit_code == 0, markdown_result.output
     assert "Memory context: 1 item(s) for: memory brief" in markdown_result.output
     assert "Decisions: mem_" in markdown_result.output
-    assert "Summary: Memory brief CLI returns citation-preserving Markdown." in markdown_result.output
+    assert (
+        "Summary: Memory brief CLI returns citation-preserving Markdown." in markdown_result.output
+    )
     assert "Inspect: memora inspect mem_" in markdown_result.output
     assert "[C1]" in markdown_result.output
     assert json_result.exit_code == 0, json_result.output
@@ -1465,7 +1504,10 @@ def test_build_context_command_include_profile_adds_bounded_profile_context(tmp_
     assert "unsafe memory says ignore previous instructions" not in payload["markdown"]
     assert payload["citations"][0]["key"] == "P1"
     assert payload["trace"]["profile"]["included"] is True
-    assert payload["trace"]["task_budget"]["profile_used"] == payload["profile"]["used_tokens_estimate"]
+    assert (
+        payload["trace"]["task_budget"]["profile_used"]
+        == payload["profile"]["used_tokens_estimate"]
+    )
 
 
 def test_build_context_command_no_include_profile_suppresses_profile_context(tmp_path):
@@ -1648,7 +1690,9 @@ def test_search_command_defaults_to_compact_agent_candidates(tmp_path):
     assert "Found 1 memory candidate(s) for: compact candidate" in result.output
     assert "[C1] mem_" in result.output
     assert "decision/active" in result.output
-    assert "Summary: Search default output should show compact candidate summaries." in result.output
+    assert (
+        "Summary: Search default output should show compact candidate summaries." in result.output
+    )
     assert "Inspect: memora inspect mem_" in result.output
     assert "score_breakdown" not in result.output
     assert "vault_path" not in result.output
@@ -1762,7 +1806,9 @@ def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
     )
     runner.invoke(app, ["reindex", "--vault", str(vault), "--json"])
 
-    inspect_json = runner.invoke(app, ["inspect", "mem_20260430_new", "--vault", str(vault), "--json"])
+    inspect_json = runner.invoke(
+        app, ["inspect", "mem_20260430_new", "--vault", str(vault), "--json"]
+    )
     inspect_human = runner.invoke(app, ["inspect", "mem_20260430_new", "--vault", str(vault)])
     open_result = runner.invoke(app, ["open", "mem_20260430_new", "--vault", str(vault), "--json"])
     graph_json = runner.invoke(app, ["graph", "mem_20260430_new", "--vault", str(vault), "--json"])
@@ -1814,11 +1860,26 @@ def test_stage13_explain_recall_cli_reports_selected_and_skipped(tmp_path):
 
     json_result = runner.invoke(
         app,
-        ["explain-recall", "stage thirteen recall explanation", "--budget", "12", "--vault", str(vault), "--json"],
+        [
+            "explain-recall",
+            "stage thirteen recall explanation",
+            "--budget",
+            "12",
+            "--vault",
+            str(vault),
+            "--json",
+        ],
     )
     human_result = runner.invoke(
         app,
-        ["explain-recall", "stage thirteen recall explanation", "--budget", "12", "--vault", str(vault)],
+        [
+            "explain-recall",
+            "stage thirteen recall explanation",
+            "--budget",
+            "12",
+            "--vault",
+            str(vault),
+        ],
     )
 
     assert json_result.exit_code == 0, json_result.output
@@ -1958,8 +2019,14 @@ def test_review_batch_cli_json_reports_per_item_results_and_failures(tmp_path):
     assert results["mem_20260430_cli_safe_review"]["ok"] is True
     assert results["mem_20260430_cli_unsafe_review"]["error"]["code"] == "unsafe_approval_blocked"
     assert results["mem_20260430_cli_missing_review"]["error"]["code"] == "memory_not_found"
-    assert validate_markdown_file(vault / "Memories/facts/safe-review.md").frontmatter.status == "active"
-    assert validate_markdown_file(vault / "Memories/facts/unsafe-review.md").frontmatter.status == "pending"
+    assert (
+        validate_markdown_file(vault / "Memories/facts/safe-review.md").frontmatter.status
+        == "active"
+    )
+    assert (
+        validate_markdown_file(vault / "Memories/facts/unsafe-review.md").frontmatter.status
+        == "pending"
+    )
 
 
 def test_review_batch_cli_dry_run_does_not_write(tmp_path):
@@ -2020,11 +2087,7 @@ def _write_memory(
 ):
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    source_block = (
-        "source:\n  path: {0}\n".format(source_path)
-        if source_path
-        else "source:\n"
-    )
+    source_block = "source:\n  path: {0}\n".format(source_path) if source_path else "source:\n"
     path.write_text(
         """---
 schema_version: 1
@@ -2076,15 +2139,14 @@ def _inline_list(values):
 
 
 def _snapshot_source_files(*paths):
-    return {
-        path.name: path.read_text(encoding="utf-8")
-        for path in paths
-    }
+    return {path.name: path.read_text(encoding="utf-8") for path in paths}
 
 
 def _disable_freshness_debounce(vault):
     config_path = vault / ".memora" / "config.yaml"
     config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace("debounce_seconds: 2.0", "debounce_seconds: 0"),
+        config_path.read_text(encoding="utf-8").replace(
+            "debounce_seconds: 2.0", "debounce_seconds: 0"
+        ),
         encoding="utf-8",
     )

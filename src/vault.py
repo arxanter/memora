@@ -212,7 +212,11 @@ def remember_memory(
         scan_text(" ".join(selected_tags), field="tags"),
     )
     selected_risk_flags = normalize_risk_flags((*risk_flags, *safety.risk_flags))
-    if selected_author_kind == AuthorKind.AGENT and selected_status == LifecycleStatus.ACTIVE and selected_risk_flags:
+    if (
+        selected_author_kind == AuthorKind.AGENT
+        and selected_status == LifecycleStatus.ACTIVE
+        and selected_risk_flags
+    ):
         selected_status = LifecycleStatus.PENDING
     selected_source = (
         source
@@ -279,7 +283,9 @@ def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
     return f"---\n{rendered_yaml}\n---\n\n{body.strip()}\n"
 
 
-def _memory_frontmatter_with_presentation(frontmatter: MemoryFrontmatter, body: str) -> dict[str, Any]:
+def _memory_frontmatter_with_presentation(
+    frontmatter: MemoryFrontmatter, body: str
+) -> dict[str, Any]:
     """Add optional Obsidian presentation fields without changing canonical ids."""
 
     frontmatter_data = frontmatter.model_dump(mode="json", exclude_none=False)
@@ -332,7 +338,9 @@ def status_summary(config: MemoryConfig) -> dict[str, Any]:
     """Return a lightweight vault status summary."""
 
     report = validate_vault(config.vault_path)
-    pending_count = sum(1 for document in report.documents if document.frontmatter.status == LifecycleStatus.PENDING)
+    pending_count = sum(
+        1 for document in report.documents if document.frontmatter.status == LifecycleStatus.PENDING
+    )
     return {
         "ok": report.ok,
         "vault_path": str(config.vault_path),
@@ -380,7 +388,9 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
             for issue in graph_report.issues
         ]
 
-    contradiction_warnings = [] if schema_issues else _contradiction_warnings(report.documents, config)
+    contradiction_warnings = (
+        [] if schema_issues else _contradiction_warnings(report.documents, config)
+    )
     sync_issues = []
     for issue in conflict_report.conflicts:
         if issue.kind == "invalid_frontmatter":
@@ -441,7 +451,9 @@ def _contradiction_warnings(documents: Iterable[Any], config: MemoryConfig) -> l
 
 
 def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
-    memory_dirs = tuple(config.memory_root / directory for directory in MEMORY_TYPE_DIRECTORIES.values())
+    memory_dirs = tuple(
+        config.memory_root / directory for directory in MEMORY_TYPE_DIRECTORIES.values()
+    )
     return (
         config.vault_path,
         config.raw_root,

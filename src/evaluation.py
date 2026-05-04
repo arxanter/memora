@@ -90,7 +90,9 @@ class EvaluationReport:
         }
 
 
-def run_evaluation(fixture_or_file: PathLike, *, keep_working_vault: bool = False) -> EvaluationReport:
+def run_evaluation(
+    fixture_or_file: PathLike, *, keep_working_vault: bool = False
+) -> EvaluationReport:
     """Run a deterministic evaluation spec against a throwaway copy of its vault."""
 
     spec_path = _resolve_spec_path(fixture_or_file)
@@ -185,7 +187,10 @@ def _run_case(config: Any, case: Mapping[str, Any]) -> EvaluationCaseResult:
     elif mode == "doctor":
         response = doctor_report(config)
         payload = response
-        ids = tuple(str(issue.get("id", issue.get("from_id", issue["kind"]))) for issue in response["issues"])
+        ids = tuple(
+            str(issue.get("id", issue.get("from_id", issue["kind"])))
+            for issue in response["issues"]
+        )
         warnings = tuple(warning["message"] for warning in response["warnings"])
     else:
         raise ValueError(f"unsupported evaluation mode: {mode}")
@@ -199,8 +204,16 @@ def _run_case(config: Any, case: Mapping[str, Any]) -> EvaluationCaseResult:
     warning_matches = tuple(item for item in expected_warnings if _contains_warning(warnings, item))
     missing_warnings = tuple(item for item in expected_warnings if item not in warning_matches)
     token_failure = max_tokens is not None and used_tokens > max_tokens
-    explainability_failure = bool(case.get("expect_explainable", False)) and not _has_explainability(payload, mode)
-    passed = not missing_ids and not unexpected_ids and not missing_warnings and not token_failure and not explainability_failure
+    explainability_failure = bool(
+        case.get("expect_explainable", False)
+    ) and not _has_explainability(payload, mode)
+    passed = (
+        not missing_ids
+        and not unexpected_ids
+        and not missing_warnings
+        and not token_failure
+        and not explainability_failure
+    )
 
     return EvaluationCaseResult(
         case_id=case_id,
@@ -278,9 +291,14 @@ def _contains_warning(warnings: tuple[str, ...], expected: str) -> bool:
 
 def _has_explainability(payload: Mapping[str, Any], mode: str) -> bool:
     if mode == "search":
-        return all(result.get("citation") and result.get("score_breakdown") for result in payload["results"])
+        return all(
+            result.get("citation") and result.get("score_breakdown")
+            for result in payload["results"]
+        )
     if mode == "recall":
-        return all(chunk.get("citation") and chunk.get("score_breakdown") for chunk in payload["chunks"])
+        return all(
+            chunk.get("citation") and chunk.get("score_breakdown") for chunk in payload["chunks"]
+        )
     if mode == "brief":
         return bool(payload.get("citations")) and "recall" in payload
     return True

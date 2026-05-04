@@ -7,9 +7,19 @@ from vault import init_vault
 
 def test_pack_candidates_is_deterministic_and_applies_diversity_caps():
     candidates = [
-        _candidate("doc-a:chunk:1", "doc-a", "Alpha project token packing body", score=9.0, project="alpha"),
-        _candidate("doc-a:chunk:2", "doc-a", "Alpha project token packing observation", score=8.0, project="alpha"),
-        _candidate("doc-b:chunk:1", "doc-b", "Beta project token packing body", score=7.0, project="beta"),
+        _candidate(
+            "doc-a:chunk:1", "doc-a", "Alpha project token packing body", score=9.0, project="alpha"
+        ),
+        _candidate(
+            "doc-a:chunk:2",
+            "doc-a",
+            "Alpha project token packing observation",
+            score=8.0,
+            project="alpha",
+        ),
+        _candidate(
+            "doc-b:chunk:1", "doc-b", "Beta project token packing body", score=7.0, project="beta"
+        ),
     ]
     config = RecallConfig(max_chunks_per_document=1, max_chunks_per_project=1)
 
@@ -52,8 +62,12 @@ def test_pack_candidates_with_trace_reports_skip_reasons():
     candidates = [
         _candidate("doc-a:chunk:1", "doc-a", "Trace packing duplicate text.", score=10.0),
         _candidate("doc-b:chunk:1", "doc-b", "Trace packing duplicate text.", score=9.0),
-        _candidate("doc-c:chunk:1", "doc-c", "Trace packing project cap text.", score=8.0, project="alpha"),
-        _candidate("doc-d:chunk:1", "doc-d", "Trace packing project cap other.", score=7.0, project="alpha"),
+        _candidate(
+            "doc-c:chunk:1", "doc-c", "Trace packing project cap text.", score=8.0, project="alpha"
+        ),
+        _candidate(
+            "doc-d:chunk:1", "doc-d", "Trace packing project cap other.", score=7.0, project="alpha"
+        ),
     ]
 
     result = pack_candidates_with_trace(
@@ -63,7 +77,11 @@ def test_pack_candidates_with_trace_reports_skip_reasons():
     )
 
     assert [chunk.document_id for chunk in result.chunks] == ["doc-a", "doc-c"]
-    skipped = {(item.candidate.document_id, item.reason) for item in result.trace if item.action == "skipped"}
+    skipped = {
+        (item.candidate.document_id, item.reason)
+        for item in result.trace
+        if item.action == "skipped"
+    }
     assert ("doc-b", "duplicate") in skipped
     assert ("doc-d", "cap_filtered") in skipped
 
@@ -122,7 +140,9 @@ def test_recall_memory_respects_lifecycle_defaults_and_status_filters(tmp_path):
     assert "mem_20260430_pending" not in default_ids
     assert "mem_20260430_rejected" not in default_ids
     assert default_payload["used_tokens_estimate"] <= default_payload["budget"]
-    assert all(chunk["citation"] in default_payload["citations"] for chunk in default_payload["chunks"])
+    assert all(
+        chunk["citation"] in default_payload["citations"] for chunk in default_payload["chunks"]
+    )
 
     pending_payload = recall_memory(
         config,
@@ -166,7 +186,9 @@ def test_recall_memory_filters_unsafe_active_memories_by_default(tmp_path):
     assert [chunk["id"] for chunk in default_payload["chunks"]] == ["mem_20260430_safe_recall"]
     explicit_chunks = {chunk["id"]: chunk for chunk in explicit_payload["chunks"]}
     assert "mem_20260430_unsafe_recall" in explicit_chunks
-    assert explicit_chunks["mem_20260430_unsafe_recall"]["metadata"]["risk_flags"] == ["prompt_injection"]
+    assert explicit_chunks["mem_20260430_unsafe_recall"]["metadata"]["risk_flags"] == [
+        "prompt_injection"
+    ]
 
 
 def test_recall_memory_never_exceeds_tiny_budget(tmp_path):

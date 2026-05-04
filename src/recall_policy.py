@@ -130,7 +130,9 @@ def _leading_agent_alias(message: str, aliases: Sequence[str]) -> str | None:
 
 def _strip_leading_agent_alias(message: str, aliases: Sequence[str]) -> str:
     cleaned = message.strip()
-    for alias in sorted((alias.strip() for alias in aliases if alias.strip()), key=len, reverse=True):
+    for alias in sorted(
+        (alias.strip() for alias in aliases if alias.strip()), key=len, reverse=True
+    ):
         pattern = rf"\A\s*{re.escape(alias)}(?:\b|(?=\s|[,.:;!\-]))[\s,.:;!\-]*"
         updated = re.sub(pattern, "", cleaned, count=1, flags=re.IGNORECASE).strip()
         if updated != cleaned:

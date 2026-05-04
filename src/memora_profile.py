@@ -122,7 +122,9 @@ def build_context_profile_payload(
 
     selected_project = _clean_optional(project)
     profile_type = "project" if selected_project else "user"
-    profile_budget = _context_profile_budget(config, profile_type=profile_type, task_budget=task_budget)
+    profile_budget = _context_profile_budget(
+        config, profile_type=profile_type, task_budget=task_budget
+    )
     payload: dict[str, Any] = {
         "included": False,
         "requested": bool(requested),
@@ -207,13 +209,17 @@ def _generate_profile_result(
     if not config.profile.enabled:
         raise ValueError("profile generation is disabled")
 
-    selected_budget = _validate_budget(_configured_budget(config, selected_profile_type) if budget is None else budget)
+    selected_budget = _validate_budget(
+        _configured_budget(config, selected_profile_type) if budget is None else budget
+    )
     generated_at = _normalize_now(now)
 
     report = validate_vault(config.vault_path)
     if report.issues:
         first_issue = report.issues[0]
-        raise ValueError(f"cannot build profile from invalid vault: {first_issue.path}: {first_issue.message}")
+        raise ValueError(
+            f"cannot build profile from invalid vault: {first_issue.path}: {first_issue.message}"
+        )
 
     candidates = _select_candidates(
         report.documents,
@@ -266,7 +272,9 @@ def render_profile_markdown(
         "kind": "profile",
         "schema_version": PROFILE_SCHEMA_VERSION,
         "title": title,
-        "aliases": presentation_aliases(title, _profile_alias(profile_type=profile_type, project=project)),
+        "aliases": presentation_aliases(
+            title, _profile_alias(profile_type=profile_type, project=project)
+        ),
         "profile_type": profile_type,
         "project": project,
         "generated_at": generated_at.isoformat(),
@@ -325,7 +333,10 @@ def _select_candidates(
         if profile_type == "project":
             if frontmatter.project != project:
                 continue
-        elif frontmatter.project is not None or frontmatter.scope not in {MemoryScope.USER, MemoryScope.GLOBAL}:
+        elif frontmatter.project is not None or frontmatter.scope not in {
+            MemoryScope.USER,
+            MemoryScope.GLOBAL,
+        }:
             continue
         selected.append(document)
 
@@ -526,7 +537,9 @@ def _namespace_profile_citations(
 
     namespaced_markdown = markdown
     for original_key, namespaced_key in key_map.items():
-        namespaced_markdown = namespaced_markdown.replace(f"[{original_key}]", f"[{namespaced_key}]")
+        namespaced_markdown = namespaced_markdown.replace(
+            f"[{original_key}]", f"[{namespaced_key}]"
+        )
     return namespaced_markdown, namespaced_citations
 
 

@@ -19,6 +19,7 @@ from schema import iter_memory_markdown_files, parse_markdown_document
 
 PathLike = Union[Path, str]
 
+
 class LockTimeout(TimeoutError):
     """Raised when a local vault lock cannot be acquired in time."""
 
@@ -127,7 +128,9 @@ class VaultLock:
                 "created_at": time.time(),
                 "name": self.name,
             }
-            (self.path / "owner.json").write_text(json.dumps(owner, sort_keys=True), encoding="utf-8")
+            (self.path / "owner.json").write_text(
+                json.dumps(owner, sort_keys=True), encoding="utf-8"
+            )
             return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -305,7 +308,11 @@ def _iter_syncable_markdown_files(vault_path: PathLike, memora_dir: str) -> tupl
 def _first_conflict_marker_line(markdown: str) -> Optional[int]:
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         stripped = line.strip()
-        if stripped.startswith("<<<<<<<") or stripped.startswith(">>>>>>>") or stripped == "=======":
+        if (
+            stripped.startswith("<<<<<<<")
+            or stripped.startswith(">>>>>>>")
+            or stripped == "======="
+        ):
             return line_number
     return None
 

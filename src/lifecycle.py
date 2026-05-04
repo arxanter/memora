@@ -90,10 +90,7 @@ class DuplicateCandidate:
             "status": self.status,
             "match_reason": self.match_reason,
             "signature": self.signature,
-            "matched_fields": {
-                side: list(fields)
-                for side, fields in self.matched_fields.items()
-            },
+            "matched_fields": {side: list(fields) for side, fields in self.matched_fields.items()},
         }
         if self.score is not None:
             payload["score"] = self.score
@@ -132,8 +129,7 @@ class ContradictionCandidate:
             payload["confidence"] = self.confidence
         if self.matched_fields is not None:
             payload["matched_fields"] = {
-                side: list(fields)
-                for side, fields in self.matched_fields.items()
+                side: list(fields) for side, fields in self.matched_fields.items()
             }
         if self.evidence is not None:
             payload["evidence"] = dict(self.evidence)
@@ -365,9 +361,15 @@ class ReviewItem:
             "risk_flags": list(self.risk_flags),
             "recommended_action": self.recommended_action,
             "proposed_actions": list(self.proposed_actions),
-            "duplicate_candidates": [candidate.to_dict() for candidate in self.duplicate_candidates],
-            "contradiction_candidates": [candidate.to_dict() for candidate in self.contradiction_candidates],
-            "curation": _curation_metadata(self, recommended_action=_curation_recommended_action(self)),
+            "duplicate_candidates": [
+                candidate.to_dict() for candidate in self.duplicate_candidates
+            ],
+            "contradiction_candidates": [
+                candidate.to_dict() for candidate in self.contradiction_candidates
+            ],
+            "curation": _curation_metadata(
+                self, recommended_action=_curation_recommended_action(self)
+            ),
             "citation": self.citation,
         }
 
@@ -409,8 +411,7 @@ def curation_plan(
     items = [
         _curation_item(item)
         for item in queue.items
-        if _matches_project(item, records_by_id, project)
-        and _matches_source(item.source, source)
+        if _matches_project(item, records_by_id, project) and _matches_source(item.source, source)
     ]
     action_counts = _count_by_key(items, "recommended_action")
     duplicate_candidate_count = sum(len(item["duplicate_candidates"]) for item in items)
@@ -468,7 +469,9 @@ def approve_memory(
 ) -> LifecycleResult:
     """Approve a pending memory by making it active."""
 
-    result = mark_status(config, memory_id, LifecycleStatus.ACTIVE, reason=reason, _action="approve")
+    result = mark_status(
+        config, memory_id, LifecycleStatus.ACTIVE, reason=reason, _action="approve"
+    )
     return LifecycleResult(command="approve", mutations=result.mutations, details=result.details)
 
 
@@ -569,7 +572,9 @@ def reject_memory(
 ) -> LifecycleResult:
     """Reject a memory so it is excluded by default retrieval."""
 
-    result = mark_status(config, memory_id, LifecycleStatus.REJECTED, reason=reason, _action="reject")
+    result = mark_status(
+        config, memory_id, LifecycleStatus.REJECTED, reason=reason, _action="reject"
+    )
     return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
 
 
@@ -700,7 +705,9 @@ def _update_memory_unlocked(
             scan_text(body.strip(), field="memory"),
             scan_text(" ".join(_string_list(data.get("tags"))), field="tags"),
         )
-        merged_risk_flags = normalize_risk_flags((*_string_list(data.get("risk_flags")), *safety.risk_flags))
+        merged_risk_flags = normalize_risk_flags(
+            (*_string_list(data.get("risk_flags")), *safety.risk_flags)
+        )
         data["risk_flags"] = merged_risk_flags
 
     if not changes:
@@ -837,13 +844,19 @@ def _plan_review_batch_action(
     records_by_id = _records_by_id(config)
     results: list[ReviewBatchItemResult] = []
     for memory_id in memory_ids:
-        error = _review_item_error(memory_id, review_items=review_items, records_by_id=records_by_id)
+        error = _review_item_error(
+            memory_id, review_items=review_items, records_by_id=records_by_id
+        )
         if error is not None:
-            results.append(_review_error_result(memory_id, action=action, dry_run=True, error=error))
+            results.append(
+                _review_error_result(memory_id, action=action, dry_run=True, error=error)
+            )
             continue
         by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
         if by_error is not None:
-            results.append(_review_error_result(memory_id, action=action, dry_run=True, error=by_error))
+            results.append(
+                _review_error_result(memory_id, action=action, dry_run=True, error=by_error)
+            )
             continue
         item = review_items[memory_id]
         unsafe_error = _unsafe_approval_error(action, item, override_unsafe=override_unsafe)
@@ -888,9 +901,13 @@ def _apply_review_batch_action_unlocked(
     records_by_id = _records_by_id(config)
     results: list[ReviewBatchItemResult] = []
     for memory_id in memory_ids:
-        error = _review_item_error(memory_id, review_items=review_items, records_by_id=records_by_id)
+        error = _review_item_error(
+            memory_id, review_items=review_items, records_by_id=records_by_id
+        )
         if error is not None:
-            results.append(_review_error_result(memory_id, action=action, dry_run=False, error=error))
+            results.append(
+                _review_error_result(memory_id, action=action, dry_run=False, error=error)
+            )
             continue
         item = review_items[memory_id]
         by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
@@ -945,7 +962,9 @@ def _apply_review_batch_action_unlocked(
                 dry_run=False,
                 planned=False,
                 previous_status=mutation.previous_status if mutation else item.status,
-                status=mutation.status if mutation else _review_action_status(action, current_status=item.status),
+                status=mutation.status
+                if mutation
+                else _review_action_status(action, current_status=item.status),
                 path=mutation.path if mutation else item.path,
                 relative_path=mutation.relative_path if mutation else item.relative_path,
                 risk_flags=item.risk_flags,
@@ -971,7 +990,9 @@ def _apply_one_review_action_unlocked(
             reason=reason,
             _action="approve",
         )
-        return LifecycleResult(command="approve", mutations=result.mutations, details=result.details)
+        return LifecycleResult(
+            command="approve", mutations=result.mutations, details=result.details
+        )
     if action == "reject":
         result = _mark_status_unlocked(
             config,
@@ -1120,7 +1141,9 @@ def _supersede_memory_unlocked(
     new_previous = str(new_record.data.get("status"))
 
     old_record.data["status"] = LifecycleStatus.SUPERSEDED.value
-    old_record.data["valid_to"] = old_record.data.get("valid_to") or _valid_to_for(old_record.data, today)
+    old_record.data["valid_to"] = old_record.data.get("valid_to") or _valid_to_for(
+        old_record.data, today
+    )
     old_record.data["updated_at"] = now.isoformat()
     _append_history(
         old_record.data,
@@ -1161,7 +1184,9 @@ def _supersede_memory_unlocked(
                 LifecycleStatus.SUPERSEDED.value,
                 "superseded",
             ),
-            _mutation(config, new_record, new_previous, str(new_record.data.get("status")), "supersedes"),
+            _mutation(
+                config, new_record, new_previous, str(new_record.data.get("status")), "supersedes"
+            ),
         ),
         details={"old_id": old_id, "new_id": new_id, "relation": RelationType.SUPERSEDES.value},
     )
@@ -1229,7 +1254,9 @@ def _contradict_memories_unlocked(
         command="contradict",
         mutations=(
             _mutation(config, left, left_previous, str(left.data.get("status")), "contradicts"),
-            _mutation(config, right, right_previous, str(right.data.get("status")), "contradicted_by"),
+            _mutation(
+                config, right, right_previous, str(right.data.get("status")), "contradicted_by"
+            ),
         ),
         details={"id1": id1, "id2": id2, "relation": RelationType.CONTRADICTS.value},
     )
@@ -1242,7 +1269,9 @@ def decay_memories(config: MemoryConfig, *, now: Optional[datetime] = None) -> L
         return _decay_memories_unlocked(config, now=now)
 
 
-def _decay_memories_unlocked(config: MemoryConfig, *, now: Optional[datetime] = None) -> LifecycleResult:
+def _decay_memories_unlocked(
+    config: MemoryConfig, *, now: Optional[datetime] = None
+) -> LifecycleResult:
     selected_now = now or _now()
     today = selected_now.date()
     updates: list[tuple[_MemoryRecord, str, str]] = []
@@ -1251,7 +1280,11 @@ def _decay_memories_unlocked(config: MemoryConfig, *, now: Optional[datetime] = 
     for record in _iter_memory_records(config):
         previous_status = str(record.data.get("status"))
         valid_to = _optional_date_string(record.data.get("valid_to"))
-        if previous_status != LifecycleStatus.ACTIVE.value or valid_to is None or valid_to >= today.isoformat():
+        if (
+            previous_status != LifecycleStatus.ACTIVE.value
+            or valid_to is None
+            or valid_to >= today.isoformat()
+        ):
             continue
         record.data["status"] = LifecycleStatus.STALE.value
         record.data["updated_at"] = selected_now.isoformat()
@@ -1267,7 +1300,9 @@ def _decay_memories_unlocked(config: MemoryConfig, *, now: Optional[datetime] = 
         updates.append((record, previous_status, LifecycleStatus.STALE.value))
 
     _atomic_replace_many(rendered)
-    mutations = tuple(_mutation(config, record, previous, status, "decay") for record, previous, status in updates)
+    mutations = tuple(
+        _mutation(config, record, previous, status, "decay") for record, previous, status in updates
+    )
     return LifecycleResult(
         command="decay",
         mutations=mutations,
@@ -1381,7 +1416,10 @@ def _curation_recommended_action(item: ReviewItem) -> str:
     if item.contradiction_candidates:
         return "inspect_contradiction"
     if item.duplicate_candidates:
-        if any(candidate.status == LifecycleStatus.ACTIVE.value for candidate in item.duplicate_candidates):
+        if any(
+            candidate.status == LifecycleStatus.ACTIVE.value
+            for candidate in item.duplicate_candidates
+        ):
             return "merge_or_reject_duplicate"
         return "inspect_duplicate"
     if flags & {"low_confidence", "missing_confidence", "missing_source"}:
@@ -1406,7 +1444,10 @@ def _curation_reason(item: ReviewItem, recommended_action: str) -> str:
     if item.contradiction_candidates:
         return "likely_contradiction_requires_human_inspection"
     if item.duplicate_candidates:
-        if any(candidate.status == LifecycleStatus.ACTIVE.value for candidate in item.duplicate_candidates):
+        if any(
+            candidate.status == LifecycleStatus.ACTIVE.value
+            for candidate in item.duplicate_candidates
+        ):
             return "likely_duplicate_of_active_memory"
         return "possible_duplicate_requires_human_inspection"
     flags = set(item.risk_flags)
@@ -1472,10 +1513,7 @@ def _candidate_summaries(item: ReviewItem) -> list[dict[str, Any]]:
 
 
 def _records_by_id(config: MemoryConfig) -> dict[str, _MemoryRecord]:
-    return {
-        record.document.frontmatter.id: record
-        for record in _iter_memory_records(config)
-    }
+    return {record.document.frontmatter.id: record for record in _iter_memory_records(config)}
 
 
 def _matches_project(
@@ -1554,7 +1592,10 @@ def _review_recommended_action(
         or "has_contradictions" in flags
     ):
         return "inspect"
-    if frontmatter.confidence is not None and frontmatter.confidence >= config.agent_policy.min_active_confidence:
+    if (
+        frontmatter.confidence is not None
+        and frontmatter.confidence >= config.agent_policy.min_active_confidence
+    ):
         return "approve"
     return "defer"
 
@@ -1569,8 +1610,7 @@ def _memory_safety_flags(
     source_flags = _source_safety_flags(config, frontmatter.source)
     scanned = scan_text(body, field="memory")
     observation_scans = [
-        scan_text(observation.text, field="observation")
-        for observation in frontmatter.observations
+        scan_text(observation.text, field="observation") for observation in frontmatter.observations
     ]
     safety = merge_scan_results(scanned, *observation_scans)
     return normalize_risk_flags((*frontmatter_flags, *source_flags, *safety.risk_flags))
@@ -1579,7 +1619,9 @@ def _memory_safety_flags(
 def _source_safety_flags(config: MemoryConfig, source: Any) -> tuple[str, ...]:
     if source is None:
         return ()
-    source_payload = source.model_dump(mode="json", exclude_none=True) if hasattr(source, "model_dump") else {}
+    source_payload = (
+        source.model_dump(mode="json", exclude_none=True) if hasattr(source, "model_dump") else {}
+    )
     flags = list(normalize_risk_flags(source_payload.get("risk_flags")))
     flags.extend(scan_metadata(source_payload).risk_flags)
     source_path = source_payload.get("path")
@@ -1762,7 +1804,9 @@ def _contradiction_candidates(
             continue
         if candidate_frontmatter.status.value not in _DUPLICATE_CANDIDATE_STATUSES:
             continue
-        if any(candidate.memory_id == candidate_frontmatter.id for candidate in candidates.values()):
+        if any(
+            candidate.memory_id == candidate_frontmatter.id for candidate in candidates.values()
+        ):
             continue
         heuristic = _heuristic_contradiction_candidate(config, record, candidate_record)
         if heuristic is not None:
@@ -1880,7 +1924,9 @@ def _duplicate_candidates(
                 signature=existing.signature,
                 matched_fields={
                     "pending": _sorted_tuple((*existing.matched_fields["pending"], pending_field)),
-                    "candidate": _sorted_tuple((*existing.matched_fields["candidate"], candidate_field)),
+                    "candidate": _sorted_tuple(
+                        (*existing.matched_fields["candidate"], candidate_field)
+                    ),
                 },
             )
     for candidate_record in _iter_near_duplicate_records(record, signature_index):
@@ -1917,7 +1963,9 @@ def _duplicate_candidates(
     )
 
 
-def _duplicate_signature_index(records: Sequence[_MemoryRecord]) -> dict[str, list[tuple[_MemoryRecord, str]]]:
+def _duplicate_signature_index(
+    records: Sequence[_MemoryRecord],
+) -> dict[str, list[tuple[_MemoryRecord, str]]]:
     index: dict[str, list[tuple[_MemoryRecord, str]]] = {}
     for record in records:
         for signature, field in _duplicate_text_signatures(record):
@@ -1942,7 +1990,9 @@ def _iter_near_duplicate_records(
     return tuple(records.values())
 
 
-def _near_duplicate_candidate_signal(record: _MemoryRecord, candidate_record: _MemoryRecord) -> Optional[tuple[str, str, Any]]:
+def _near_duplicate_candidate_signal(
+    record: _MemoryRecord, candidate_record: _MemoryRecord
+) -> Optional[tuple[str, str, Any]]:
     best: Optional[tuple[str, str, Any]] = None
     for pending_field, pending_text in _duplicate_text_values(record):
         for candidate_field, candidate_text in _duplicate_text_values(candidate_record):
@@ -1993,7 +2043,9 @@ def _sorted_tuple(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(set(values)))
 
 
-def touch_last_used(config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None) -> None:
+def touch_last_used(
+    config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None
+) -> None:
     """Best-effort frontmatter touch after recall without changing memora status."""
 
     with vault_lock(config):
@@ -2049,11 +2101,15 @@ def _validate_update_options(options: MemoryUpdateOptions) -> None:
         raise ValueError("at least one memory field must be provided")
 
 
-def _target_path_for_update(config: MemoryConfig, current_path: Path, memory_type: MemoryType) -> Path:
+def _target_path_for_update(
+    config: MemoryConfig, current_path: Path, memory_type: MemoryType
+) -> Path:
     target_dir = config.memory_root / MEMORY_TYPE_DIRECTORIES[memory_type]
     target_path = target_dir / current_path.name
     if target_path != current_path and target_path.exists():
-        raise ValueError(f"target memory path already exists: {target_path.relative_to(config.vault_path)}")
+        raise ValueError(
+            f"target memory path already exists: {target_path.relative_to(config.vault_path)}"
+        )
     return target_path
 
 
@@ -2119,7 +2175,9 @@ def _update_observation_confidence(
             observation["confidence"] = new_confidence
 
 
-def _update_summary(data: Mapping[str, Any], body: str, path: Path, *, config: MemoryConfig) -> dict[str, Any]:
+def _update_summary(
+    data: Mapping[str, Any], body: str, path: Path, *, config: MemoryConfig
+) -> dict[str, Any]:
     return {
         "id": str(data.get("id")),
         "type": str(data.get("type")),
@@ -2160,7 +2218,9 @@ def _read_record(path: Path) -> _MemoryRecord:
     raw = path.read_text(encoding="utf-8")
     match = _FRONTMATTER_RE.match(raw)
     if not match:
-        raise ValueError(f"{path}: memory Markdown must start with YAML frontmatter delimited by ---")
+        raise ValueError(
+            f"{path}: memory Markdown must start with YAML frontmatter delimited by ---"
+        )
     document = parse_markdown_document(raw, path=path)
     data = document.frontmatter.model_dump(mode="json", exclude_none=False)
     return _MemoryRecord(path=path, document=document, data=data, body=match.group("body") or "")

@@ -313,10 +313,7 @@ def test_hybrid_search_merges_keyword_and_vector_candidates(tmp_path):
 
     response = search_memory(config, "database", semantic=True, limit=5)
     payload = response.to_dict()
-    results = {
-        result.id: result.to_dict()
-        for result in response.results
-    }
+    results = {result.id: result.to_dict() for result in response.results}
 
     assert payload["semantic"] == {
         "enabled": True,

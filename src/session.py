@@ -79,7 +79,11 @@ def session_trace(
 
     selected_filtered_memory_ids = normalize_loaded_ids(filtered_memory_ids)
     selected_filtered_source_ids = normalize_loaded_ids(filtered_source_ids)
-    if not state.requested and not selected_filtered_memory_ids and not selected_filtered_source_ids:
+    if (
+        not state.requested
+        and not selected_filtered_memory_ids
+        and not selected_filtered_source_ids
+    ):
         return {}
 
     payload: dict[str, Any] = {

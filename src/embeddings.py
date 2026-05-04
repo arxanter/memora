@@ -108,7 +108,9 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
     """Build the configured provider, or raise if semantic search is disabled."""
 
     if config.provider is None:
-        raise EmbeddingProviderError("semantic search is disabled; configure semantic.provider first")
+        raise EmbeddingProviderError(
+            "semantic search is disabled; configure semantic.provider first"
+        )
     if config.provider == "deterministic":
         return DeterministicEmbeddingProvider(
             model=config.model,
@@ -116,7 +118,9 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
         )
     if config.provider == "local-command":
         if config.command is None:
-            raise EmbeddingProviderError("semantic provider local-command requires semantic.command")
+            raise EmbeddingProviderError(
+                "semantic provider local-command requires semantic.command"
+            )
         return LocalCommandEmbeddingProvider(
             command=config.command,
             model=config.model,

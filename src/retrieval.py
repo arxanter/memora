@@ -142,13 +142,19 @@ class SearchFilters:
         payload = dict(values or {})
         return cls(
             project=_optional_string(payload.get("project")),
-            memory_type=_optional_enum_value(MemoryType, payload.get("type") or payload.get("memory_type")),
+            memory_type=_optional_enum_value(
+                MemoryType, payload.get("type") or payload.get("memory_type")
+            ),
             status=_optional_enum_value(LifecycleStatus, payload.get("status")),
             scope=_optional_enum_value(MemoryScope, payload.get("scope")),
             created_after=_optional_datetime_filter(payload.get("created_after")),
-            created_before=_optional_datetime_filter(payload.get("created_before"), end_of_day=True),
+            created_before=_optional_datetime_filter(
+                payload.get("created_before"), end_of_day=True
+            ),
             updated_after=_optional_datetime_filter(payload.get("updated_after")),
-            updated_before=_optional_datetime_filter(payload.get("updated_before"), end_of_day=True),
+            updated_before=_optional_datetime_filter(
+                payload.get("updated_before"), end_of_day=True
+            ),
             valid_from=_optional_date_filter(payload.get("valid_from")),
             valid_to=_optional_date_filter(payload.get("valid_to")),
         )
@@ -194,7 +200,9 @@ class SearchResult:
             "citation": self.citation,
             "path": self.path,
             "metadata": self.metadata,
-            "score_breakdown": {key: round(value, 6) for key, value in self.score_breakdown.items()},
+            "score_breakdown": {
+                key: round(value, 6) for key, value in self.score_breakdown.items()
+            },
             "related": self.related,
         }
 
@@ -301,7 +309,9 @@ class SearchResponse:
             "mode": self.mode,
             "requested_mode": self.requested_mode,
             "semantic": {
-                "status": _semantic_status(self.mode, self.semantic_enabled, self.semantic_provider),
+                "status": _semantic_status(
+                    self.mode, self.semantic_enabled, self.semantic_provider
+                ),
                 "enabled": self.semantic_enabled,
                 "provider": self.semantic_provider,
                 "model": self.semantic_model,
@@ -366,7 +376,9 @@ def search_memory(
     query_plan = plan_query_variants(cleaned_query)
     requested_mode, effective_mode = _resolve_search_mode(config, mode=mode, semantic=semantic)
     semantic_enabled = effective_mode in SEMANTIC_SEARCH_MODES
-    provider = (embedding_provider or provider_from_config(config.semantic)) if semantic_enabled else None
+    provider = (
+        (embedding_provider or provider_from_config(config.semantic)) if semantic_enabled else None
+    )
     attempts: list[SearchAttempt] = []
     results_by_id: dict[str, SearchResult] = {}
     fallback_trigger: Optional[str] = None
@@ -470,7 +482,9 @@ def _search_memory_once(
     try:
         text_primary: list[_Candidate] = []
         if fts_query is not None:
-            keyword_limit = config.semantic.keyword_limit if semantic_enabled else max(limit * 8, 40)
+            keyword_limit = (
+                config.semantic.keyword_limit if semantic_enabled else max(limit * 8, 40)
+            )
             text_primary = _primary_candidates(
                 connection,
                 fts_query,
@@ -504,12 +518,16 @@ def _search_memory_once(
         reference_time = _reference_time(candidates)
         primary_ids = {candidate.document_id for candidate in primary}
         connected_primary_ids = _connected_document_ids(connection, primary_ids)
-        superseded_ids = _superseded_document_ids(connection, {candidate.document_id for candidate in candidates})
+        superseded_ids = _superseded_document_ids(
+            connection, {candidate.document_id for candidate in candidates}
+        )
     finally:
         connection.close()
 
     if filters.status is None and superseded_ids and not include_superseded_targets:
-        candidates = [candidate for candidate in candidates if candidate.document_id not in superseded_ids]
+        candidates = [
+            candidate for candidate in candidates if candidate.document_id not in superseded_ids
+        ]
     results = [
         _rank_candidate(candidate, reference_time, connected_primary_ids, superseded_ids)
         for candidate in candidates
@@ -547,7 +565,9 @@ def _merge_results_by_id(
             results_by_id[result.id] = result
 
 
-def _merged_results(results_by_id: Mapping[str, SearchResult], limit: int) -> tuple[SearchResult, ...]:
+def _merged_results(
+    results_by_id: Mapping[str, SearchResult], limit: int
+) -> tuple[SearchResult, ...]:
     results = sorted(results_by_id.values(), key=_result_sort_key)
     return tuple(results[:limit])
 
@@ -886,10 +906,14 @@ def _merge_candidates(
         candidates_by_document[candidate.document_id] = replace(
             preferred,
             fts_score=max(existing.fts_score, candidate.fts_score),
-            fts_rank=existing.fts_rank if existing.fts_score >= candidate.fts_score else candidate.fts_rank,
+            fts_rank=existing.fts_rank
+            if existing.fts_score >= candidate.fts_score
+            else candidate.fts_rank,
             row_order=min(existing.row_order, candidate.row_order),
             semantic_score=max(existing.semantic_score, candidate.semantic_score),
-            semantic_similarity=_max_optional(existing.semantic_similarity, candidate.semantic_similarity),
+            semantic_similarity=_max_optional(
+                existing.semantic_similarity, candidate.semantic_similarity
+            ),
             related=existing.related and candidate.related,
         )
 
