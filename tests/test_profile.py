@@ -6,11 +6,11 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from agent_memory.cli import app
-from agent_memory.config import ProfileConfig, load_config
-from agent_memory.indexer import estimate_tokens
-from agent_memory.profile import build_profile
-from agent_memory.vault import init_vault
+from cli import app
+from config import ProfileConfig, load_config
+from indexer import estimate_tokens
+from memora_profile import build_profile
+from vault import init_vault
 
 
 runner = CliRunner()
@@ -40,7 +40,7 @@ def test_build_user_profile_writes_active_user_and_global_memories_without_mutat
         memory_id="mem_20260501_project_fact",
         memory_type="fact",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Project memory should not enter the user profile.",
     )
     _write_memory(
@@ -79,7 +79,7 @@ def test_build_user_profile_writes_active_user_and_global_memories_without_mutat
         "kind": "profile",
         "schema_version": 1,
         "title": "User Profile",
-        "aliases": ["User Profile", "Agent Memory User Profile"],
+        "aliases": ["User Profile", "Memora User Profile"],
         "profile_type": "user",
         "project": None,
         "generated_at": "2026-05-01T12:00:00+00:00",
@@ -116,7 +116,7 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
         memory_id="mem_20260501_project_a",
         memory_type="decision",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Include exact project profile memory.",
     )
     _write_memory(
@@ -125,7 +125,7 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
         memory_id="mem_20260501_project_b",
         memory_type="decision",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body=(
             "This second exact project memory has enough words to be skipped when the "
             "profile reaches the strict token budget."
@@ -145,7 +145,7 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
     result = build_profile(
         config,
         profile_type="project",
-        project="agent-memory",
+        project="memora",
         budget=95,
         now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
     )
@@ -154,16 +154,16 @@ def test_build_project_profile_filters_exact_project_and_enforces_budget(tmp_pat
     markdown = (vault / payload["relative_path"]).read_text(encoding="utf-8")
     frontmatter = yaml.safe_load(markdown.split("---", 2)[1])
 
-    assert payload["relative_path"] == "Profiles/projects/agent-memory.md"
-    assert payload["project"] == "agent-memory"
+    assert payload["relative_path"] == "Profiles/projects/memora.md"
+    assert payload["project"] == "memora"
     assert payload["memory_count"] == 1
     assert payload["truncated"] is True
     assert payload["used_tokens_estimate"] <= 95
     assert estimate_tokens(markdown) <= 95
-    assert frontmatter["title"] == "agent-memory Profile"
+    assert frontmatter["title"] == "memora Profile"
     assert frontmatter["aliases"] == [
-        "agent-memory Profile",
-        "Agent Memory Project Profile: agent-memory",
+        "memora Profile",
+        "Memora Project Profile: memora",
     ]
     assert frontmatter["source_memory_ids"] == ["mem_20260501_project_a"]
     assert "Include exact project profile memory. [C1]" in markdown
@@ -189,7 +189,7 @@ def test_build_profile_uses_configured_default_budgets_and_explicit_override(tmp
         memory_id="mem_20260501_project_default_budget",
         memory_type="project_context",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Project profiles should use the configured project budget.",
     )
     config = load_config(vault).model_copy(
@@ -204,7 +204,7 @@ def test_build_profile_uses_configured_default_budgets_and_explicit_override(tmp
     project_result = build_profile(
         config,
         profile_type="project",
-        project="agent-memory",
+        project="memora",
         now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
     )
     explicit_result = build_profile(
@@ -245,7 +245,7 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
         memory_id="mem_20260501_cli_profile",
         memory_type="project_context",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="CLI profile generation writes under Profiles.",
     )
 
@@ -258,7 +258,7 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
             "--type",
             "project",
             "--project",
-            "agent-memory",
+            "memora",
             "--budget",
             "300",
             "--json",
@@ -281,7 +281,7 @@ def test_build_profile_cli_json_help_listing_and_project_requirement(tmp_path):
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["command"] == "build_profile"
-    assert payload["relative_path"] == "Profiles/projects/agent-memory.md"
+    assert payload["relative_path"] == "Profiles/projects/memora.md"
     assert payload["memory_count"] == 1
     assert (vault / payload["relative_path"]).exists()
 

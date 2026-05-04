@@ -7,7 +7,7 @@ aliases:
   - Pending CLI skeleton task
 type: task
 scope: project
-project: agent-memory
+project: memora
 status: pending
 confidence: 0.78
 created_at: 2026-04-29T12:20:00+02:00

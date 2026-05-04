@@ -3,7 +3,7 @@ schema_version: 1
 id: mem_20260430_stale_embeddings
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: stale
 confidence: 0.71
 created_at: 2026-04-30T09:30:00+02:00

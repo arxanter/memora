@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from agent_memory.brief import brief_memory
-from agent_memory.config import load_config
-from agent_memory.indexer import estimate_tokens, reindex_vault
-from agent_memory.retrieval import SearchFilters
-from agent_memory.vault import init_vault
+from brief import brief_memory
+from config import load_config
+from indexer import estimate_tokens, reindex_vault
+from retrieval import SearchFilters
+from vault import init_vault
 
 
 def test_brief_formats_golden_markdown_with_citations(tmp_path):

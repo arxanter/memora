@@ -7,7 +7,7 @@ aliases:
   - Markdown as durable memory
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.86
 created_at: 2026-04-29T12:15:00+02:00

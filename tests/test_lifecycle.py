@@ -2,10 +2,10 @@ import json
 
 from typer.testing import CliRunner
 
-from agent_memory.cli import app
-from agent_memory.config import load_config
-from agent_memory.indexer import reindex_vault
-from agent_memory.lifecycle import (
+from cli import app
+from config import load_config
+from indexer import reindex_vault
+from lifecycle import (
     contradict_memories,
     curation_plan,
     decay_memories,
@@ -14,9 +14,9 @@ from agent_memory.lifecycle import (
     review_queue,
     supersede_memory,
 )
-from agent_memory.retrieval import SearchFilters, search_memory
-from agent_memory.schema import validate_markdown_file
-from agent_memory.vault import doctor_report, init_vault
+from retrieval import SearchFilters, search_memory
+from schema import validate_markdown_file
+from vault import doctor_report, init_vault
 
 
 runner = CliRunner()
@@ -125,7 +125,7 @@ def test_contradict_surfaces_in_brief_and_doctor_without_missing_link(tmp_path):
     assert doctor["warnings"][0]["to_id"] == "mem_20260430_right"
 
     reindex_vault(config)
-    from agent_memory.brief import brief_memory
+    from brief import brief_memory
 
     brief = brief_memory(config, "contradiction lifecycle", include_related=True, budget=160)
     assert "Conflict detected: mem_20260430_left contradicts mem_20260430_right." in brief.markdown
@@ -539,7 +539,7 @@ def test_review_queue_surfaces_frontmatter_importance_without_schema_migration(t
         status="pending",
         body="Frontmatter importance should be surfaced for review.",
         scope="project",
-        project="agent-memory",
+        project="memora",
         author_kind="agent",
         source_path="Sources/2026-04-30_importance/extract.md",
         confidence=0.7,
@@ -1041,7 +1041,7 @@ def test_curate_cli_filters_by_project_and_source(tmp_path):
         memory_type="fact",
         status="pending",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Project curation memory should match project and source filters.",
         author_kind="agent",
         source_path="Sources/2026-04-30_project/extract.md",
@@ -1063,7 +1063,7 @@ def test_curate_cli_filters_by_project_and_source(tmp_path):
 
     project_result = runner.invoke(
         app,
-        ["curate", "--vault", str(vault), "--project", "agent-memory", "--json"],
+        ["curate", "--vault", str(vault), "--project", "memora", "--json"],
     )
     source_result = runner.invoke(
         app,

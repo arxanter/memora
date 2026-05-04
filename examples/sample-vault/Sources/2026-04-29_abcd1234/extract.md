@@ -2,7 +2,7 @@
 
 ## Summary
 
-Stage 0 planning material defines Agent Memory as a CLI-first, local-first memory
+Stage 0 planning material defines Memora as a CLI-first, local-first memory
 vault where durable context is stored in Obsidian-compatible Markdown.
 
 ## Key Ideas

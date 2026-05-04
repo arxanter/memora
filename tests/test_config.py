@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_memory.config import (
+from config import (
     ConfigError,
     ENV_AGENT_DEFAULT_RECALL_BUDGET,
     ENV_AGENT_TRUST_LEVEL,
@@ -22,7 +22,7 @@ from agent_memory.config import (
     config_to_dict,
     load_config,
 )
-from agent_memory.vault import init_vault
+from vault import init_vault
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +37,7 @@ def test_load_config_from_explicit_vault(tmp_path):
     assert config.vault_path == vault.resolve()
     assert config.raw_root == vault.resolve() / "raw"
     assert config.memory_root == vault.resolve() / "Memories"
-    assert config.config_path == vault.resolve() / ".agent-memory" / "config.yaml"
+    assert config.config_path == vault.resolve() / ".memora" / "config.yaml"
 
 
 def test_load_config_walks_up_from_child_path(tmp_path):
@@ -103,7 +103,7 @@ def test_load_config_includes_agent_policy_defaults_and_overrides(tmp_path, monk
 def test_load_config_applies_recall_policy_include_profile_yaml_overrides(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path = vault / ".memora" / "config.yaml"
     config_path.write_text(
         """
 schema_version: 1
@@ -131,7 +131,7 @@ recall_policies:
 def test_load_config_preserves_review_include_profile_default_for_old_yaml(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path = vault / ".memora" / "config.yaml"
     config_path.write_text(
         """
 schema_version: 1
@@ -206,7 +206,7 @@ def test_sample_vault_config_loads_with_cli_first_defaults():
     config = load_config(sample_vault)
     summary = config_to_dict(config)
 
-    assert config.default_project == "agent-memory"
+    assert config.default_project == "memora"
     assert config.agent_default_status == "pending"
     assert config.agent_policy.trust_level == "review"
     assert config.recall_policies["planning"].include_related is True
@@ -221,7 +221,7 @@ def test_sample_vault_config_loads_with_cli_first_defaults():
 def test_load_config_preserves_connector_defaults_for_old_yaml(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path = vault / ".memora" / "config.yaml"
     config_path.write_text("schema_version: 1\n", encoding="utf-8")
 
     config = load_config(vault)
@@ -250,7 +250,7 @@ def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):
     vault = tmp_path / "memory-vault"
-    config_dir = vault / ".agent-memory"
+    config_dir = vault / ".memora"
     config_dir.mkdir(parents=True)
     (config_dir / "config.yaml").write_text("schema_version: 999\n", encoding="utf-8")
 

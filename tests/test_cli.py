@@ -3,18 +3,18 @@ import json
 import yaml
 from typer.testing import CliRunner
 
-import agent_memory.cli as cli_module
-from agent_memory.cli import app
-from agent_memory.config import load_config
-from agent_memory.schema import validate_markdown_file
-from agent_memory.sources import lookup_source
+import cli as cli_module
+from cli import app
+from config import load_config
+from schema import validate_markdown_file
+from sources import lookup_source
 
 
 runner = CliRunner()
 
 
 def _enable_connectors(vault, *names):
-    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path = vault / ".memora" / "config.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     connectors = config.setdefault("connectors", {})
     for name in names:
@@ -31,7 +31,7 @@ def test_init_command_creates_vault_layout(tmp_path):
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["config_created"] is True
-    assert (vault / ".agent-memory" / "config.yaml").exists()
+    assert (vault / ".memora" / "config.yaml").exists()
     assert (vault / "raw" / "inbox" / "webclips").is_dir()
     assert (vault / "raw" / "processed").is_dir()
     assert (vault / "raw" / "quarantine").is_dir()
@@ -50,7 +50,7 @@ def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
     assert payload["command"] == "setup"
     assert payload["dry_run"] is True
     assert payload["would_write"] is True
-    assert any(action["relative_path"] == ".agent-memory/config.yaml" for action in payload["actions"])
+    assert any(action["relative_path"] == ".memora/config.yaml" for action in payload["actions"])
     assert not vault.exists()
 
 
@@ -64,7 +64,7 @@ def test_setup_command_creates_vault_layout(tmp_path):
     assert payload["ok"] is True
     assert payload["dry_run"] is False
     assert payload["config_created"] is True
-    assert (vault / ".agent-memory" / "config.yaml").exists()
+    assert (vault / ".memora" / "config.yaml").exists()
     assert (vault / "raw" / "inbox" / "files").is_dir()
     assert (vault / "Memories" / "projects").is_dir()
 
@@ -120,11 +120,11 @@ def test_help_command_lists_grouped_commands():
     json_result = runner.invoke(app, ["help", "--json"])
 
     assert human_result.exit_code == 0, human_result.output
-    assert "Agent Memory commands" in human_result.output
+    assert "Memora commands" in human_result.output
     assert "Setup and health" in human_result.output
     assert "agent-rules" in human_result.output
     assert "explain-recall" in human_result.output
-    assert "memory <command> --help" in human_result.output
+    assert "memora <command> --help" in human_result.output
 
     assert json_result.exit_code == 0, json_result.output
     payload = json.loads(json_result.output)
@@ -172,7 +172,7 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(
                 "--vault",
                 str(vault),
                 "--project",
-                "agent-memory",
+                "memora",
                 "--json",
             ],
         )
@@ -184,11 +184,11 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(
         assert payload["format"] == rule_format
         assert "CLI-first" in content
         assert "CLI-only for agents" in content
-        assert "memory build-context" in content
+        assert "memora build-context" in content
         assert "--json" in content
-        assert '--project "agent-memory"' in content
-        assert "Do not read, write, edit, delete, or migrate Agent Memory vault files directly" in content
-        assert "`.agent-memory/index.sqlite`" in content
+        assert '--project "memora"' in content
+        assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
+        assert "`.memora/index.sqlite`" in content
         assert "Toby intent routing examples" in content
         assert "Toby, review pending memory" in content
         assert "Тоби, актуализируй память" in content
@@ -199,7 +199,7 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_formats(
 
 def test_install_agent_rules_dry_run_and_no_overwrite_behavior(tmp_path):
     project = tmp_path / "project"
-    target = project / "agent-memory-rules.md"
+    target = project / "memora-rules.md"
     project.mkdir()
 
     dry_run = runner.invoke(
@@ -269,7 +269,7 @@ def test_install_agent_rules_codex_targets_agents_file(tmp_path):
     assert payload["ok"] is True
     assert payload["client"] == "codex"
     assert payload["target_path"] == str(project / "AGENTS.md")
-    assert "Agent Memory Instructions For Codex" in payload["content"]
+    assert "Memora Instructions For Codex" in payload["content"]
     assert not (project / "AGENTS.md").exists()
 
 
@@ -290,13 +290,13 @@ def test_agent_install_commands_default_to_current_project(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "memory install-agent-rules --client cursor" in result.output
-    assert "memory install-agent-rules --client claude" in result.output
-    assert "memory install-agent-rules --client codex" in result.output
+    assert "memora install-agent-rules --client cursor" in result.output
+    assert "memora install-agent-rules --client claude" in result.output
+    assert "memora install-agent-rules --client codex" in result.output
     assert f"--project {project}" in result.output
     assert f"--vault {vault}" in result.output
     assert "--dry-run" in result.output
-    assert str(project / ".cursor" / "rules" / "agent-memory.mdc") in result.output
+    assert str(project / ".cursor" / "rules" / "memora.mdc") in result.output
     assert str(project / "CLAUDE.md") in result.output
     assert str(project / "AGENTS.md") in result.output
 
@@ -354,9 +354,9 @@ def test_agent_install_commands_client_codex_emits_only_codex(tmp_path):
     human_result = runner.invoke(app, ["agent-install-commands", "--project", str(project), "--client", "codex"])
 
     assert human_result.exit_code == 0, human_result.output
-    assert "memory install-agent-rules --client codex" in human_result.output
-    assert "memory install-agent-rules --client cursor" not in human_result.output
-    assert "memory install-agent-rules --client claude" not in human_result.output
+    assert "memora install-agent-rules --client codex" in human_result.output
+    assert "memora install-agent-rules --client cursor" not in human_result.output
+    assert "memora install-agent-rules --client claude" not in human_result.output
 
 
 def test_agent_install_commands_client_all_includes_rule_clients_without_agents(tmp_path):
@@ -387,7 +387,7 @@ def test_agent_group_rules_command_prefers_client_option(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--json",
         ],
     )
@@ -397,8 +397,8 @@ def test_agent_group_rules_command_prefers_client_option(tmp_path):
     assert payload["command"] == "agent rules"
     assert payload["client"] == "codex"
     assert payload["scope"] == "project"
-    assert "Agent Memory Instructions For Codex" in payload["content"]
-    assert '--project "agent-memory"' in payload["content"]
+    assert "Memora Instructions For Codex" in payload["content"]
+    assert '--project "memora"' in payload["content"]
 
 
 def test_agent_group_targets_all_excludes_agents_duplicate(tmp_path):
@@ -458,7 +458,7 @@ def test_agent_group_commands_routes_through_existing_payload(tmp_path):
     assert payload["command"] == "agent commands"
     assert payload["compatibility_command"] == "agent-install-commands"
     assert [command["client"] for command in payload["commands"]] == ["codex"]
-    assert "memory install-agent-rules --client codex" in payload["commands"][0]["install_command"]
+    assert "memora install-agent-rules --client codex" in payload["commands"][0]["install_command"]
 
 
 def test_agent_scheduled_template_human_email_includes_boundaries_safety_and_project():
@@ -472,22 +472,22 @@ def test_agent_scheduled_template_human_email_includes_boundaries_safety_and_pro
             "--client",
             "cursor",
             "--project",
-            "agent-memory",
+            "memora",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert "# Scheduled Agent Memory Task" in result.output
+    assert "# Scheduled Memora Task" in result.output
     assert "Client: cursor" in result.output
     assert "Source kind: email" in result.output
     assert "Source channel: scheduled_email" in result.output
-    assert "Project: agent-memory" in result.output
+    assert "Project: memora" in result.output
     assert "Source boundaries:" in result.output
     assert "Allowed accounts/workspaces:" in result.output
     assert "mailbox folders/labels" in result.output
     assert "Do not store secrets" in result.output
     assert "private dumps" in result.output
-    assert "memory scheduled ingest --kind email" in result.output
+    assert "memora scheduled ingest --kind email" in result.output
 
 
 def test_agent_scheduled_template_json_includes_template_steps_and_safety():
@@ -501,7 +501,7 @@ def test_agent_scheduled_template_json_includes_template_steps_and_safety():
             "--client",
             "codex",
             "--project",
-            "agent-memory",
+            "memora",
             "--json",
         ],
     )
@@ -511,7 +511,7 @@ def test_agent_scheduled_template_json_includes_template_steps_and_safety():
     assert payload["command"] == "agent scheduled-template"
     assert payload["kind"] == "slack"
     assert payload["client"] == "codex"
-    assert payload["project"] == "agent-memory"
+    assert payload["project"] == "memora"
     assert payload["template"] == payload["content"]
     assert "Source channel: scheduled_slack" in payload["template"]
     assert any("normal client tools" in step for step in payload["steps"])
@@ -584,7 +584,7 @@ def test_import_source_command_saves_file_and_extract(tmp_path):
             "--extract-file",
             str(extract),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "article",
             "--sensitivity",
@@ -653,7 +653,7 @@ def test_import_url_dry_run_reports_plan_without_writes(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "article",
             "--dry-run",
@@ -669,7 +669,7 @@ def test_import_url_dry_run_reports_plan_without_writes(tmp_path):
     assert payload["url"] == "https://example.com/article"
     assert payload["channel"] == "url"
     assert payload["source_quality"] == "agent_fetched"
-    assert payload["project"] == "agent-memory"
+    assert payload["project"] == "memora"
     assert payload["tags"] == ["article"]
     assert payload["origin"] == {
         "provider": "url",
@@ -711,7 +711,7 @@ def test_import_url_from_fixture_writes_source_extract_and_safety_flags(tmp_path
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "article",
             "--json",
@@ -810,7 +810,7 @@ def test_import_pdf_dry_run_reports_plan_without_writes(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "paper",
             "--dry-run",
@@ -826,7 +826,7 @@ def test_import_pdf_dry_run_reports_plan_without_writes(tmp_path):
     assert payload["path"] == str(pdf)
     assert payload["channel"] == "pdf"
     assert payload["source_quality"] == "user_provided"
-    assert payload["project"] == "agent-memory"
+    assert payload["project"] == "memora"
     assert payload["tags"] == ["paper"]
     assert payload["origin"] == {
         "provider": "pdf",
@@ -861,7 +861,7 @@ def test_import_pdf_text_file_writes_source_extract_and_origin_metadata(tmp_path
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "paper",
             "--json",
@@ -956,7 +956,7 @@ def test_import_pdf_missing_extractor_reports_clean_error_without_writes(tmp_pat
 
     def fail_extract(path, *, text_file=None):
         raise RuntimeError(
-            "No PDF extractor is available. Install `agent-memory[pdf]` or pass --text-file."
+            "No PDF extractor is available. Install `memora[pdf]` or pass --text-file."
         )
 
     monkeypatch.setattr(cli_module, "load_pdf_content", fail_extract)
@@ -996,7 +996,7 @@ def test_import_zoom_dry_run_reports_plan_without_writes(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "meeting",
             "--meeting-id",
@@ -1017,7 +1017,7 @@ def test_import_zoom_dry_run_reports_plan_without_writes(tmp_path):
     assert payload["title"] == "Weekly Product Sync"
     assert payload["channel"] == "zoom"
     assert payload["source_quality"] == "meeting_summary"
-    assert payload["project"] == "agent-memory"
+    assert payload["project"] == "memora"
     assert payload["tags"] == ["meeting"]
     assert payload["meeting"]["meeting_id"] == "123456789"
     assert payload["meeting"]["meeting_url"] == "https://zoom.us/j/123456789"
@@ -1057,7 +1057,7 @@ def test_import_zoom_summary_writes_source_extract_and_meeting_metadata(tmp_path
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "meeting",
             "--json",
@@ -1167,13 +1167,13 @@ def test_import_slack_dry_run_reports_plan_without_writes(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "slack",
             "--title",
             "CLI Import Thread",
             "--channel",
-            "#agent-memory",
+            "#memora",
             "--thread-ts",
             "1714550400.000100",
             "--permalink",
@@ -1193,12 +1193,12 @@ def test_import_slack_dry_run_reports_plan_without_writes(tmp_path):
     assert payload["url"] == "https://example.slack.com/archives/C123/p1714550400000100"
     assert payload["channel"] == "slack"
     assert payload["source_quality"] == "chat_thread"
-    assert payload["project"] == "agent-memory"
+    assert payload["project"] == "memora"
     assert payload["tags"] == ["slack"]
-    assert payload["thread"]["channel"] == "#agent-memory"
+    assert payload["thread"]["channel"] == "#memora"
     assert payload["thread"]["thread_ts"] == "1714550400.000100"
     assert payload["origin"]["provider"] == "slack"
-    assert payload["origin"]["channel"] == "#agent-memory"
+    assert payload["origin"]["channel"] == "#memora"
     assert payload["planned_source"]["channel"] == "slack"
     assert payload["planned_source"]["origin"] == payload["origin"]
     assert payload["risk_flags"] == []
@@ -1225,7 +1225,7 @@ def test_import_slack_text_export_writes_source_extract_and_metadata(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "slack",
             "--title",
@@ -1420,7 +1420,7 @@ def test_import_source_inbox_imports_matching_files(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "clip",
             "--json",
@@ -1438,7 +1438,7 @@ def test_import_source_inbox_imports_matching_files(tmp_path):
     first_source = payload["sources"][0]
     source_text = (vault / first_source["relative_source_path"]).read_text(encoding="utf-8")
     source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
-    assert source_frontmatter["project"] == "agent-memory"
+    assert source_frontmatter["project"] == "memora"
     assert source_frontmatter["tags"] == ["clip"]
     assert source_frontmatter["channel"] == "web_clipper"
     assert source_frontmatter["origin"]["provider"] == "file"
@@ -1567,7 +1567,7 @@ def test_source_inbox_scan_imports_text_and_slack_export_without_memories(tmp_pa
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "inbox",
             "--json",
@@ -1588,7 +1588,7 @@ def test_source_inbox_scan_imports_text_and_slack_export_without_memories(tmp_pa
     note_text = (vault / by_connector["source_inbox"]["relative_source_path"]).read_text(encoding="utf-8")
     note_frontmatter = yaml.safe_load(note_text.split("---", 2)[1])
     assert note_frontmatter["channel"] == "source_inbox"
-    assert note_frontmatter["project"] == "agent-memory"
+    assert note_frontmatter["project"] == "memora"
     assert note_frontmatter["tags"] == ["inbox"]
     assert note_frontmatter["origin"]["provider"] == "source_inbox"
     assert "Keep inbox import explicit." in note_text
@@ -1646,7 +1646,7 @@ def test_raw_process_normalizes_raw_file_into_sources(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--dry-run",
             "--json",
         ],
@@ -1664,7 +1664,7 @@ def test_raw_process_normalizes_raw_file_into_sources(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "raw",
             "--json",
@@ -1682,7 +1682,7 @@ def test_raw_process_normalizes_raw_file_into_sources(tmp_path):
     assert payload["origin"]["raw_path"] == "raw/inbox/files/note.md"
     source_text = (vault / payload["relative_source_path"]).read_text(encoding="utf-8")
     source_frontmatter = yaml.safe_load(source_text.split("---", 2)[1])
-    assert source_frontmatter["project"] == "agent-memory"
+    assert source_frontmatter["project"] == "memora"
     assert source_frontmatter["tags"] == ["raw"]
     assert "Raw research note." in source_text
 
@@ -1762,7 +1762,7 @@ def test_import_session_command_can_create_pending_summary_memory(tmp_path):
             str(summary),
             "--remember-summary",
             "--project",
-            "agent-memory",
+            "memora",
             "--tag",
             "session",
             "--json",
@@ -1780,7 +1780,7 @@ def test_import_session_command_can_create_pending_summary_memory(tmp_path):
     document = validate_markdown_file(vault / payload["memory"]["relative_path"])
     assert document.frontmatter.type == "conversation_summary"
     assert document.frontmatter.status == "pending"
-    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.project == "memora"
     assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
     assert document.frontmatter.source_links == [
         f"[[{payload['source']['relative_extract_path'][:-3]}|session]]"
@@ -1813,7 +1813,7 @@ def test_agent_capture_dry_run_json_validates_without_writing(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--source-title",
             "Phase 5 Task",
             "--source-file",
@@ -1875,7 +1875,7 @@ def test_agent_capture_json_saves_source_and_pending_atomic_memories(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--source-title",
             "Phase 5 Capture",
             "--source-file",
@@ -1911,7 +1911,7 @@ def test_agent_capture_json_saves_source_and_pending_atomic_memories(tmp_path):
     document = validate_markdown_file(vault / first_memory["relative_path"])
     assert document.frontmatter.type == "decision"
     assert document.frontmatter.status == "pending"
-    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.project == "memora"
     assert document.frontmatter.author.kind == "agent"
     assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
     assert document.frontmatter.confidence == 0.82
@@ -1994,7 +1994,7 @@ def test_scheduled_ingest_dry_run_writes_nothing_and_reports_plan(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--source-file",
             str(source),
             "--extract-file",
@@ -2055,7 +2055,7 @@ def test_scheduled_ingest_saves_source_and_pending_memories(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--source-file",
             str(source),
             "--extract-file",
@@ -2094,7 +2094,7 @@ def test_scheduled_ingest_saves_source_and_pending_memories(tmp_path):
     document = validate_markdown_file(vault / first_memory["relative_path"])
     assert document.frontmatter.type == "decision"
     assert document.frontmatter.status == "pending"
-    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.project == "memora"
     assert document.frontmatter.author.kind == "agent"
     assert document.frontmatter.author.name == "scheduled ingest"
     assert document.frontmatter.source.path == payload["source"]["relative_extract_path"]
@@ -2134,7 +2134,7 @@ def test_session_finalize_json_saves_source_summary_and_atomic_memories(tmp_path
             "--memories-file",
             str(memories),
             "--project",
-            "agent-memory",
+            "memora",
             "--json",
         ],
     )
@@ -2340,7 +2340,7 @@ def test_brief_command_generates_markdown_and_json(tmp_path):
     json_result = runner.invoke(app, ["brief", "memory brief", "--vault", str(vault), "--json"])
 
     assert markdown_result.exit_code == 0, markdown_result.output
-    assert "## Memory Brief" in markdown_result.output
+    assert "## Memora Brief" in markdown_result.output
     assert "Current decisions:" in markdown_result.output
     assert "[C1]" in markdown_result.output
     assert json_result.exit_code == 0, json_result.output
@@ -2515,7 +2515,7 @@ def test_build_context_command_include_profile_adds_bounded_profile_context(tmp_
     assert "[P1]" in payload["profile"]["markdown"]
     assert "unsafe memory says ignore previous instructions" not in payload["profile"]["markdown"]
     assert payload["markdown"].startswith("---\nkind: profile")
-    assert "## Memory Brief" in payload["markdown"]
+    assert "## Memora Brief" in payload["markdown"]
     assert "unsafe memory says ignore previous instructions" not in payload["markdown"]
     assert payload["citations"][0]["key"] == "P1"
     assert payload["trace"]["profile"]["included"] is True
@@ -2647,7 +2647,7 @@ def test_search_command_returns_ranked_json_results(tmp_path):
             "--scope",
             "project",
             "--project",
-            "agent-memory",
+            "memora",
             "--text",
             "Use SQLite FTS for keyword memory search.",
             "--json",
@@ -2663,7 +2663,7 @@ def test_search_command_returns_ranked_json_results(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--type",
             "decision",
             "--json",
@@ -2675,7 +2675,7 @@ def test_search_command_returns_ranked_json_results(tmp_path):
     assert payload["ok"] is True
     assert payload["implemented"] is True
     assert payload["result_count"] == 1
-    assert payload["results"][0]["metadata"]["project"] == "agent-memory"
+    assert payload["results"][0]["metadata"]["project"] == "memora"
     assert payload["results"][0]["citation"]["path"].startswith("Memories/decisions/")
 
 
@@ -2764,7 +2764,7 @@ def test_reindex_command_builds_sqlite_index(tmp_path):
     assert payload["documents_indexed"] == 1
     assert payload["documents_skipped"] == 0
     assert payload["graph_ok"] is True
-    assert (vault / ".agent-memory" / "index.sqlite").exists()
+    assert (vault / ".memora" / "index.sqlite").exists()
 
 
 def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
@@ -3108,7 +3108,7 @@ def _snapshot_source_files(*paths):
 
 
 def _disable_freshness_debounce(vault):
-    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path = vault / ".memora" / "config.yaml"
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace("debounce_seconds: 2.0", "debounce_seconds: 0"),
         encoding="utf-8",

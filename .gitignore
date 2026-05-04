@@ -27,15 +27,15 @@ dist/
 .env
 .env.*
 
-# Disposable Agent Memory vault state
-.agent-memory/index.sqlite
-.agent-memory/cache/
-.agent-memory/embeddings/
-.agent-memory/locks/
-**/.agent-memory/index.sqlite
-**/.agent-memory/cache/
-**/.agent-memory/embeddings/
-**/.agent-memory/locks/
+# Disposable Memora vault state
+.memora/index.sqlite
+.memora/cache/
+.memora/embeddings/
+.memora/locks/
+**/.memora/index.sqlite
+**/.memora/cache/
+**/.memora/embeddings/
+**/.memora/locks/
 
 
 .cursor/** 

@@ -5,11 +5,11 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/uninstall.sh [options]
 
-Remove local Agent Memory wrappers and service files. Vault Markdown is never
+Remove local Memora wrappers and service files. Vault Markdown is never
 deleted by default.
 
 Options:
-  --install-dir PATH    Install state directory. Default: ~/.local/share/agent-memory
+  --install-dir PATH    Install state directory. Default: ~/.local/share/memora
   --bin-dir PATH        Wrapper directory. Default: ~/.local/bin
   --remove-venv         Remove the managed virtual environment.
   --remove-logs         Remove local service logs.
@@ -39,8 +39,8 @@ remove_path() {
   rm -rf "$path"
 }
 
-INSTALL_DIR="${AGENT_MEMORY_INSTALL_DIR:-$HOME/.local/share/agent-memory}"
-BIN_DIR="${AGENT_MEMORY_BIN_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${MEMORA_INSTALL_DIR:-$HOME/.local/share/memora}"
+BIN_DIR="${MEMORA_BIN_DIR:-$HOME/.local/bin}"
 REMOVE_VENV=0
 REMOVE_LOGS=0
 DRY_RUN=0
@@ -83,16 +83,16 @@ done
 INSTALL_DIR="$(expand_path "$INSTALL_DIR")"
 BIN_DIR="$(expand_path "$BIN_DIR")"
 
-if [ -x "$BIN_DIR/agent-memory-service" ]; then
+if [ -x "$BIN_DIR/memora-service" ]; then
   if [ "$DRY_RUN" = "1" ]; then
-    log "would run $BIN_DIR/agent-memory-service uninstall"
+    log "would run $BIN_DIR/memora-service uninstall"
   else
-    "$BIN_DIR/agent-memory-service" uninstall || true
+    "$BIN_DIR/memora-service" uninstall || true
   fi
 fi
 
-remove_path "$BIN_DIR/memory"
-remove_path "$BIN_DIR/agent-memory-service"
+remove_path "$BIN_DIR/memora"
+remove_path "$BIN_DIR/memora-service"
 
 if [ "$REMOVE_VENV" = "1" ]; then
   remove_path "$INSTALL_DIR/venv"

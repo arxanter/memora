@@ -5,12 +5,12 @@ from pathlib import Path
 import yaml
 from typer.testing import CliRunner
 
-from agent_memory.cli import app
-from agent_memory.config import load_config
-from agent_memory.evaluation import run_evaluation
-from agent_memory.indexer import reindex_vault, split_document_chunks
-from agent_memory.schema import validate_markdown_file, validate_vault
-from agent_memory.sync import detect_sync_conflicts
+from cli import app
+from config import load_config
+from evaluation import run_evaluation
+from indexer import reindex_vault, split_document_chunks
+from schema import validate_markdown_file, validate_vault
+from sync import detect_sync_conflicts
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -103,8 +103,8 @@ def test_basic_memory_import_fixture_documents_compatibility_shape(tmp_path):
     config = load_config(vault)
     result = reindex_vault(config, clean=True)
 
-    assert shape["expected_agent_memory_shape"]["memory_type"] == "source_extract"
-    assert "observations[].text" in shape["expected_agent_memory_shape"]["preserves"]
+    assert shape["expected_memora_shape"]["memory_type"] == "source_extract"
+    assert "observations[].text" in shape["expected_memora_shape"]["preserves"]
     assert result.graph.ok is True
 
     import_result = runner.invoke(

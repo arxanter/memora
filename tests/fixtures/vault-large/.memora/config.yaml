@@ -1,0 +1,33 @@
+schema_version: 1
+memories_dir: Memories
+sources_dir: Sources
+briefs_dir: Briefs
+profiles_dir: Profiles
+synthesis_dir: Synthesis
+memora_dir: .memora
+index_path: .memora/index.sqlite
+default_scope: user
+default_project: null
+user_default_status: active
+agent_default_status: pending
+default_author_name: Memora CLI
+semantic:
+  provider: null
+  model: local-embedding-model
+  command: null
+  timeout_seconds: 30.0
+  vector_limit: 100
+  keyword_limit: 100
+recall:
+  candidate_limit: 50
+  max_tokens_per_chunk: 120
+  max_chunks_per_document: 1
+  max_chunks_per_project: 6
+  max_chunks_per_memory_type:
+    preference: 4
+    decision: 6
+    project_context: 6
+    fact: 8
+    task: 4
+    source_extract: 3
+    conversation_summary: 3

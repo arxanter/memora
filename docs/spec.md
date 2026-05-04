@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Agent Memory is a local-first context optimizer for coding agents. It stores durable memory as Obsidian-compatible Markdown and builds compact, citation-preserving context for agents on demand.
+Memora is a local-first context optimizer for coding agents. It stores durable memory as Obsidian-compatible Markdown and builds compact, citation-preserving context for agents on demand.
 
 The product is not trying to replace Obsidian or become a hosted knowledge-management system. The durable user-owned record is Markdown; generated indexes, embeddings, and caches are disposable local artifacts.
 
@@ -27,13 +27,13 @@ should call the CLI instead of relying on a separate protocol surface.
 
 ## Source Of Truth
 
-Obsidian Markdown is canonical. A vault contains human-readable memories, sources, profiles, briefs, and synthesis notes. SQLite, FTS indexes, embedding vectors, locks, and temporary cache files are rebuildable local data under `.agent-memory/`.
+Obsidian Markdown is canonical. A vault contains human-readable memories, sources, profiles, briefs, and synthesis notes. SQLite, FTS indexes, embedding vectors, locks, and temporary cache files are rebuildable local data under `.memora/`.
 
 The expected sync model is:
 
 - Sync Markdown files across machines.
 - Do not sync SQLite or embeddings.
-- Rebuild local state with `memory reindex`.
+- Rebuild local state with `memora reindex`.
 - Treat generated data as safe to delete.
 
 ## Initial Memory Types

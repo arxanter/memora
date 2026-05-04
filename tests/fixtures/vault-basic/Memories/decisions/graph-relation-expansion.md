@@ -3,7 +3,7 @@ schema_version: 1
 id: mem_20260430_graph_links
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.83
 created_at: 2026-04-30T09:15:00+02:00

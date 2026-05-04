@@ -1,29 +1,29 @@
 # Agent Instructions For Memory Workflows
 
 Use this document when configuring Claude Code, Cursor, Codex, or another coding
-agent to work with Agent Memory. Copy the relevant sections into project-level
-`AGENTS.md`, `CLAUDE.md`, or `.cursor/rules/agent-memory.mdc`.
+agent to work with Memora. Copy the relevant sections into project-level
+`AGENTS.md`, `CLAUDE.md`, or `.cursor/rules/memora.mdc`.
 
 You can generate focused project rules instead of copying this file manually:
 
 ```bash
-memory agent-rules --format agents
-memory agent-rules --format cursor
-memory agent-rules --format claude
-memory agent-rules --format codex
-memory install-agent-rules --client cursor --project <path> --dry-run
-memory install-agent-rules --client codex --project <path> --dry-run
-memory agent-install-commands --client all
+memora agent-rules --format agents
+memora agent-rules --format cursor
+memora agent-rules --format claude
+memora agent-rules --format codex
+memora install-agent-rules --client cursor --project <path> --dry-run
+memora install-agent-rules --client codex --project <path> --dry-run
+memora agent-install-commands --client all
 ```
 
 Current product direction is CLI-first and CLI-only for agents. Use only
-`memory ... --json` commands from any project directory for recall, search,
+`memora ... --json` commands from any project directory for recall, search,
 source lookup, imports, writes, review, lifecycle, status, indexing, and session
 capture.
 
-Do not read, write, edit, delete, or migrate Agent Memory vault files directly.
+Do not read, write, edit, delete, or migrate Memora vault files directly.
 This includes `Memories/`, `Sources/`, `Briefs/`, `Profiles/`, `Synthesis/`,
-`raw/`, `.agent-memory/index.sqlite`, cache, embeddings, locks, and schema
+`raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema
 files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and
 generated schema as private storage managed by the CLI.
 
@@ -33,17 +33,17 @@ manipulation, or ad hoc scripts.
 
 ## Core Rule
 
-Agent Memory stores and retrieves durable context. The AI agent does the
+Memora stores and retrieves durable context. The AI agent does the
 understanding work.
 
 ```text
 AI agent:
   read/fetch material through normal tools
   summarize and extract durable information
-  call memory raw/import/source commands with --json to preserve material
-  call memory remember/review lifecycle commands with --json
+  call memora raw/import/source commands with --json to preserve material
+  call memora remember/review lifecycle commands with --json
 
-Agent Memory:
+Memora:
   validate and store Markdown
   index and retrieve memories
   pack context under budget
@@ -66,7 +66,7 @@ Review the pending queue once near session startup when memory work is relevant,
 or when the user explicitly asks Toby to review memory:
 
 ```bash
-memory review --json
+memora review --json
 ```
 
 When pending items exist, summarize them with id, type, confidence, source,
@@ -78,7 +78,7 @@ source-backed with an audit reason.
 When recall is relevant, call:
 
 ```bash
-memory build-context "<task>" --project "<project-name>" --task-class planning --json
+memora build-context "<task>" --project "<project-name>" --task-class planning --json
 ```
 
 Use returned memory only when `memory_needed` is true. Preserve citations when
@@ -86,28 +86,28 @@ summarizing or making decisions from recalled memory.
 
 ## Toby Routing
 
-Treat `Toby`, `Тоби`, and `tb` as explicit Agent Memory aliases.
+Treat `Toby`, `Тоби`, and `tb` as explicit Memora aliases.
 
 Intent routing:
 
-- `Toby, show current facts about <topic>` / `Тоби, покажи текущие факты по <topic>`: run `memory brief` or `memory search`, then answer with citations.
-- `Toby, what did we decide about <topic>` / `Тоби, что мы решили по <topic>`: run `memory build-context`; use returned memory only if `memory_needed=true`.
-- `Toby, save this fact/decision/preference` / `Тоби, сохрани это как факт/решение/preference`: create one atomic memory with `memory remember --json`; lifecycle follows `agent_policy`.
-- `Toby, review pending memory` / `Тоби, проверь pending memory`: run `memory review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.
+- `Toby, show current facts about <topic>` / `Тоби, покажи текущие факты по <topic>`: run `memora brief` or `memora search`, then answer with citations.
+- `Toby, what did we decide about <topic>` / `Тоби, что мы решили по <topic>`: run `memora build-context`; use returned memory only if `memory_needed=true`.
+- `Toby, save this fact/decision/preference` / `Тоби, сохрани это как факт/решение/preference`: create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.
+- `Toby, review pending memory` / `Тоби, проверь pending memory`: run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.
 - `Toby, update memory for <topic>` / `Тоби, актуализируй память по <topic>`: search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.
 - `Toby, analyze this source and save it` / `Тоби, проанализируй источник и сохрани`: read/fetch the source, create an extract, preserve the source, then promote only durable atomic items.
 
 Useful commands:
 
 ```bash
-memory brief "<topic>" --project "<project>" --json
-memory search "<query>" --project "<project>" --json
-memory remember --type decision --text "<durable decision>" --project "<project>" --json
+memora brief "<topic>" --project "<project>" --json
+memora search "<query>" --project "<project>" --json
+memora remember --type decision --text "<durable decision>" --project "<project>" --json
 ```
 
 ## Trust Levels
 
-Recommended `.agent-memory/config.yaml` policy shape:
+Recommended `.memora/config.yaml` policy shape:
 
 ```yaml
 agent_policy:
@@ -146,9 +146,9 @@ material into memory:
 
 1. Fetch or read the material with the agent's normal browser/file tools.
 2. Produce a concise extract.
-3. Preserve unprocessed material with `memory raw process ... --json`; otherwise
-   run `memory import-source ... --json` or a connector-specific import command.
-4. Call `memory remember --json` only for durable atomic memory extracted from
+3. Preserve unprocessed material with `memora raw process ... --json`; otherwise
+   run `memora import-source ... --json` or a connector-specific import command.
+4. Call `memora remember --json` only for durable atomic memory extracted from
    the source. Do not duplicate the saved `Sources/.../extract.md` summary as a
    default canonical `source_extract`.
 5. Apply `agent_policy`: inferred agent-created memories remain `pending`;
@@ -184,9 +184,9 @@ Use this shape for `extract`:
 Save a source after reading it and writing a concise extract:
 
 ```bash
-memory import-source ./article.md \
+memora import-source ./article.md \
   --extract-file ./article-extract.md \
-  --project agent-memory \
+  --project memora \
   --tag article \
   --json
 ```
@@ -194,20 +194,20 @@ memory import-source ./article.md \
 Use explicit connector commands only when the user asks for that source:
 
 ```bash
-memory import-url https://example.com/article --dry-run --json
-memory import-pdf ./paper.pdf --text-file ./paper.txt --project agent-memory --json
-memory import-zoom ./meeting-summary.md --project agent-memory --json
-memory import-slack ./thread.json --channel "#agent-memory" --json
-memory source-inbox scan --path ./raw/inbox --ignore-disabled --dry-run --json
+memora import-url https://example.com/article --dry-run --json
+memora import-pdf ./paper.pdf --text-file ./paper.txt --project memora --json
+memora import-zoom ./meeting-summary.md --project memora --json
+memora import-slack ./thread.json --channel "#memora" --json
+memora source-inbox scan --path ./raw/inbox --ignore-disabled --dry-run --json
 ```
 
 Promote a durable atomic decision after preserving the source:
 
 ```bash
-memory remember \
+memora remember \
   --type decision \
   --scope project \
-  --project agent-memory \
+  --project memora \
   --text "Use Obsidian Markdown as durable memory; SQLite remains rebuildable cache." \
   --json
 ```
@@ -218,11 +218,11 @@ Agent-created memories should stay `pending` until reviewed unless
 `agent_policy.trust_level` allows direct activation for an explicit user save:
 
 ```bash
-memory review --json
-memory review approve <id> --reason "verified source" --json
-memory review reject <id> --reason "not durable" --json
-memory review defer <id> --reason "needs later review" --json
-memory reindex --json
+memora review --json
+memora review approve <id> --reason "verified source" --json
+memora review reject <id> --reason "not durable" --json
+memora review defer <id> --reason "needs later review" --json
+memora reindex --json
 ```
 
 Present review items with id, type, confidence, source, risk flags, summary, and
@@ -237,10 +237,10 @@ durable facts, tasks, and open questions. If a transcript/export is available,
 import it through the CLI and create pending summary memory when useful:
 
 ```bash
-memory import-session ./session.jsonl \
+memora import-session ./session.jsonl \
   --summary-file ./session-summary.md \
   --remember-summary \
-  --project agent-memory \
+  --project memora \
   --json
 ```
 
@@ -249,7 +249,7 @@ information that is likely to be useful in a future session.
 
 ## Chat Noise
 
-Do not narrate every `memory ... --json` call or paste large JSON into chat
+Do not narrate every `memora ... --json` call or paste large JSON into chat
 unless the user asks. Summarize final effects only: source saved, pending
 memories created, review required, no durable memory found, or CLI gap
 encountered.
@@ -268,9 +268,9 @@ Use natural-language questions rather than trying to remember exact filenames.
 The usual choices are:
 
 ```bash
-memory search "<query>" --project "<project>" --json
-memory recall "<query>" --project "<project>" --budget 1200 --json
-memory brief "<query>" --project "<project>" --budget 1200 --json
+memora search "<query>" --project "<project>" --json
+memora recall "<query>" --project "<project>" --budget 1200 --json
+memora brief "<query>" --project "<project>" --budget 1200 --json
 ```
 
 Use `search` for direct lookup, `recall` for compact cited context, and `brief`

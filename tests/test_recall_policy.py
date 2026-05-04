@@ -1,6 +1,6 @@
 import pytest
 
-from agent_memory.recall_policy import should_recall
+from recall_policy import should_recall
 
 
 @pytest.mark.parametrize(
@@ -12,7 +12,7 @@ from agent_memory.recall_policy import should_recall
         ("What are my naming preferences for this repo?", "preferences"),
         ("In this codebase, how do we handle lifecycle status?", "project_specific"),
         ("Where did we leave off on Stage 9?", "project_specific"),
-        ("Summarize the project history for agent-memory.", "history_or_status"),
+        ("Summarize the project history for memora.", "history_or_status"),
         ("What's the status of this migration task?", "history_or_status"),
     ],
 )
@@ -59,5 +59,5 @@ def test_recall_policy_treats_toby_alias_as_memory_trigger(message, query):
 
     assert decision.should_recall is True
     assert decision.confidence == 0.99
-    assert "agent_memory_alias" in {trigger.name for trigger in decision.triggers}
+    assert "memora_alias" in {trigger.name for trigger in decision.triggers}
     assert decision.query == query

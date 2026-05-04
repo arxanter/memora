@@ -1,7 +1,7 @@
 memories:
   - id: basic_001
     title: Basic Memory compatibility source
-    content: Basic Memory observations should map to Agent Memory observations.
+    content: Basic Memory observations should map to Memora observations.
     observations:
       - category: decision
         text: Importers should preserve observation category and text.
@@ -13,7 +13,7 @@ memories:
   - id: basic_002
     title: Related compatibility source
     content: Related sources can become source extracts before promotion.
-expected_agent_memory_shape:
+expected_memora_shape:
   memory_type: source_extract
   preserves:
     - observations[].category

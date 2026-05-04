@@ -28,4 +28,4 @@ observations:
 tags: [basic-memory, import]
 ---
 
-Basic Memory observations should map to Agent Memory observations while relation shape is preserved.
+Basic Memory observations should map to Memora observations while relation shape is preserved.

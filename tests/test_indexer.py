@@ -1,8 +1,8 @@
 import sqlite3
 
-from agent_memory.config import load_config
-from agent_memory.indexer import keyword_search, reindex_vault, validate_graph
-from agent_memory.vault import init_vault
+from config import load_config
+from indexer import keyword_search, reindex_vault, validate_graph
+from vault import init_vault
 
 
 def test_reindex_creates_stage_four_tables_and_populates_fts(tmp_path):

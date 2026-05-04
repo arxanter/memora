@@ -7,7 +7,7 @@ aliases:
   - SQLite cache memory
 type: fact
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.91
 created_at: 2026-04-29T12:05:00+02:00

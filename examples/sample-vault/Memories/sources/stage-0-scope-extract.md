@@ -7,7 +7,7 @@ aliases:
   - Stage 0 scope extract
 type: source_extract
 scope: project
-project: agent-memory
+project: memora
 status: pending
 confidence: 0.72
 created_at: 2026-04-29T12:25:00+02:00

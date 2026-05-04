@@ -1,8 +1,8 @@
-from agent_memory.config import RecallConfig, load_config
-from agent_memory.indexer import estimate_tokens, reindex_vault
-from agent_memory.recall import RecallCandidate, pack_candidates, pack_candidates_with_trace, recall_memory
-from agent_memory.retrieval import SearchFilters
-from agent_memory.vault import init_vault
+from config import RecallConfig, load_config
+from indexer import estimate_tokens, reindex_vault
+from recall import RecallCandidate, pack_candidates, pack_candidates_with_trace, recall_memory
+from retrieval import SearchFilters
+from vault import init_vault
 
 
 def test_pack_candidates_is_deterministic_and_applies_diversity_caps():

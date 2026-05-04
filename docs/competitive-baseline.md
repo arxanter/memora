@@ -33,7 +33,7 @@ The project should support:
 The product should compete primarily on context quality for coding agents:
 
 - Deterministic packing under a strict token budget.
-- Stable memory brief format optimized for agent prompts.
+- Stable memora brief format optimized for agent prompts.
 - Citation-preserving recall and brief generation.
 - Lifecycle-aware retrieval that handles stale, superseded, contradicted, pending, and rejected memory explicitly.
 - Explainable recall decisions.
@@ -57,6 +57,6 @@ Compatibility should not force the internal product model to become a clone of B
 
 Recommended positioning:
 
-> A local-first memory brief engine for coding agents, backed by Obsidian Markdown.
+> A local-first memora brief engine for coding agents, backed by Obsidian Markdown.
 
 This keeps the project distinct from generic note-taking AI tools and focuses the implementation on the user-facing gap: agents need compact, current, cited context with lifecycle-aware warnings.

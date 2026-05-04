@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from agent_memory.config import load_config
-from agent_memory.freshness import (
+from config import load_config
+from freshness import (
     FreshnessSnapshot,
     TrackedFile,
     detect_freshness_change,
     iter_freshness_files,
     refresh_index_if_needed,
 )
-from agent_memory.vault import init_vault
+from vault import init_vault
 
 
 class FakeReindexResult:
@@ -27,10 +27,10 @@ def test_iter_freshness_files_tracks_durable_markdown_config_and_schemas(tmp_pat
     source_path = vault / "Sources" / "source.md"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text("source extract", encoding="utf-8")
-    schema_path = vault / ".agent-memory" / "schemas" / "fact.yaml"
+    schema_path = vault / ".memora" / "schemas" / "fact.yaml"
     schema_path.parent.mkdir(parents=True, exist_ok=True)
     schema_path.write_text("type: object\n", encoding="utf-8")
-    generated_path = vault / ".agent-memory" / "cache" / "ignored.md"
+    generated_path = vault / ".memora" / "cache" / "ignored.md"
     generated_path.parent.mkdir(parents=True, exist_ok=True)
     generated_path.write_text("generated", encoding="utf-8")
 
@@ -39,9 +39,9 @@ def test_iter_freshness_files_tracks_durable_markdown_config_and_schemas(tmp_pat
 
     assert "Memories/facts/durable.md" in relative_paths
     assert "Sources/source.md" in relative_paths
-    assert ".agent-memory/config.yaml" in relative_paths
-    assert ".agent-memory/schemas/fact.yaml" in relative_paths
-    assert ".agent-memory/cache/ignored.md" not in relative_paths
+    assert ".memora/config.yaml" in relative_paths
+    assert ".memora/schemas/fact.yaml" in relative_paths
+    assert ".memora/cache/ignored.md" not in relative_paths
 
 
 def test_detect_freshness_change_reports_missing_index_even_with_previous_snapshot(tmp_path):

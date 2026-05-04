@@ -3,7 +3,7 @@ schema_version: 1
 id: mem_20260430_recall_policy
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.82
 created_at: 2026-04-30T09:50:00+02:00

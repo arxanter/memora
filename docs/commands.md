@@ -5,7 +5,7 @@
 The CLI is the primary development, maintenance, and coding-agent interface.
 Agents should prefer CLI JSON commands from any project directory. There is no
 separate agent protocol surface; generated agent instructions should route all
-memory work through `memory ... --json`.
+memory work through `memora ... --json`.
 
 Agent-facing operations should support structured JSON responses, stable error
 codes, and citations. Mutating commands must not silently promote agent-written
@@ -14,104 +14,104 @@ memory to active durable truth unless explicitly configured.
 ## Common End-To-End Path
 
 ```bash
-memory setup ~/MemoryVault --dry-run --json
-memory setup ~/MemoryVault --json
-memory agent rules --client cursor --vault ~/MemoryVault --project agent-memory
-memory agent targets --client all --project /path/to/repo --json
-memory agent integrate --client all --vault ~/MemoryVault --project /path/to/repo --dry-run --json
-memory agent status --client all --project /path/to/repo --json
+memora setup ~/MemoryVault --dry-run --json
+memora setup ~/MemoryVault --json
+memora agent rules --client cursor --vault ~/MemoryVault --project memora
+memora agent targets --client all --project /path/to/repo --json
+memora agent integrate --client all --vault ~/MemoryVault --project /path/to/repo --dry-run --json
+memora agent status --client all --project /path/to/repo --json
 ```
 
 Preserve material first, then promote durable atomic memories:
 
 ```bash
-memory import-source ./notes.md --vault ~/MemoryVault --extract-file ./notes-extract.md --project agent-memory --json
-memory import-url https://example.com/article --vault ~/MemoryVault --dry-run --json
-memory import-pdf ./paper.pdf --vault ~/MemoryVault --text-file ./paper.txt --json
-memory import-zoom ./meeting-summary.md --vault ~/MemoryVault --project agent-memory --json
-memory import-slack ./thread.json --vault ~/MemoryVault --channel "#agent-memory" --json
-memory source-inbox scan --vault ~/MemoryVault --path ~/MemoryVault/raw/inbox --ignore-disabled --dry-run --json
-memory remember --vault ~/MemoryVault --type decision --project agent-memory --text "Use Markdown as durable memory." --json
+memora import-source ./notes.md --vault ~/MemoryVault --extract-file ./notes-extract.md --project memora --json
+memora import-url https://example.com/article --vault ~/MemoryVault --dry-run --json
+memora import-pdf ./paper.pdf --vault ~/MemoryVault --text-file ./paper.txt --json
+memora import-zoom ./meeting-summary.md --vault ~/MemoryVault --project memora --json
+memora import-slack ./thread.json --vault ~/MemoryVault --channel "#memora" --json
+memora source-inbox scan --vault ~/MemoryVault --path ~/MemoryVault/raw/inbox --ignore-disabled --dry-run --json
+memora remember --vault ~/MemoryVault --type decision --project memora --text "Use Markdown as durable memory." --json
 ```
 
 Review and curate before recall treats agent-written memory as active truth:
 
 ```bash
-memory review --vault ~/MemoryVault
-memory review approve mem_20260430_example --vault ~/MemoryVault --reason "verified source" --json
-memory review reject mem_20260430_bad --vault ~/MemoryVault --reason "not durable" --json
-memory synthesize "project decisions" --vault ~/MemoryVault --project agent-memory --dry-run --json
-memory build-context "Plan storage work" --vault ~/MemoryVault --project agent-memory --task-class planning --json
+memora review --vault ~/MemoryVault
+memora review approve mem_20260430_example --vault ~/MemoryVault --reason "verified source" --json
+memora review reject mem_20260430_bad --vault ~/MemoryVault --reason "not durable" --json
+memora synthesize "project decisions" --vault ~/MemoryVault --project memora --dry-run --json
+memora build-context "Plan storage work" --vault ~/MemoryVault --project memora --task-class planning --json
 ```
 
 ## Initial CLI Commands
 
 ```bash
-memory init <vault>
-memory setup [vault] --dry-run
-memory help
-memory agent rules --client cursor
-memory agent targets --client all --project <path>
-memory agent integrate --client cursor --project <path> --dry-run
-memory agent update --client all --project <path> --dry-run
-memory agent status --client all --project <path>
-memory agent doctor --client all --project <path>
-memory agent commands --client all --vault ~/MemoryVault
-memory agent scheduled-template --kind email
-memory agent session-template --client cursor
-memory agent capture --source-file ./source.md --summary-file ./summary.md --memories-file ./memories.json --json
-memory session finalize ./cursor-session.jsonl --summary-file ./summary.md --memories-file ./memories.json --json
-memory scheduled ingest --kind email --source-file ./email-digest.md --extract-file ./email-extract.md --memories-file ./email-memories.json --json
-memory agent-rules --format cursor
-memory agent-install-commands --client all --vault ~/MemoryVault
-memory install-agent-rules --client cursor --project <path> --dry-run
-memory remember --type decision --text "..."
-memory reindex
-memory search "query"
-memory recall "query" --budget 1200
-memory explain-recall "query" --budget 1200
-memory brief "query" --budget 1200
-memory synthesize ["topic"] --project <project> --dry-run
-memory should-recall "user message"
-memory eval <fixture-or-file>
-memory status
-memory inspect <id>
-memory open <id>
-memory graph <id>
-memory doctor
-memory conflicts
-memory supersede <old_id> --by <new_id>
-memory contradict <id1> <id2>
-memory mark <id> --status stale
-memory decay
-memory review
-memory review approve <id> [<id>...] --reason "verified source"
-memory review reject <id> [<id>...] --reason "not durable"
-memory review defer <id> [<id>...] --reason "needs later review"
-memory review supersede <old_id> --by <new_id> --reason "merged into replacement"
-memory reject <id>
-memory raw list
-memory raw inspect raw/inbox/webclips/article.md
-memory raw process raw/inbox/webclips/article.md --project <project> --dry-run
-memory raw process-inbox raw/inbox --project <project> --limit 10
-memory import-source <path>
-memory import-source-inbox <path> --dry-run
-memory source-inbox scan --ignore-disabled --dry-run
-memory import-url <url> --dry-run
-memory import-pdf <path> --text-file <path> --dry-run
-memory import-zoom <path> --meeting-id <id> --dry-run
-memory import-slack <path> --channel <name-or-id> --dry-run
-memory import-session <path> --summary-file <path> --remember-summary
-memory session finalize <path> --summary-file <path> --memories-file <path>
-memory import <path>
-memory export --format markdown
+memora init <vault>
+memora setup [vault] --dry-run
+memora help
+memora agent rules --client cursor
+memora agent targets --client all --project <path>
+memora agent integrate --client cursor --project <path> --dry-run
+memora agent update --client all --project <path> --dry-run
+memora agent status --client all --project <path>
+memora agent doctor --client all --project <path>
+memora agent commands --client all --vault ~/MemoryVault
+memora agent scheduled-template --kind email
+memora agent session-template --client cursor
+memora agent capture --source-file ./source.md --summary-file ./summary.md --memories-file ./memories.json --json
+memora session finalize ./cursor-session.jsonl --summary-file ./summary.md --memories-file ./memories.json --json
+memora scheduled ingest --kind email --source-file ./email-digest.md --extract-file ./email-extract.md --memories-file ./email-memories.json --json
+memora agent-rules --format cursor
+memora agent-install-commands --client all --vault ~/MemoryVault
+memora install-agent-rules --client cursor --project <path> --dry-run
+memora remember --type decision --text "..."
+memora reindex
+memora search "query"
+memora recall "query" --budget 1200
+memora explain-recall "query" --budget 1200
+memora brief "query" --budget 1200
+memora synthesize ["topic"] --project <project> --dry-run
+memora should-recall "user message"
+memora eval <fixture-or-file>
+memora status
+memora inspect <id>
+memora open <id>
+memora graph <id>
+memora doctor
+memora conflicts
+memora supersede <old_id> --by <new_id>
+memora contradict <id1> <id2>
+memora mark <id> --status stale
+memora decay
+memora review
+memora review approve <id> [<id>...] --reason "verified source"
+memora review reject <id> [<id>...] --reason "not durable"
+memora review defer <id> [<id>...] --reason "needs later review"
+memora review supersede <old_id> --by <new_id> --reason "merged into replacement"
+memora reject <id>
+memora raw list
+memora raw inspect raw/inbox/webclips/article.md
+memora raw process raw/inbox/webclips/article.md --project <project> --dry-run
+memora raw process-inbox raw/inbox --project <project> --limit 10
+memora import-source <path>
+memora import-source-inbox <path> --dry-run
+memora source-inbox scan --ignore-disabled --dry-run
+memora import-url <url> --dry-run
+memora import-pdf <path> --text-file <path> --dry-run
+memora import-zoom <path> --meeting-id <id> --dry-run
+memora import-slack <path> --channel <name-or-id> --dry-run
+memora import-session <path> --summary-file <path> --remember-summary
+memora session finalize <path> --summary-file <path> --memories-file <path>
+memora import <path>
+memora export --format markdown
 ```
 
-### `memory init <vault>`
+### `memora init <vault>`
 
 Implemented in Stage 2.
 
-Creates the vault structure and `.agent-memory/config.yaml`. It does not
+Creates the vault structure and `.memora/config.yaml`. It does not
 overwrite user content or an existing config.
 
 Created folders:
@@ -137,69 +137,69 @@ Created folders:
 - `Briefs`
 - `Profiles/projects`
 - `Synthesis`
-- `.agent-memory/schemas`
-- `.agent-memory/cache`
-- `.agent-memory/embeddings`
-- `.agent-memory/locks`
+- `.memora/schemas`
+- `.memora/cache`
+- `.memora/embeddings`
+- `.memora/locks`
 
 Example:
 
 ```bash
-memory init ./memory-vault --json
+memora init ./memory-vault --json
 ```
 
-### `memory setup [vault]`
+### `memora setup [vault]`
 
-Creates the same safe vault layout as `memory init`, but adds a `--dry-run`
+Creates the same safe vault layout as `memora init`, but adds a `--dry-run`
 planning mode and next-step guidance for connecting coding agents. It does not
-overwrite an existing `.agent-memory/config.yaml`.
+overwrite an existing `.memora/config.yaml`.
 
 Examples:
 
 ```bash
-memory setup ./memory-vault --dry-run --json
-memory setup ./memory-vault --json
+memora setup ./memory-vault --dry-run --json
+memora setup ./memory-vault --json
 ```
 
 The JSON output includes planned or created actions, `would_write`, the
 `config_path`, and next steps such as generating or installing agent rules.
 
-### `memory help`
+### `memora help`
 
-Prints a grouped overview of available Agent Memory commands with short
+Prints a grouped overview of available Memora commands with short
 descriptions. Use it when you want the project-specific help surface instead of
-Typer's generated `memory --help` output.
+Typer's generated `memora --help` output.
 
 Examples:
 
 ```bash
-memory help
-memory help --json
+memora help
+memora help --json
 ```
 
 The JSON output is stable enough for agent clients to inspect available command
 groups and descriptions.
 
-### `memory agent-rules`
+### `memora agent-rules`
 
-Compatibility alias for `memory agent rules`. It generates CLI-first agent
+Compatibility alias for `memora agent rules`. It generates CLI-first agent
 instructions for `AGENTS.md`, Cursor rules, Claude, or Codex. Human output writes
 the rule text to stdout; `--json` wraps the same text as `content` with metadata.
 
 Examples:
 
 ```bash
-memory agent-rules --format agents
-memory agent-rules --format cursor --vault ~/MemoryVault --project agent-memory
-memory agent-rules --format claude --json
-memory agent-rules --format codex
+memora agent-rules --format agents
+memora agent-rules --format cursor --vault ~/MemoryVault --project memora
+memora agent-rules --format claude --json
+memora agent-rules --format codex
 ```
 
-Generated rules tell agents to prefer `memory ... --json`, use
-`memory build-context` only when recall is relevant, preserve citations, and
+Generated rules tell agents to prefer `memora ... --json`, use
+`memora build-context` only when recall is relevant, preserve citations, and
 save raw material as `Sources/` before promoting atomic memories.
 
-### `memory agent ...`
+### `memora agent ...`
 
 Preferred grouped command surface for coding-agent integration. The old
 top-level commands remain supported as compatibility aliases, but new automation
@@ -208,19 +208,19 @@ should prefer the grouped form.
 Examples:
 
 ```bash
-memory agent rules --client cursor --scope project --vault ~/MemoryVault --project agent-memory
-memory agent targets --client all --scope project --project ./my-repo --json
-memory agent integrate --client all --scope project --project ./my-repo --vault ~/MemoryVault --dry-run --json
-memory agent update --client codex --scope project --project ./my-repo --json
-memory agent status --client all --scope project --project ./my-repo --json
-memory agent doctor --client all --scope project --project ./my-repo --vault ~/MemoryVault --json
-memory agent commands --client all --project ./my-repo --vault ~/MemoryVault
-memory agent scheduled-template --kind email --client cursor --project agent-memory
-memory agent scheduled-template --kind slack --client codex --project agent-memory --json
-memory agent session-template --client codex --project agent-memory
-memory agent capture \
+memora agent rules --client cursor --scope project --vault ~/MemoryVault --project memora
+memora agent targets --client all --scope project --project ./my-repo --json
+memora agent integrate --client all --scope project --project ./my-repo --vault ~/MemoryVault --dry-run --json
+memora agent update --client codex --scope project --project ./my-repo --json
+memora agent status --client all --scope project --project ./my-repo --json
+memora agent doctor --client all --scope project --project ./my-repo --vault ~/MemoryVault --json
+memora agent commands --client all --project ./my-repo --vault ~/MemoryVault
+memora agent scheduled-template --kind email --client cursor --project memora
+memora agent scheduled-template --kind slack --client codex --project memora --json
+memora agent session-template --client codex --project memora
+memora agent capture \
   --vault ~/MemoryVault \
-  --project agent-memory \
+  --project memora \
   --source-title "Agent task summary" \
   --source-file ./source.md \
   --summary-file ./summary.md \
@@ -228,34 +228,34 @@ memory agent capture \
   --json
 ```
 
-`memory agent rules` is equivalent to `memory agent-rules`, but uses `--client`
+`memora agent rules` is equivalent to `memora agent-rules`, but uses `--client`
 instead of `--format`. `--scope project|user` is accepted for examples and future
 scope-specific content.
 
-`memory agent targets` resolves target files without writing them. For
+`memora agent targets` resolves target files without writing them. For
 `--client all`, it reports Cursor, Claude, and Codex only; generic `agents` is
 excluded because Codex and `agents` both target `AGENTS.md` in project scope.
 
-`memory agent integrate` installs generated rules for the selected client(s).
+`memora agent integrate` installs generated rules for the selected client(s).
 It writes managed blocks with template metadata, supports `--dry-run`, and
 accepts `--target` only when one client is selected. Existing unmanaged files are
 blocked unless `--force` is passed.
 
-`memory agent update` conservatively refreshes existing integrations. If a
+`memora agent update` conservatively refreshes existing integrations. If a
 managed block exists, only that block is replaced. If the target exists without a
 managed block, JSON reports `blocked: true` and `needs_manual_merge: true` unless
 `--force` is passed.
 
-`memory agent status` and `memory agent doctor` do not mutate files. Status
+`memora agent status` and `memora agent doctor` do not mutate files. Status
 reports missing, installed, outdated, or manual targets from file existence,
 content hashes, and managed metadata. Doctor adds lightweight checks for the
-external `memory` command, target status, and vault loadability.
+external `memora` command, target status, and vault loadability.
 
-`memory agent commands` is equivalent to `memory agent-install-commands` and
+`memora agent commands` is equivalent to `memora agent-install-commands` and
 currently routes through the same command-generation payload. The scheduled and
 session template commands render safe prompt templates for agent workflows.
 
-`memory agent scheduled-template` renders a practical scheduled-agent prompt for
+`memora agent scheduled-template` renders a practical scheduled-agent prompt for
 bounded workflows such as email digests, calendar summaries, Slack thread
 exports, web status scans, or custom prepared sources. The template records run
 frequency, source boundaries, allowed accounts/workspaces, sensitivity, project,
@@ -265,12 +265,12 @@ agent steps, and safety guidance. JSON output includes `template`, `kind`,
 Examples:
 
 ```bash
-memory agent scheduled-template --kind email --client cursor --project agent-memory
-memory agent scheduled-template --kind calendar --client claude --project agent-memory --json
-memory agent scheduled-template --kind web --client codex
+memora agent scheduled-template --kind email --client cursor --project memora
+memora agent scheduled-template --kind calendar --client claude --project memora --json
+memora agent scheduled-template --kind web --client codex
 ```
 
-`memory agent capture` is the deterministic batch write path for an LLM agent
+`memora agent capture` is the deterministic batch write path for an LLM agent
 that has already analyzed source material. It reads a raw source file, uses
 `--summary-file` as the source extract, saves the material under `Sources/`
 unless `--dry-run` is passed, and creates pending agent-authored memories from
@@ -283,20 +283,20 @@ JSON output groups the saved or planned `source`, accepted `memories`,
 `created_memories` or `planned_memories`, `rejected_proposals`, `review_required`,
 `dry_run`, `would_write`, and `written`.
 
-### `memory agent-install-commands`
+### `memora agent-install-commands`
 
-Compatibility alias for `memory agent commands`. It prints copy/paste shell
-commands for installing Agent Memory rules into the current project for Cursor,
+Compatibility alias for `memora agent commands`. It prints copy/paste shell
+commands for installing Memora rules into the current project for Cursor,
 Claude, Codex, or generic `AGENTS.md` clients. The command does not write files;
-it only renders dry-run and install commands that call `memory install-agent-rules`.
+it only renders dry-run and install commands that call `memora install-agent-rules`.
 
 Examples:
 
 ```bash
 cd ./my-repo
-memory agent-install-commands --client all --vault ~/MemoryVault
-memory agent-install-commands --client codex --vault ~/MemoryVault
-memory agent-install-commands --vault ~/MemoryVault --force --json
+memora agent-install-commands --client all --vault ~/MemoryVault
+memora agent-install-commands --client codex --vault ~/MemoryVault
+memora agent-install-commands --vault ~/MemoryVault --force --json
 ```
 
 `--client all` is the default and emits Cursor, Claude, and Codex commands. It
@@ -307,21 +307,21 @@ does not include `agents`, because `agents` and `codex` both target
 Human output is ready to paste into a shell:
 
 ```bash
-memory install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
-memory install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault
-memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
-memory install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault
-memory install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
-memory install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault
+memora install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memora install-agent-rules --client cursor --project /path/to/my-repo --vault /Users/you/MemoryVault
+memora install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memora install-agent-rules --client claude --project /path/to/my-repo --vault /Users/you/MemoryVault
+memora install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault --dry-run
+memora install-agent-rules --client codex --project /path/to/my-repo --vault /Users/you/MemoryVault
 ```
 
-### `memory install-agent-rules`
+### `memora install-agent-rules`
 
 Compatibility wrapper for project-level agent rule installation. The preferred
-new command is `memory agent integrate --scope project`. Defaults are:
+new command is `memora agent integrate --scope project`. Defaults are:
 
 - `--client agents`: `<project>/AGENTS.md`
-- `--client cursor`: `<project>/.cursor/rules/agent-memory.mdc`
+- `--client cursor`: `<project>/.cursor/rules/memora.mdc`
 - `--client claude`: `<project>/CLAUDE.md`
 - `--client codex`: `<project>/AGENTS.md`
 
@@ -331,13 +331,13 @@ and refuses to overwrite existing files unless `--force` is passed.
 Examples:
 
 ```bash
-memory install-agent-rules --client cursor --project ./my-repo --dry-run --json
-memory install-agent-rules --client agents --project ./my-repo
-memory install-agent-rules --client claude --project ./my-repo --force
-memory install-agent-rules --client codex --project ./my-repo --dry-run
+memora install-agent-rules --client cursor --project ./my-repo --dry-run --json
+memora install-agent-rules --client agents --project ./my-repo
+memora install-agent-rules --client claude --project ./my-repo --force
+memora install-agent-rules --client codex --project ./my-repo --dry-run
 ```
 
-### `memory remember`
+### `memora remember`
 
 Implemented in Stage 2.
 
@@ -346,20 +346,20 @@ Creates a valid Stage 1 Markdown memory file under the matching
 `active` status by default, includes one observation that mirrors the body text,
 and validates the rendered Markdown before saving it.
 
-The command loads config from `--vault`, `AGENT_MEMORY_VAULT`, or the nearest
-parent `.agent-memory/config.yaml`.
+The command loads config from `--vault`, `MEMORA_VAULT`, or the nearest
+parent `.memora/config.yaml`.
 
 Example:
 
 ```bash
-memory remember --vault ./memory-vault --type decision --text "Use Markdown as durable memory." --json
+memora remember --vault ./memory-vault --type decision --text "Use Markdown as durable memory." --json
 ```
 
-### `memory reindex`
+### `memora reindex`
 
 Implemented in Stage 4 and expanded in Stage 11.
 
-Rebuilds `.agent-memory/index.sqlite` from canonical Markdown under
+Rebuilds `.memora/index.sqlite` from canonical Markdown under
 `Memories/**/*.md`. The index is disposable cache data and can be recreated at
 any time from the vault files.
 
@@ -372,7 +372,7 @@ Behavior:
   `chunk_fts`.
 - Reports graph orphan warnings for relation targets that are not present in the
   vault.
-- Uses the local vault lock so reindex does not race with Agent Memory Markdown
+- Uses the local vault lock so reindex does not race with Memora Markdown
   writes.
 
 Use `--clean` to delete the existing SQLite file before rebuilding. This is the
@@ -382,20 +382,20 @@ Markdown conflicts, or encountering a stale/corrupt local index.
 Example:
 
 ```bash
-memory reindex --vault ./memory-vault --json
-memory reindex --vault ./memory-vault --clean
+memora reindex --vault ./memory-vault --json
+memora reindex --vault ./memory-vault --clean
 ```
 
-### `memory refresh-index`
+### `memora refresh-index`
 
 Implemented in Stage 13.
 
 Runs a conservative freshness check over durable vault inputs and calls
-`memory reindex` only when needed. It tracks Markdown outside `.agent-memory/`,
-`.agent-memory/config.yaml`, and `.agent-memory/schemas/`; generated files such
+`memora reindex` only when needed. It tracks Markdown outside `.memora/`,
+`.memora/config.yaml`, and `.memora/schemas/`; generated files such
 as `index.sqlite`, `cache/`, `embeddings/`, and `locks/` are ignored.
 
-Freshness state is stored under `.agent-memory/cache/freshness-state.json`, so it
+Freshness state is stored under `.memora/cache/freshness-state.json`, so it
 is disposable local cache. The command also refreshes the index when the SQLite
 index is missing or older than tracked durable files.
 
@@ -409,11 +409,11 @@ Useful options:
 Example:
 
 ```bash
-memory refresh-index --vault ./memory-vault --json
-memory refresh-index --vault ./memory-vault --debounce 1
+memora refresh-index --vault ./memory-vault --json
+memora refresh-index --vault ./memory-vault --debounce 1
 ```
 
-### `memory raw ...`
+### `memora raw ...`
 
 Implemented as the CLI-first input layer for unprocessed material.
 
@@ -426,11 +426,11 @@ extracts and source-backed pending memories for review.
 Examples:
 
 ```bash
-memory raw list --vault ./memory-vault --json
-memory raw inspect raw/inbox/webclips/article.md --vault ./memory-vault --json
-memory raw process raw/inbox/webclips/article.md --project agent-memory --dry-run --json
-memory raw process raw/inbox/webclips/article.md --project agent-memory --json
-memory raw process-inbox raw/inbox --project agent-memory --limit 10 --dry-run --json
+memora raw list --vault ./memory-vault --json
+memora raw inspect raw/inbox/webclips/article.md --vault ./memory-vault --json
+memora raw process raw/inbox/webclips/article.md --project memora --dry-run --json
+memora raw process raw/inbox/webclips/article.md --project memora --json
+memora raw process-inbox raw/inbox --project memora --limit 10 --dry-run --json
 ```
 
 MVP behavior:
@@ -441,7 +441,7 @@ MVP behavior:
 - uses `raw/quarantine/` as the intended home for secret or unsafe inputs;
 - leaves AI extraction outside the CLI until optional LLM providers are added.
 
-### `memory search`
+### `memora search`
 
 Implemented in Stage 5, with optional semantic retrieval added in Stage 6.
 
@@ -493,11 +493,11 @@ in the candidate set, not wall-clock time.
 Example:
 
 ```bash
-memory search "vector db" --vault ./memory-vault --project foo --type decision --status active --json
-memory search "agent memory" --vault ./memory-vault --include-related
-memory search "database decisions" --vault ./memory-vault --mode auto
-memory search "database decisions" --vault ./memory-vault --no-semantic
-memory search "recent decision" --vault ./memory-vault --refresh
+memora search "vector db" --vault ./memory-vault --project foo --type decision --status active --json
+memora search "agent memory" --vault ./memory-vault --include-related
+memora search "database decisions" --vault ./memory-vault --mode auto
+memora search "database decisions" --vault ./memory-vault --no-semantic
+memora search "recent decision" --vault ./memory-vault --refresh
 ```
 
 Semantic search is disabled by default. Under the current same-session
@@ -510,16 +510,16 @@ explicitly configured, `auto` can use hybrid search. JSON output includes
 `docs/semantic-search.md` for the current limitation, provider hook, generic
 command protocol, and deterministic test-only provider.
 
-### `memory recall`
+### `memora recall`
 
 Implemented in Stage 7.
 
-Searches indexed memory with the same retrieval layer as `memory search`, then
+Searches indexed memory with the same retrieval layer as `memora search`, then
 packs ranked chunks under a strict estimated token budget. The JSON response
 includes `budget`, `used_tokens_estimate`, packed `chunks`, and a citation object
 for every packed chunk.
 
-If `--budget` is omitted, `memory recall` resolves the budget from
+If `--budget` is omitted, `memora recall` resolves the budget from
 `recall_policies.<task-class>.budget`. It also refreshes the index before recall
 according to `index_freshness.refresh_before_recall`, unless overridden with
 `--refresh` or `--no-refresh`.
@@ -535,7 +535,7 @@ Packing behavior is deterministic for a fixed index and search configuration:
 - Chunk selection is reranked by retrieval score plus small chunk-type metadata
   boosts.
 - Per-document, per-memory-type, and per-project caps are enforced from
-  `.agent-memory/config.yaml` recall settings.
+  `.memora/config.yaml` recall settings.
 - Oversized chunks are truncated deterministically from the start of the chunk,
   then re-estimated, rather than skipped.
 - `used_tokens_estimate` never exceeds `budget` according to the built-in
@@ -557,11 +557,11 @@ JSON output includes a compact `retrieval` trace with planned query variants,
 effective mode, semantic provider status, attempted searches, selected count, and
 an empty reason when nothing was selected.
 
-### `memory explain-recall`
+### `memora explain-recall`
 
 Implemented in Stage 13.
 
-Runs the same indexed retrieval and budget-packing path as `memory recall`, but
+Runs the same indexed retrieval and budget-packing path as `memora recall`, but
 returns deterministic explanations for selected and skipped candidate chunks
 without updating `last_used_at`. Human output is meant for terminal debugging;
 `--json` returns structured `selected` and `skipped` arrays with reason codes,
@@ -576,15 +576,15 @@ Skipped chunks report practical reasons when available, including `superseded`,
 Example:
 
 ```bash
-memory explain-recall "Obsidian sync decisions" --vault ./memory-vault
-memory explain-recall "Obsidian sync decisions" --vault ./memory-vault --task-class planning --mode text --json
+memora explain-recall "Obsidian sync decisions" --vault ./memory-vault
+memora explain-recall "Obsidian sync decisions" --vault ./memory-vault --task-class planning --mode text --json
 ```
 
-### `memory brief`
+### `memora brief`
 
 Implemented in Stage 8.
 
-Builds an agent-facing Memory Brief from Stage 7 recall output. The brief is
+Builds an agent-facing Memora Brief from Stage 7 recall output. The brief is
 deterministic, citation-preserving, and rendered under a strict estimated token
 budget. Markdown is the default output and `--json` returns the same rendered
 Markdown with structured sections, citations, budget metadata, and recall
@@ -593,7 +593,7 @@ summary data.
 Stable Markdown section shape:
 
 ```markdown
-## Memory Brief
+## Memora Brief
 
 Current relevant facts:
 
@@ -619,7 +619,7 @@ Brief behavior:
 - Every bullet carries citation keys such as `[C1]`, and the Citations section
   maps those keys to Obsidian-relative memory paths.
 
-Supported filters match `memory recall`:
+Supported filters match `memora recall`:
 
 - `--project <name>`
 - `--type <fact|preference|decision|task|source_extract|project_context|conversation_summary>`
@@ -638,11 +638,11 @@ inside the recall summary.
 Example:
 
 ```bash
-memory brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
-memory brief "Obsidian sync decisions" --vault ./memory-vault --json
+memora brief "Obsidian sync decisions" --vault ./memory-vault --budget 1200
+memora brief "Obsidian sync decisions" --vault ./memory-vault --json
 ```
 
-### `memory synthesize`
+### `memora synthesize`
 
 Implemented in Phase 3.
 
@@ -660,14 +660,14 @@ frontmatter metadata including `schema`, `kind`, `created_at`, `generated_at`,
 Examples:
 
 ```bash
-memory synthesize "raw ingestion" --vault ./memory-vault --project agent-memory --dry-run --json
-memory synthesize --vault ./memory-vault --project agent-memory --title "Agent Memory synthesis" --json
+memora synthesize "raw ingestion" --vault ./memory-vault --project memora --dry-run --json
+memora synthesize --vault ./memory-vault --project memora --title "Memora synthesis" --json
 ```
 
-### `memory build-context`
+### `memora build-context`
 
 CLI-first replacement for agent-side automatic recall. It runs
-`memory should-recall` policy first. When memory is not useful, it returns
+`memora should-recall` policy first. When memory is not useful, it returns
 `memory_needed: false` without spending recall budget. When memory is useful, it
 refreshes the index as configured and returns the same citation-preserving brief
 shape agents can use directly.
@@ -675,20 +675,20 @@ shape agents can use directly.
 Examples:
 
 ```bash
-memory build-context "What did we decide about raw ingestion?" --project agent-memory --task-class planning --json
-memory build-context "Run git status" --json
+memora build-context "What did we decide about raw ingestion?" --project memora --task-class planning --json
+memora build-context "Run git status" --json
 ```
 
-Agents should prefer this command for substantial tasks and keep `memory search`,
-`memory recall`, `memory brief`, and `memory lookup-source` as explicit deeper
+Agents should prefer this command for substantial tasks and keep `memora search`,
+`memora recall`, `memora brief`, and `memora lookup-source` as explicit deeper
 operations.
 
-### `memory should-recall`
+### `memora should-recall`
 
 Implemented in Stage 10.
 
 Classifies a user request with deterministic heuristics and no LLM dependency.
-It helps agents decide whether to call `memory brief` before answering. Human
+It helps agents decide whether to call `memora brief` before answering. Human
 output is concise by default, and `--json` returns the stable policy payload with
 `should_recall`, `confidence`, and matched `triggers`.
 
@@ -700,19 +700,19 @@ memory.
 Examples:
 
 ```bash
-memory should-recall "What did we decide about embeddings?"
-memory should-recall "Write a Python function that reverses a list." --json
+memora should-recall "What did we decide about embeddings?"
+memora should-recall "Write a Python function that reverses a list." --json
 ```
 
 Agent usage pattern:
 
 ```bash
-if memory should-recall "$USER_MESSAGE" --json | jq -e '.should_recall'; then
-  memory brief "$USER_MESSAGE" --budget 1200
+if memora should-recall "$USER_MESSAGE" --json | jq -e '.should_recall'; then
+  memora brief "$USER_MESSAGE" --budget 1200
 fi
 ```
 
-### `memory eval`
+### `memora eval`
 
 Implemented in Stage 12.
 
@@ -725,11 +725,11 @@ search, recall, brief, review, conflict, and doctor cases.
 Example:
 
 ```bash
-memory eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
-memory eval tests/fixtures/vault-basic
+memora eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
+memora eval tests/fixtures/vault-basic
 ```
 
-### `memory status`
+### `memora status`
 
 Implemented in Stage 2.
 
@@ -737,23 +737,23 @@ Loads config, validates canonical memory Markdown with the Stage 1 validator,
 and returns a lightweight summary including memory count, pending count, issue
 count, and whether the disposable SQLite index exists.
 
-### `memory inspect`
+### `memora inspect`
 
 Implemented in Stage 13.
 
 Inspects one canonical memory by id. Human output shows type/status/scope,
 absolute Markdown path, Obsidian URI, source metadata when present, and body
 text. `--json` returns the same information with stable fields:
-`path`, `relative_path`, `obsidian_uri`, `memory`, `body`, and `citations`.
+`path`, `relative_path`, `obsidian_uri`, `memora`, `body`, and `citations`.
 
 Example:
 
 ```bash
-memory inspect mem_20260430_example --vault ./memory-vault
-memory inspect mem_20260430_example --vault ./memory-vault --json
+memora inspect mem_20260430_example --vault ./memory-vault
+memora inspect mem_20260430_example --vault ./memory-vault --json
 ```
 
-### `memory open`
+### `memora open`
 
 Implemented in Stage 13.
 
@@ -765,16 +765,16 @@ URI.
 Example:
 
 ```bash
-memory open mem_20260430_example --vault ./memory-vault
-memory open mem_20260430_example --vault ./memory-vault --launch
+memora open mem_20260430_example --vault ./memory-vault
+memora open mem_20260430_example --vault ./memory-vault --launch
 ```
 
-### `memory graph`
+### `memora graph`
 
 Implemented in Stage 13.
 
 Shows incoming and outgoing relation links for a memory id from the SQLite index.
-Run `memory reindex` first if the index is missing or stale. JSON output contains
+Run `memora reindex` first if the index is missing or stale. JSON output contains
 structured `incoming` and `outgoing` arrays with `from`, `to`, `relation`,
 `confidence`, `direction`, and linked-memory metadata when the target exists
 locally.
@@ -782,11 +782,11 @@ locally.
 Example:
 
 ```bash
-memory graph mem_20260430_example --vault ./memory-vault
-memory graph mem_20260430_example --vault ./memory-vault --json
+memora graph mem_20260430_example --vault ./memory-vault
+memora graph mem_20260430_example --vault ./memory-vault --json
 ```
 
-### `memory doctor`
+### `memora doctor`
 
 Expanded in Stages 4, 9, and 11.
 
@@ -797,7 +797,7 @@ so users can review conflicts without treating an intentional contradiction edge
 as invalid Markdown. Stage 11 also includes Markdown sync conflict detection;
 conflict markers and duplicate memory IDs are reported as sync issues.
 
-### `memory conflicts`
+### `memora conflicts`
 
 Implemented in Stage 11.
 
@@ -812,11 +812,11 @@ paths for agent consumption.
 Example:
 
 ```bash
-memory conflicts --vault ./memory-vault
-memory conflicts --vault ./memory-vault --json
+memora conflicts --vault ./memory-vault
+memora conflicts --vault ./memory-vault --json
 ```
 
-### `memory mark`
+### `memora mark`
 
 Implemented in Stage 9.
 
@@ -828,10 +828,10 @@ memory with `active` or `pending` clears `valid_to`.
 Example:
 
 ```bash
-memory mark mem_20260430_example --status stale --vault ./memory-vault --json
+memora mark mem_20260430_example --status stale --vault ./memory-vault --json
 ```
 
-### `memory reject`
+### `memora reject`
 
 Implemented in Stage 9.
 
@@ -839,7 +839,7 @@ Marks a memory `rejected`, sets `valid_to` when missing, and records a `reject`
 history entry. Rejected memory is excluded from default search, recall, and brief
 generation unless `--status rejected` is passed explicitly.
 
-### `memory supersede`
+### `memora supersede`
 
 Implemented in Stage 9.
 
@@ -851,19 +851,19 @@ replacement so the status and relation are updated together for Stage 9 needs.
 Example:
 
 ```bash
-memory supersede mem_old --by mem_new --vault ./memory-vault --json
+memora supersede mem_old --by mem_new --vault ./memory-vault --json
 ```
 
-### `memory contradict`
+### `memora contradict`
 
 Implemented in Stage 9.
 
 Records a durable contradiction edge from the first memory to the second by
 appending to `contradicts`. The target memory also receives an audit history
-entry. Contradictions are shown in `memory doctor` warnings and in Memory Brief
+entry. Contradictions are shown in `memora doctor` warnings and in Memora Brief
 open-question bullets when connected to recalled memory.
 
-### `memory decay`
+### `memora decay`
 
 Implemented in Stage 9.
 
@@ -871,7 +871,7 @@ Scans active memories and marks any memory with an elapsed `valid_to` date as
 `stale`. This is intentionally conservative: it does not infer age-based decay or
 automatic recall policy.
 
-### `memory review`
+### `memora review`
 
 Implemented in Stage 9 and polished in Stage 13.
 
@@ -885,17 +885,17 @@ stable review payload.
 Review also supports explicit batch actions over user-provided ids:
 
 ```bash
-memory review approve mem_a mem_b --reason "verified source" --json
-memory review reject mem_a mem_b --reason "not durable" --dry-run --json
-memory review defer mem_a --reason "needs later review"
-memory review supersede mem_old --by mem_new --reason "merged into replacement"
+memora review approve mem_a mem_b --reason "verified source" --json
+memora review reject mem_a mem_b --reason "not durable" --dry-run --json
+memora review defer mem_a --reason "needs later review"
+memora review supersede mem_old --by mem_new --reason "merged into replacement"
 ```
 
 Batch actions support `--dry-run` and return per-item JSON results. Approving a
 pending item with unsafe recall risk flags is blocked unless
 `--override-unsafe` is passed explicitly.
 
-### `memory import-source`
+### `memora import-source`
 
 Implemented in Stage 14.
 
@@ -908,15 +908,15 @@ extract. The command records source metadata such as `channel`, `source_quality`
 Example:
 
 ```bash
-memory import-source ./article.md \
+memora import-source ./article.md \
   --vault ./memory-vault \
   --extract-file ./article-extract.md \
-  --project agent-memory \
+  --project memora \
   --tag article \
   --json
 ```
 
-### `memory import-source-inbox`
+### `memora import-source-inbox`
 
 Implemented in Stage 14.
 
@@ -928,19 +928,19 @@ imported.
 Example:
 
 ```bash
-memory import-source-inbox ./Sources/Inbox \
+memora import-source-inbox ./Sources/Inbox \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --tag web-clip \
   --dry-run \
   --json
 ```
 
-### `memory source-inbox scan`
+### `memora source-inbox scan`
 
 Implemented in Phase 4 as an opt-in one-shot source inbox scanner.
 
-Scans the configured `.agent-memory/config.yaml` `connectors.source_inbox.path`
+Scans the configured `.memora/config.yaml` `connectors.source_inbox.path`
 or an explicit `--path` override, plans supported local imports, and optionally
 saves them under `Sources/`. It is not a daemon and does not watch in the
 background. Connector switches default to disabled; pass `--ignore-disabled` only
@@ -954,7 +954,7 @@ importer. The scanner never creates canonical memories by itself.
 Example:
 
 ```bash
-memory source-inbox scan \
+memora source-inbox scan \
   --vault ./memory-vault \
   --path ./Inbox \
   --ignore-disabled \
@@ -962,7 +962,7 @@ memory source-inbox scan \
   --json
 ```
 
-### `memory import-url`
+### `memora import-url`
 
 Implemented in Phase 4 as an optional explicit connector.
 
@@ -977,21 +977,21 @@ Use `--dry-run` to preview metadata without fetching or writing files.
 Examples:
 
 ```bash
-memory import-url https://example.com/article --vault ./memory-vault --dry-run --json
-memory import-url https://example.com/article \
+memora import-url https://example.com/article --vault ./memory-vault --dry-run --json
+memora import-url https://example.com/article \
   --from-file ./article.html \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --tag article \
   --json
 ```
 
-### `memory import-pdf`
+### `memora import-pdf`
 
 Implemented in Phase 4 as an optional explicit connector.
 
 Imports one local PDF into `Sources/` by extracting text with the optional
-`agent-memory[pdf]` dependency, or by reading pre-extracted UTF-8 text with
+`memora[pdf]` dependency, or by reading pre-extracted UTF-8 text with
 `--text-file` / `--content-file`. The command records `channel: pdf`, file
 origin, extraction method, project, tags, sensitivity, and safety risk flags. It
 does not create canonical memories by itself.
@@ -1001,16 +1001,16 @@ Use `--dry-run` to preview metadata without extracting or writing files.
 Examples:
 
 ```bash
-memory import-pdf ./paper.pdf --vault ./memory-vault --dry-run --json
-memory import-pdf ./paper.pdf \
+memora import-pdf ./paper.pdf --vault ./memory-vault --dry-run --json
+memora import-pdf ./paper.pdf \
   --text-file ./paper.txt \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --tag paper \
   --json
 ```
 
-### `memory import-zoom`
+### `memora import-zoom`
 
 Implemented in Phase 4 as an optional explicit connector.
 
@@ -1027,16 +1027,16 @@ writing files.
 Examples:
 
 ```bash
-memory import-zoom ./weekly-summary.md --vault ./memory-vault --dry-run --json
-memory import-zoom ./weekly-summary.md \
+memora import-zoom ./weekly-summary.md --vault ./memory-vault --dry-run --json
+memora import-zoom ./weekly-summary.md \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --meeting-id 123456789 \
   --tag meeting \
   --json
 ```
 
-### `memory import-slack`
+### `memora import-slack`
 
 Implemented in Phase 4 as an optional explicit connector.
 
@@ -1053,18 +1053,18 @@ writing files.
 Examples:
 
 ```bash
-memory import-slack ./thread.md --vault ./memory-vault --dry-run --json
-memory import-slack ./thread.json \
+memora import-slack ./thread.md --vault ./memory-vault --dry-run --json
+memora import-slack ./thread.json \
   --vault ./memory-vault \
-  --project agent-memory \
-  --channel "#agent-memory" \
+  --project memora \
+  --channel "#memora" \
   --thread-ts 1714550400.000100 \
   --permalink https://example.slack.com/archives/C123/p1714550400000100 \
   --tag slack \
   --json
 ```
 
-### `memory import-session`
+### `memora import-session`
 
 Implemented in Stage 14.
 
@@ -1076,16 +1076,16 @@ canonical `conversation_summary` memory for review.
 Example:
 
 ```bash
-memory import-session ./cursor-session.jsonl \
+memora import-session ./cursor-session.jsonl \
   --vault ./memory-vault \
   --format cursor-jsonl \
   --summary-file ./cursor-session-summary.md \
   --remember-summary \
-  --project agent-memory \
+  --project memora \
   --json
 ```
 
-### `memory session finalize`
+### `memora session finalize`
 
 Implemented in Phase 5.
 
@@ -1096,7 +1096,7 @@ as the positional argument or with `--transcript`, saves the transcript under
 summary file as the source extract, creates a pending `conversation_summary`
 memory, and creates pending agent-authored atomic memories from `--memories-file`.
 
-The memories file uses the same format and validation as `memory agent capture`:
+The memories file uses the same format and validation as `memora agent capture`:
 a JSON list or an object with `memories`, with supported atomic types `fact`,
 `decision`, `preference`, `task`, and `project_context`. Unsupported proposal
 types are reported under `rejected_proposals`.
@@ -1104,15 +1104,15 @@ types are reported under `rejected_proposals`.
 Examples:
 
 ```bash
-memory session finalize ./cursor-session.jsonl \
+memora session finalize ./cursor-session.jsonl \
   --vault ./memory-vault \
   --format cursor-jsonl \
   --summary-file ./cursor-session-summary.md \
   --memories-file ./session-memories.json \
-  --project agent-memory \
+  --project memora \
   --json
 
-memory session finalize \
+memora session finalize \
   --transcript ./codex-session.jsonl \
   --summary-file ./summary.md \
   --memories-file ./memories.json \
@@ -1123,10 +1123,10 @@ memory session finalize \
 JSON output groups the saved or planned `source`, the `summary_memory`, accepted
 atomic memories in `atomic_memories`, all review items in `memories`,
 `rejected_proposals`, `review_required`, `dry_run`, `would_write`, and `written`.
-`memory import-session` remains available for the older workflow where only the
+`memora import-session` remains available for the older workflow where only the
 transcript and optional summary memory need to be imported.
 
-### `memory scheduled ingest`
+### `memora scheduled ingest`
 
 Implemented in Phase 6.
 
@@ -1139,17 +1139,17 @@ atomic memories.
 The command saves the prepared source/extract under `Sources/` with deterministic
 scheduled source metadata such as `channel: scheduled_email`, then creates
 agent-authored `pending` memories using the same supported atomic types as
-`memory agent capture`: `fact`, `decision`, `preference`, `task`, and
+`memora agent capture`: `fact`, `decision`, `preference`, `task`, and
 `project_context`. Unsupported proposal types are reported under
 `rejected_proposals`.
 
 Examples:
 
 ```bash
-memory scheduled ingest \
+memora scheduled ingest \
   --kind email \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --source-file ./email-digest.md \
   --extract-file ./email-extract.md \
   --memories-file ./email-memories.json \
@@ -1158,10 +1158,10 @@ memory scheduled ingest \
   --dry-run \
   --json
 
-memory scheduled ingest \
+memora scheduled ingest \
   --kind slack \
   --vault ./memory-vault \
-  --project agent-memory \
+  --project memora \
   --source-file ./slack-export.md \
   --extract-file ./slack-extract.md \
   --memories-file ./slack-memories.json \
@@ -1172,14 +1172,14 @@ JSON output groups the saved or planned `source`, accepted `memories`,
 `created_memories` or `planned_memories`, `rejected_proposals`,
 `review_required`, `dry_run`, `would_write`, and `written`.
 
-### `memory import`
+### `memora import`
 
 Stage 2 placeholder.
 
 The command accepts a source path and supports `--json`. Markdown and Basic
 Memory-compatible import are planned for later stages.
 
-### `memory export`
+### `memora export`
 
 Stage 2 placeholder.
 
@@ -1192,19 +1192,19 @@ The project also ships local machine helper scripts:
 
 ```bash
 ./scripts/install.sh --vault ~/MemoryVault
-agent-memory-service install
-agent-memory-service start
-agent-memory-service status
-agent-memory-service logs
-agent-memory-service restart
+memora-service install
+memora-service start
+memora-service status
+memora-service logs
+memora-service restart
 ./scripts/uninstall.sh
 ```
 
 `scripts/install.sh` creates a managed virtual environment and stable wrapper
-commands for `memory` and `agent-memory-service`. The wrapper commands mean
+commands for `memora` and `memora-service`. The wrapper commands mean
 users do not need to activate a venv manually after installation.
 
-`agent-memory-service` manages a user-level maintenance service on macOS
+`memora-service` manages a user-level maintenance service on macOS
 (`launchd`) and Linux (`systemd --user`). See `docs/local-install.md` for full
 setup, service, upgrade, and uninstall details.
 

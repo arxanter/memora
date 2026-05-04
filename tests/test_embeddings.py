@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from agent_memory.config import SemanticConfig
-from agent_memory.embeddings import (
+from config import SemanticConfig
+from embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingProviderError,
     LocalCommandEmbeddingProvider,
@@ -52,7 +52,7 @@ def test_local_command_provider_uses_generic_json_protocol(monkeypatch):
             )
         )
 
-    monkeypatch.setattr("agent_memory.embeddings.subprocess.run", fake_run)
+    monkeypatch.setattr("embeddings.subprocess.run", fake_run)
 
     provider = LocalCommandEmbeddingProvider(
         command=["embed-session"],

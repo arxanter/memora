@@ -4,10 +4,10 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from agent_memory.cli import app
-from agent_memory.config import load_config
-from agent_memory.synthesis import plan_synthesis, write_synthesis
-from agent_memory.vault import init_vault
+from cli import app
+from config import load_config
+from synthesis import plan_synthesis, write_synthesis
+from vault import init_vault
 
 
 runner = CliRunner()
@@ -75,7 +75,7 @@ def test_write_synthesis_writes_grouped_cited_active_memories(tmp_path):
         "mem_20260501_decision",
         "mem_20260501_fact",
     ]
-    assert "schema: agent-memory.synthesis.v1" in markdown
+    assert "schema: memora.synthesis.v1" in markdown
     assert "kind: generated_synthesis" in markdown
     assert "aliases:" in markdown
     assert "## Decisions" in markdown
@@ -98,7 +98,7 @@ def test_write_synthesis_filters_project_and_does_not_mutate_memories(tmp_path):
         memory_id="mem_20260501_project",
         memory_type="decision",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Project synthesis should include exact project matches.",
     )
     _write_memory(
@@ -123,18 +123,18 @@ def test_write_synthesis_filters_project_and_does_not_mutate_memories(tmp_path):
 
     result = write_synthesis(
         config,
-        project="agent-memory",
+        project="memora",
         now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
     )
 
     markdown = (vault / result.relative_path).read_text(encoding="utf-8")
     assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
-    assert result.to_dict()["relative_path"] == "Synthesis/2026-05-01_agent-memory-synthesis.md"
+    assert result.to_dict()["relative_path"] == "Synthesis/2026-05-01_memora-synthesis.md"
     assert result.to_dict()["memory_count"] == 1
     assert "Project synthesis should include exact project matches." in markdown
     assert "User scope memory should not be pulled into project synthesis." not in markdown
     assert "Other project memory should not be pulled into project synthesis." not in markdown
-    assert "Promote durable conclusions with `memory remember`" in result.to_dict()["next_steps"][1]
+    assert "Promote durable conclusions with `memora remember`" in result.to_dict()["next_steps"][1]
 
 
 def test_plan_synthesis_dry_run_returns_payload_without_writes(tmp_path):
@@ -207,7 +207,7 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
         memory_id="mem_20260501_cli",
         memory_type="decision",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="CLI synthesis should write a generated Markdown file.",
     )
 
@@ -218,7 +218,7 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--title",
             "CLI Synthesis",
             "--limit",
@@ -237,7 +237,7 @@ def test_synthesize_cli_json_and_help_listing(tmp_path):
     assert payload["written"] is True
     assert payload["memory_count"] == 1
     assert payload["citations"][0]["path"] == "Memories/decisions/cli.md"
-    assert payload["filters"] == {"status": "active", "project": "agent-memory"}
+    assert payload["filters"] == {"status": "active", "project": "memora"}
     assert "CLI synthesis should write a generated Markdown file. [C1]" in payload["markdown"]
     assert relative_path.parent == Path("Synthesis")
     assert relative_path.name.endswith("_cli-synthesis.md")
@@ -261,7 +261,7 @@ def test_synthesize_cli_dry_run_query_json_does_not_write(tmp_path):
         memory_id="mem_20260501_context",
         memory_type="project_context",
         scope="project",
-        project="agent-memory",
+        project="memora",
         body="Reading summaries should be generated from matching project context.",
     )
 
@@ -273,7 +273,7 @@ def test_synthesize_cli_dry_run_query_json_does_not_write(tmp_path):
             "--vault",
             str(vault),
             "--project",
-            "agent-memory",
+            "memora",
             "--dry-run",
             "--json",
         ],
@@ -285,7 +285,7 @@ def test_synthesize_cli_dry_run_query_json_does_not_write(tmp_path):
     assert payload["written"] is False
     assert payload["would_write"] is True
     assert payload["query"] == "reading summaries"
-    assert payload["filters"] == {"status": "active", "project": "agent-memory", "query": "reading summaries"}
+    assert payload["filters"] == {"status": "active", "project": "memora", "query": "reading summaries"}
     assert payload["memory_count"] == 1
     assert payload["relative_path"].startswith("Synthesis/")
     assert "Query: reading summaries" in payload["markdown"]

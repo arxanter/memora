@@ -1,10 +1,10 @@
 import sqlite3
 
-from agent_memory.config import SemanticConfig, load_config
-from agent_memory.embeddings import DeterministicEmbeddingProvider
-from agent_memory.indexer import reindex_vault
-from agent_memory.retrieval import RetrievalIndexError, SearchFilters, plan_query_variants, search_memory
-from agent_memory.vault import init_vault
+from config import SemanticConfig, load_config
+from embeddings import DeterministicEmbeddingProvider
+from indexer import reindex_vault
+from retrieval import RetrievalIndexError, SearchFilters, plan_query_variants, search_memory
+from vault import init_vault
 
 
 def test_search_requires_existing_index(tmp_path):
@@ -15,7 +15,7 @@ def test_search_requires_existing_index(tmp_path):
     try:
         search_memory(config, "sqlite")
     except RetrievalIndexError as exc:
-        assert "memory reindex" in str(exc)
+        assert "memora reindex" in str(exc)
     else:
         raise AssertionError("search should require the SQLite index")
 

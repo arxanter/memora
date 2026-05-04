@@ -35,7 +35,7 @@ Obsidian Vault/
     user.md
     projects/
   Synthesis/
-  .agent-memory/
+  .memora/
     config.yaml
     schemas/
     index.sqlite
@@ -44,7 +44,7 @@ Obsidian Vault/
     locks/
 ```
 
-Generated paths under `.agent-memory/` are local and disposable. They should be rebuildable from Markdown.
+Generated paths under `.memora/` are local and disposable. They should be rebuildable from Markdown.
 
 `raw/` is the unprocessed input layer. Users, Obsidian Web Clipper, exports, and
 future pollers can drop original material there without understanding the
@@ -66,7 +66,7 @@ aliases:
   - Markdown as durable memory
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.86
 created_at: 2026-04-29T12:00:00+02:00
@@ -96,13 +96,13 @@ last_used_at: 2026-04-30T12:30:00+02:00
 history:
   - at: 2026-04-30T12:15:00+02:00
     action: superseded
-    actor: agent-memory
+    actor: memora
     from_status: active
     to_status: superseded
     by: mem_20260430_replacement
 ```
 
-The Stage 1 implementation lives in `src/agent_memory/schema.py`. `MemoryFrontmatter`
+The Stage 1 implementation lives in `src/schema.py`. `MemoryFrontmatter`
 is the canonical Pydantic model for YAML frontmatter, and
 `parse_markdown_document`, `validate_markdown_file`, and `validate_vault` provide
 callable validation helpers without introducing a CLI.
@@ -155,7 +155,7 @@ Initial lifecycle statuses:
 
 ## Observations And Relations
 
-Memories may contain typed observations and typed relations. Observations are atomic recall units. Relations are directional graph edges and should be validated during `memory doctor`.
+Memories may contain typed observations and typed relations. Observations are atomic recall units. Relations are directional graph edges and should be validated during `memora doctor`.
 
 Initial relation vocabulary:
 
@@ -193,7 +193,7 @@ chunk_fts using sqlite fts5
 embeddings(chunk_id, model, vector, content_hash)
 ```
 
-The implementation lives in `src/agent_memory/indexer.py`. `memory reindex`
+The implementation lives in `src/indexer.py`. `memora reindex`
 creates or refreshes these tables with stdlib `sqlite3`, using SHA-256
 `content_hash` values for documents, chunks, and observations. Incremental
 reindexing parses current Markdown but skips chunk, observation, and relation
@@ -204,7 +204,7 @@ Stage 4 populates it with body chunks, heading section chunks, and observation
 chunks. Stage 6 adds optional semantic search through the `embeddings` table.
 
 Graph validation checks relation targets from `relations`, `supersedes`, and
-`contradicts` against known memory IDs. `memory doctor` reports orphan targets as
+`contradicts` against known memory IDs. `memora doctor` reports orphan targets as
 graph issues.
 
 Embeddings are cache data keyed by chunk, model, and `content_hash`. If a chunk

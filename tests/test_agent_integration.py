@@ -1,4 +1,4 @@
-from agent_memory.agent_integration import (
+from agent_integration import (
     AgentClient,
     IntegrationScope,
     TargetSupport,
@@ -20,7 +20,7 @@ def test_project_targets_match_existing_agent_rule_defaults(tmp_path):
     project = tmp_path / "project"
 
     assert resolve_integration_target("cursor", project_path=project).path == (
-        project.resolve() / ".cursor" / "rules" / "agent-memory.mdc"
+        project.resolve() / ".cursor" / "rules" / "memora.mdc"
     )
     assert resolve_integration_target("claude", project_path=project).path == project.resolve() / "CLAUDE.md"
     assert resolve_integration_target("codex", project_path=project).path == project.resolve() / "AGENTS.md"
@@ -49,7 +49,7 @@ def test_install_command_plan_renders_existing_compatibility_command(tmp_path):
 
     assert plan["client"] == "codex"
     assert plan["target_path"] == str(project / "AGENTS.md")
-    assert "memory install-agent-rules --client codex" in plan["install_command"]
+    assert "memora install-agent-rules --client codex" in plan["install_command"]
     assert f"--project '{project}'" in plan["install_command"]
     assert f"--vault {vault}" in plan["install_command"]
     assert "--force" in plan["install_command"]
@@ -57,21 +57,21 @@ def test_install_command_plan_renders_existing_compatibility_command(tmp_path):
 
 
 def test_render_agent_rules_preserves_phase_one_content(tmp_path):
-    content = render_agent_rules("cursor", vault_path=tmp_path / "vault", project="memory-project")
+    content = render_agent_rules("cursor", vault_path=tmp_path / "vault", project="memora")
 
     assert content.startswith("---\ndescription:")
     assert "CLI-first" in content
     assert "CLI-only for agents" in content
-    assert 'memory build-context "<task>"' in content
+    assert 'memora build-context "<task>"' in content
     assert f'--vault "{tmp_path / "vault"}"' in content
-    assert '--project "memory-project"' in content
-    assert "Use only `memory ... --json` commands" in content
+    assert '--project "memora"' in content
+    assert "Use only `memora ... --json` commands" in content
 
 
 def test_render_agent_rules_contains_strict_vault_and_toby_policy():
-    content = render_agent_rules("codex", vault_path=None, project="memory-project")
+    content = render_agent_rules("codex", vault_path=None, project="memora")
 
-    assert "Do not read, write, edit, delete, or migrate Agent Memory vault files directly" in content
+    assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
     for private_path in (
         "`Memories/`",
         "`Sources/`",
@@ -79,7 +79,7 @@ def test_render_agent_rules_contains_strict_vault_and_toby_policy():
         "`Profiles/`",
         "`Synthesis/`",
         "`raw/`",
-        "`.agent-memory/index.sqlite`",
+        "`.memora/index.sqlite`",
         "cache",
         "embeddings",
         "locks",
@@ -94,7 +94,7 @@ def test_render_agent_rules_contains_strict_vault_and_toby_policy():
     assert "Toby, review pending memory" in content
     assert "Тоби, актуализируй память по <topic>" in content
     assert "Toby, analyze this source and save it" in content
-    assert "do not narrate every `memory ... --json` call" in content
+    assert "do not narrate every `memora ... --json` call" in content
 
 
 def test_user_scope_targets_are_safe_fallbacks(tmp_path):
@@ -107,11 +107,11 @@ def test_user_scope_targets_are_safe_fallbacks(tmp_path):
     assert target.client == AgentClient.CODEX
     assert target.scope == IntegrationScope.USER
     assert target.support == TargetSupport.FALLBACK
-    assert target.path == tmp_path.resolve() / ".agent-memory" / "integrations" / "codex" / "AGENTS.md"
+    assert target.path == tmp_path.resolve() / ".memora" / "integrations" / "codex" / "AGENTS.md"
 
 
 def test_managed_block_helpers_round_trip_metadata():
-    content = "Agent Memory instructions"
+    content = "Memora instructions"
     block = render_managed_block(content, template_version="agent-rules-test")
 
     assert managed_block_metadata(block) == {
@@ -129,7 +129,7 @@ def test_agent_targets_payload_all_skips_duplicate_agents_target(tmp_path):
     assert payload["command"] == "agent targets"
     assert [target["client"] for target in payload["targets"]] == ["cursor", "claude", "codex"]
     assert [target["path"] for target in payload["targets"]] == [
-        str(project.resolve() / ".cursor" / "rules" / "agent-memory.mdc"),
+        str(project.resolve() / ".cursor" / "rules" / "memora.mdc"),
         str(project.resolve() / "CLAUDE.md"),
         str(project.resolve() / "AGENTS.md"),
     ]

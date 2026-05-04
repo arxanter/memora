@@ -7,11 +7,11 @@ default for the standalone CLI.
 ## Current Constraint
 
 Production embeddings must come from the same AI model/session that the user is
-interacting with. The standalone `memory` CLI does not currently have technical
+interacting with. The standalone `memora` CLI does not currently have technical
 access to Cursor's active AI session embeddings, so it must not claim that
 same-session semantic search is available.
 
-Agent Memory therefore does not include first-class OpenAI, Ollama, FastEmbed, or
+Memora therefore does not include first-class OpenAI, Ollama, FastEmbed, or
 other public/open/local model providers. Under this constraint, normal production
 retrieval should use `auto` mode with no semantic provider configured; it falls
 back to text search plus query planning.
@@ -53,8 +53,8 @@ not configure a provider just to get semantic search.
 Default retrieval:
 
 ```bash
-memory reindex --vault ./memory-vault
-memory search "agent memory retrieval" --vault ./memory-vault --mode auto
+memora reindex --vault ./memory-vault
+memora search "agent memory retrieval" --vault ./memory-vault --mode auto
 ```
 
 Retrieval modes:
@@ -117,13 +117,13 @@ want vector-only retrieval; it also requires a configured or injected provider.
 You can override the narrow semantic config without editing the vault:
 
 ```bash
-export AGENT_MEMORY_SEMANTIC_PROVIDER=local-command
-export AGENT_MEMORY_SEMANTIC_MODEL=same-session-model
-export AGENT_MEMORY_SEMANTIC_BATCH_SIZE=32
-export AGENT_MEMORY_SEMANTIC_DIMENSIONS=1536
-export AGENT_MEMORY_SEMANTIC_MIN_SIMILARITY=0.15
+export MEMORA_SEMANTIC_PROVIDER=local-command
+export MEMORA_SEMANTIC_MODEL=same-session-model
+export MEMORA_SEMANTIC_BATCH_SIZE=32
+export MEMORA_SEMANTIC_DIMENSIONS=1536
+export MEMORA_SEMANTIC_MIN_SIMILARITY=0.15
 ```
 
 These overrides are applied when config is loaded. They do not rewrite
-`.agent-memory/config.yaml`. Do not use them to point Agent Memory at public/open
+`.memora/config.yaml`. Do not use them to point Memora at public/open
 or local-model providers when the same-session constraint applies.

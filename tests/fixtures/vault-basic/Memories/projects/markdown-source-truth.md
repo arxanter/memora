@@ -3,7 +3,7 @@ schema_version: 1
 id: mem_20260430_arch_markdown
 type: project_context
 scope: project
-project: agent-memory
+project: memora
 status: active
 confidence: 0.95
 created_at: 2026-04-30T09:05:00+02:00
@@ -20,5 +20,5 @@ observations:
 tags: [architecture, obsidian]
 ---
 
-Markdown in the Obsidian vault is the durable source of truth for Agent Memory.
+Markdown in the Obsidian vault is the durable source of truth for Memora.
 The local database and embedding files are disposable generated state.

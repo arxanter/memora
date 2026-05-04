@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_memory.schema import MemoryFrontmatter, parse_markdown_document, validate_vault
-from agent_memory.safety import scan_text
-from agent_memory.vault import render_memory_markdown
+from schema import MemoryFrontmatter, parse_markdown_document, validate_vault
+from safety import scan_text
+from vault import render_memory_markdown
 
 
 SAMPLE_VAULT = Path(__file__).resolve().parents[1] / "examples" / "sample-vault"
@@ -31,7 +31,7 @@ schema_version: 1
 id: mem_20260429_abc123
 type: decision
 scope: project
-project: agent-memory
+project: memora
 status: active
 created_at: 2026-04-29T12:00:00+02:00
 updated_at: 2026-04-29T12:00:00+02:00
@@ -48,7 +48,7 @@ Use Markdown as the durable record.
     )
 
     assert document.frontmatter.id == "mem_20260429_abc123"
-    assert document.frontmatter.project == "agent-memory"
+    assert document.frontmatter.project == "memora"
     assert document.frontmatter.title is None
     assert document.frontmatter.aliases == []
     assert document.body.strip() == "Use Markdown as the durable record."

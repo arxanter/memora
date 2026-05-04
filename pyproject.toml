@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-memory"
+name = "memora"
 version = "0.1.0"
 description = "CLI-first local memory engine for coding agents backed by Obsidian Markdown."
 readme = "README.md"
@@ -31,12 +31,16 @@ dependencies = [
 ]
 
 [project.scripts]
-memory = "agent_memory.cli:app"
+memora = "cli:app"
 
 [project.urls]
-Documentation = "https://github.com/anton-zhedik/memory-project#readme"
-Source = "https://github.com/anton-zhedik/memory-project"
-Issues = "https://github.com/anton-zhedik/memory-project/issues"
+Documentation = "https://github.com/anton-zhedik/memora#readme"
+Source = "https://github.com/anton-zhedik/memora"
+Issues = "https://github.com/anton-zhedik/memora/issues"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src"]
+sources = ["src"]
 
 [project.optional-dependencies]
 pdf = [

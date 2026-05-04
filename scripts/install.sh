@@ -5,12 +5,12 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/install.sh [options]
 
-Install Agent Memory locally without manual venv activation.
+Install Memora locally without manual venv activation.
 
 Options:
-  --vault PATH              Initialize/use this Agent Memory vault.
+  --vault PATH              Initialize/use this Memora vault.
   --install-dir PATH        Install managed venv and metadata here.
-                            Default: ~/.local/share/agent-memory
+                            Default: ~/.local/share/memora
   --bin-dir PATH            Install wrapper commands here.
                             Default: ~/.local/bin
   --python PATH             Python interpreter to use.
@@ -23,9 +23,9 @@ Options:
   -h, --help                Show this help.
 
 Environment:
-  AGENT_MEMORY_VAULT        Default vault path when --vault is omitted.
-  AGENT_MEMORY_INSTALL_DIR  Default install directory.
-  AGENT_MEMORY_BIN_DIR      Default wrapper directory.
+  MEMORA_VAULT        Default vault path when --vault is omitted.
+  MEMORA_INSTALL_DIR  Default install directory.
+  MEMORA_BIN_DIR      Default wrapper directory.
 USAGE
 }
 
@@ -141,10 +141,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 PLATFORM="$(detect_platform)"
 
-INSTALL_DIR="${AGENT_MEMORY_INSTALL_DIR:-$HOME/.local/share/agent-memory}"
-BIN_DIR="${AGENT_MEMORY_BIN_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${MEMORA_INSTALL_DIR:-$HOME/.local/share/memora}"
+BIN_DIR="${MEMORA_BIN_DIR:-$HOME/.local/bin}"
 PYTHON_BIN="${PYTHON:-}"
-VAULT_PATH="${AGENT_MEMORY_VAULT:-}"
+VAULT_PATH="${MEMORA_VAULT:-}"
 USE_VENV=1
 SKIP_INSTALL=0
 WITH_TEST=0
@@ -238,7 +238,7 @@ if [ "$SKIP_INSTALL" != "1" ]; then
       run_cmd "$PYTHON_BIN" -m venv "$VENV_DIR"
     fi
     if ! python_ok "$PYTHON_CMD"; then
-      fail "managed venv Python is $(python_version "$PYTHON_CMD"), but Agent Memory requires Python >= 3.10"
+      fail "managed venv Python is $(python_version "$PYTHON_CMD"), but Memora requires Python >= 3.10"
     fi
     log "upgrading pip"
     run_cmd "$PYTHON_CMD" -m pip install -U pip
@@ -250,68 +250,68 @@ if [ "$SKIP_INSTALL" != "1" ]; then
   if [ "$WITH_TEST" = "1" ]; then
     EXTRA_SUFFIX="[test]"
   fi
-  log "installing Agent Memory ${EXTRA_SUFFIX:-package}"
+  log "installing Memora ${EXTRA_SUFFIX:-package}"
   run_cmd "$PYTHON_CMD" -m pip install -e "$REPO_ROOT$EXTRA_SUFFIX"
 fi
 
-MEMORY_WRAPPER='#!/usr/bin/env bash
+MEMORA_WRAPPER='#!/usr/bin/env bash
 set -euo pipefail
 __DEFAULT_VAULT_EXPORT__
-export AGENT_MEMORY_INSTALL_DIR="${AGENT_MEMORY_INSTALL_DIR:-__INSTALL_DIR__}"
-if [ -n "${AGENT_MEMORY_DEFAULT_VAULT:-}" ] && [ -z "${AGENT_MEMORY_VAULT:-}" ]; then
-  export AGENT_MEMORY_VAULT="$AGENT_MEMORY_DEFAULT_VAULT"
+export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-__INSTALL_DIR__}"
+if [ -n "${MEMORA_DEFAULT_VAULT:-}" ] && [ -z "${MEMORA_VAULT:-}" ]; then
+  export MEMORA_VAULT="$MEMORA_DEFAULT_VAULT"
 fi
-exec "__PYTHON_CMD__" -m agent_memory.cli "$@"
+exec "__PYTHON_CMD__" -m cli "$@"
 '
 
 SERVICE_WRAPPER='#!/usr/bin/env bash
 set -euo pipefail
 __DEFAULT_VAULT_EXPORT__
-export AGENT_MEMORY_INSTALL_DIR="${AGENT_MEMORY_INSTALL_DIR:-__INSTALL_DIR__}"
-export AGENT_MEMORY_BIN_DIR="${AGENT_MEMORY_BIN_DIR:-__BIN_DIR__}"
-if [ -n "${AGENT_MEMORY_DEFAULT_VAULT:-}" ] && [ -z "${AGENT_MEMORY_VAULT:-}" ]; then
-  export AGENT_MEMORY_VAULT="$AGENT_MEMORY_DEFAULT_VAULT"
+export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-__INSTALL_DIR__}"
+export MEMORA_BIN_DIR="${MEMORA_BIN_DIR:-__BIN_DIR__}"
+if [ -n "${MEMORA_DEFAULT_VAULT:-}" ] && [ -z "${MEMORA_VAULT:-}" ]; then
+  export MEMORA_VAULT="$MEMORA_DEFAULT_VAULT"
 fi
-exec "__REPO_ROOT__/scripts/agent-memory-service.sh" "$@"
+exec "__REPO_ROOT__/scripts/memora-service.sh" "$@"
 '
 
-MEMORY_WRAPPER="${MEMORY_WRAPPER//__PYTHON_CMD__/$PYTHON_CMD}"
-MEMORY_WRAPPER="${MEMORY_WRAPPER//__INSTALL_DIR__/$INSTALL_DIR}"
+MEMORA_WRAPPER="${MEMORA_WRAPPER//__PYTHON_CMD__/$PYTHON_CMD}"
+MEMORA_WRAPPER="${MEMORA_WRAPPER//__INSTALL_DIR__/$INSTALL_DIR}"
 SERVICE_WRAPPER="${SERVICE_WRAPPER//__INSTALL_DIR__/$INSTALL_DIR}"
 SERVICE_WRAPPER="${SERVICE_WRAPPER//__BIN_DIR__/$BIN_DIR}"
 SERVICE_WRAPPER="${SERVICE_WRAPPER//__REPO_ROOT__/$REPO_ROOT}"
 
 if [ -n "$VAULT_PATH" ]; then
-  DEFAULT_VAULT_EXPORT="export AGENT_MEMORY_DEFAULT_VAULT=\"$VAULT_PATH\""
+  DEFAULT_VAULT_EXPORT="export MEMORA_DEFAULT_VAULT=\"$VAULT_PATH\""
 else
   DEFAULT_VAULT_EXPORT=":"
 fi
-MEMORY_WRAPPER="${MEMORY_WRAPPER//__DEFAULT_VAULT_EXPORT__/$DEFAULT_VAULT_EXPORT}"
+MEMORA_WRAPPER="${MEMORA_WRAPPER//__DEFAULT_VAULT_EXPORT__/$DEFAULT_VAULT_EXPORT}"
 SERVICE_WRAPPER="${SERVICE_WRAPPER//__DEFAULT_VAULT_EXPORT__/$DEFAULT_VAULT_EXPORT}"
 
 log "installing wrapper commands"
-write_file "$BIN_DIR/memory" 0755 "$MEMORY_WRAPPER"
-write_file "$BIN_DIR/agent-memory-service" 0755 "$SERVICE_WRAPPER"
+write_file "$BIN_DIR/memora" 0755 "$MEMORA_WRAPPER"
+write_file "$BIN_DIR/memora-service" 0755 "$SERVICE_WRAPPER"
 
 if [ -n "$VAULT_PATH" ]; then
   log "initializing vault: $VAULT_PATH"
-  run_cmd "$BIN_DIR/memory" init "$VAULT_PATH" --json >/dev/null
+  run_cmd "$BIN_DIR/memora" init "$VAULT_PATH" --json >/dev/null
 fi
 
 cat <<EOF
 
-Agent Memory installed.
+Memora installed.
 
 Add this directory to PATH if needed:
   export PATH="$BIN_DIR:\$PATH"
 
 CLI:
-  memory status
-  memory reindex --clean
-  memory agent commands --client all
-  agent-memory-service install
-  agent-memory-service start
-  agent-memory-service status
+  memora status
+  memora reindex --clean
+  memora agent commands --client all
+  memora-service install
+  memora-service start
+  memora-service status
 
 Notes:
   - Use generated agent instructions and CLI JSON commands for coding-agent integrations.

@@ -1,4 +1,4 @@
-## Memory Brief
+## Memora Brief
 
 Current relevant facts:
 - Memory brief facts use Obsidian Markdown as the durable source of truth. [C1]

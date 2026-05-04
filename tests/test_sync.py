@@ -4,11 +4,11 @@ import sqlite3
 import pytest
 from typer.testing import CliRunner
 
-from agent_memory.cli import app
-from agent_memory.config import load_config
-from agent_memory.indexer import keyword_search, reindex_vault
-from agent_memory.sync import LockTimeout, atomic_write_text, detect_sync_conflicts, vault_lock
-from agent_memory.vault import doctor_report, init_vault
+from cli import app
+from config import load_config
+from indexer import keyword_search, reindex_vault
+from sync import LockTimeout, atomic_write_text, detect_sync_conflicts, vault_lock
+from vault import doctor_report, init_vault
 
 
 runner = CliRunner()

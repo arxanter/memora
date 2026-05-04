@@ -63,7 +63,7 @@ Brief quality:
 
 Rebuildability:
 
-- `memory reindex` recreates the expected SQLite cache from Markdown.
+- `memora reindex` recreates the expected SQLite cache from Markdown.
 - Content hash changes trigger reindexing.
 - Deleting generated cache data does not lose durable memory.
 
@@ -93,8 +93,8 @@ and Basic Memory import/export compatibility shape.
 Use the lightweight CLI harness:
 
 ```bash
-memory eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
-memory eval tests/fixtures/vault-basic
+memora eval tests/fixtures/evaluation/coding-agent-questions.yaml --json
+memora eval tests/fixtures/vault-basic
 ```
 
 The harness copies the fixture vault to a temporary directory, runs a clean

@@ -3,7 +3,7 @@ schema_version: 1
 id: mem_20260430_pending_agent
 type: task
 scope: project
-project: agent-memory
+project: memora
 status: pending
 confidence: 0.74
 created_at: 2026-04-30T09:35:00+02:00
