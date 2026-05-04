@@ -51,6 +51,7 @@ memory raw process raw/inbox/webclips/article.md --project <project> --dry-run
 memory raw process-inbox raw/inbox --project <project> --limit 10
 memory import-source <path>
 memory import-source-inbox <path> --dry-run
+memory source-inbox scan --dry-run
 memory import-url <url> --dry-run
 memory import-pdf <path> --text-file <path> --dry-run
 memory import-zoom <path> --meeting-id <id> --dry-run
@@ -802,6 +803,31 @@ memory import-source-inbox ./Sources/Inbox \
   --vault ./memory-vault \
   --project agent-memory \
   --tag web-clip \
+  --dry-run \
+  --json
+```
+
+### `memory source-inbox scan`
+
+Implemented in Phase 4 as an opt-in one-shot source inbox scanner.
+
+Scans the configured `.agent-memory/config.yaml` `connectors.source_inbox.path`
+or an explicit `--path` override, plans supported local imports, and optionally
+saves them under `Sources/`. It is not a daemon and does not watch in the
+background. Connector switches default to disabled; pass `--ignore-disabled` only
+when intentionally overriding config for a manual run.
+
+Supported routing is local-only: Markdown/text files become `source_inbox`
+sources, `.pdf` files use the PDF importer, files under a `zoom/` folder use the
+Zoom export importer, and files under a `slack/` folder use the Slack export
+importer. The scanner never creates canonical memories by itself.
+
+Example:
+
+```bash
+memory source-inbox scan \
+  --vault ./memory-vault \
+  --path ./Inbox \
   --dry-run \
   --json
 ```

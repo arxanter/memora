@@ -28,7 +28,17 @@ from agent_memory.sync import atomic_write_many, vault_lock
 from agent_memory.vault import RememberResult, remember_memory
 
 PathLike = Union[Path, str]
-SOURCE_CHANNELS = {"manual", "url", "file", "pdf", "ai_session", "web_clipper", "zoom", "slack"}
+SOURCE_CHANNELS = {
+    "manual",
+    "url",
+    "file",
+    "pdf",
+    "ai_session",
+    "web_clipper",
+    "zoom",
+    "slack",
+    "source_inbox",
+}
 SOURCE_QUALITIES = {
     "explicit_user",
     "user_provided",

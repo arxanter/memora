@@ -177,6 +177,36 @@ def test_load_config_includes_profile_defaults_and_summary(tmp_path):
     }
 
 
+def test_load_config_includes_disabled_connector_defaults(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+
+    config = load_config(vault)
+    summary = config_to_dict(config)
+
+    assert config.connectors.url.enabled is False
+    assert config.connectors.pdf.enabled is False
+    assert config.connectors.zoom.enabled is False
+    assert config.connectors.slack.enabled is False
+    assert config.connectors.source_inbox.enabled is False
+    assert config.connectors.source_inbox.path == "raw/inbox"
+    assert config.connectors.source_inbox.patterns == ["**/*"]
+    assert config.connectors.source_inbox.sensitivity == "normal"
+    assert summary["connectors"]["source_inbox"]["enabled"] is False
+
+
+def test_load_config_preserves_connector_defaults_for_old_yaml(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config_path.write_text("schema_version: 1\n", encoding="utf-8")
+
+    config = load_config(vault)
+
+    assert config.connectors.source_inbox.enabled is False
+    assert config.connectors.slack.enabled is False
+
+
 def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch):
     vault = tmp_path / "memory-vault"
     init_vault(vault)

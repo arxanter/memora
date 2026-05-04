@@ -239,6 +239,53 @@ class ProfileConfig(BaseModel):
     inject_by_default: bool = False
 
 
+class SourceConnectorConfig(BaseModel):
+    """Opt-in source connector switch."""
+
+    enabled: bool = False
+
+
+class SourceInboxConnectorConfig(SourceConnectorConfig):
+    """One-shot source inbox scanning defaults."""
+
+    path: str = "raw/inbox"
+    patterns: list[str] = Field(default_factory=lambda: ["**/*"])
+    sensitivity: str = "normal"
+    source_quality: str = "imported_export"
+
+    @field_validator("path", "sensitivity", "source_quality")
+    @classmethod
+    def require_non_empty_string(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("source inbox config string values must not be empty")
+        return value.strip()
+
+    @field_validator("patterns")
+    @classmethod
+    def normalize_patterns(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            pattern = str(item).strip()
+            if not pattern or pattern in seen:
+                continue
+            seen.add(pattern)
+            cleaned.append(pattern)
+        if not cleaned:
+            raise ValueError("source inbox patterns must include at least one pattern")
+        return cleaned
+
+
+class ConnectorConfig(BaseModel):
+    """Opt-in local source connector configuration."""
+
+    url: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
+    pdf: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
+    zoom: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
+    slack: SourceConnectorConfig = Field(default_factory=SourceConnectorConfig)
+    source_inbox: SourceInboxConnectorConfig = Field(default_factory=SourceInboxConnectorConfig)
+
+
 class MemoryConfig(BaseModel):
     """Stage 2 configuration for a local Agent Memory vault."""
 
@@ -265,6 +312,7 @@ class MemoryConfig(BaseModel):
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
     index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
+    connectors: ConnectorConfig = Field(default_factory=ConnectorConfig)
 
     @model_validator(mode="before")
     @classmethod

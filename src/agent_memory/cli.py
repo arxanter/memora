@@ -6,6 +6,7 @@ import json as json_module
 import os
 import shutil
 import hashlib
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -56,14 +57,18 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 raw_app = typer.Typer(help="Inspect and process raw inbox material.", no_args_is_help=True)
+source_inbox_app = typer.Typer(help="Scan opt-in local source inbox files.", no_args_is_help=True)
 review_app = typer.Typer(help="Review pending agent-generated memories.", no_args_is_help=False)
 app.add_typer(raw_app, name="raw")
+app.add_typer(source_inbox_app, name="source-inbox")
 app.add_typer(review_app, name="review")
 console = Console()
 AGENT_RULE_FORMATS = {"agents", "cursor", "claude", "codex"}
 AGENT_RULE_CLIENTS = {"agents", "cursor", "claude", "codex"}
 MCP_CONFIG_FORMATS = {"generic", "claude", "cursor"}
 SOURCE_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
+SOURCE_INBOX_SCAN_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
+SOURCE_INBOX_SCAN_SUPPORTED_SUFFIXES = {*SOURCE_INBOX_SCAN_TEXT_SUFFIXES, ".pdf", ".json"}
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Setup and health",
@@ -101,6 +106,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("decay", "Mark expired active memories stale."),
             ("import-source <path>", "Save a Markdown/text file as source material under Sources/."),
             ("import-source-inbox <path>", "Import Markdown/text files from a source inbox directory."),
+            ("source-inbox scan", "One-shot scan of opt-in local source inbox files."),
             ("import-url <url>", "Fetch or import explicit URL content into Sources/."),
             ("import-pdf <path>", "Import explicit local PDF text into Sources/."),
             ("import-zoom <path>", "Import an explicit local Zoom summary/transcript export."),
@@ -648,6 +654,68 @@ def import_source_inbox_command(
     console.print(f"[green]Imported sources:[/green] {payload['source_count']}")
     for source in payload["sources"]:
         console.print(f"- {source['relative_source_path']}")
+
+
+@source_inbox_app.command("scan")
+def source_inbox_scan_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    path: Optional[Path] = typer.Option(None, "--path", "--inbox", help="Override configured source inbox path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project metadata for imported sources."),
+    sensitivity: Optional[str] = typer.Option(None, "--sensitivity", help="Override configured sensitivity metadata."),
+    tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
+    limit: Optional[int] = typer.Option(None, "--limit", min=1, help="Maximum number of importable files to process."),
+    once: bool = typer.Option(False, "--once", help="Run one scan and exit; this is the default behavior."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan supported imports without writing to the vault."),
+    ignore_disabled: bool = typer.Option(
+        False,
+        "--ignore-disabled",
+        help="Explicitly scan even when source connector config is disabled.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+) -> None:
+    """Run a one-shot scan of opt-in local source inbox files."""
+
+    try:
+        config = load_config(vault)
+        payload = _source_inbox_scan_payload(
+            config,
+            path=path,
+            project=project,
+            sensitivity=sensitivity,
+            tags=tag,
+            limit=limit,
+            dry_run=dry_run,
+            ignore_disabled=ignore_disabled,
+        )
+        payload["once"] = True
+    except Exception as exc:
+        _handle_error(exc, json_output=json_output, code="source_inbox_scan_failed")
+
+    if json_output:
+        _print_json(payload)
+        if not payload["ok"]:
+            raise typer.Exit(1)
+        return
+
+    label = "Dry run" if dry_run else "Source inbox scan"
+    console.print(f"[green]{label}:[/green] {payload['inbox_path']}")
+    if payload["planned_count"]:
+        console.print(f"Planned imports: {payload['planned_count']}")
+        for item in payload["planned"]:
+            console.print(f"- {item['relative_path']} via {item['connector']}")
+    if payload["imported_count"]:
+        console.print(f"Imported sources: {payload['imported_count']}")
+        for item in payload["imported"]:
+            console.print(f"- {item['relative_source_path']}")
+    if payload["skipped_count"]:
+        console.print(f"Skipped files: {payload['skipped_count']}")
+        for item in payload["skipped"]:
+            console.print(f"- {item['relative_path']}: {item['reason']}")
+    if payload["error_count"]:
+        console.print(f"[red]Errors:[/red] {payload['error_count']}")
+        for item in payload["errors"]:
+            console.print(f"- {item['relative_path']}: {item['message']}")
+        raise typer.Exit(1)
 
 
 @app.command("import-url")
@@ -2492,6 +2560,353 @@ def _source_inbox_plan_payload(path: Path, candidates: list[Path], *, dry_run: b
             for candidate in candidates
         ],
     }
+
+
+def _source_inbox_scan_payload(
+    config: Any,
+    *,
+    path: Optional[Path],
+    project: Optional[str],
+    sensitivity: Optional[str],
+    tags: list[str],
+    limit: Optional[int],
+    dry_run: bool,
+    ignore_disabled: bool,
+) -> dict[str, Any]:
+    connector_config = config.connectors.source_inbox
+    inbox = _resolve_source_inbox_scan_path(config, path)
+    if not inbox.is_dir():
+        raise ValueError(f"source inbox is not a directory: {inbox}")
+
+    selected_sensitivity = sensitivity or connector_config.sensitivity
+    files = sorted(item for item in inbox.rglob("*") if item.is_file())
+    planned: list[dict[str, Any]] = []
+    imported: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    processed = 0
+
+    for candidate in files:
+        file_payload = _source_inbox_scan_file_payload(config, inbox, candidate)
+        if not _source_inbox_matches_patterns(candidate, inbox=inbox, patterns=connector_config.patterns):
+            skipped.append({**file_payload, "reason": "pattern_not_matched"})
+            continue
+
+        route = _source_inbox_route(candidate, inbox=inbox)
+        if route is None:
+            skipped.append({**file_payload, "reason": "unsupported_file_type"})
+            continue
+
+        disabled = _source_inbox_disabled_connectors(config, route["connector"])
+        if disabled and not ignore_disabled:
+            skipped.append(
+                {
+                    **file_payload,
+                    "reason": "connector_disabled",
+                    "connector": route["connector"],
+                    "disabled_connectors": disabled,
+                }
+            )
+            continue
+
+        if limit is not None and processed >= limit:
+            skipped.append({**file_payload, "reason": "limit_reached", "connector": route["connector"]})
+            continue
+
+        processed += 1
+        try:
+            if dry_run:
+                planned.append(
+                    _source_inbox_scan_plan(
+                        config,
+                        candidate,
+                        file_payload=file_payload,
+                        route=route,
+                        project=project,
+                        sensitivity=selected_sensitivity,
+                        tags=tags,
+                    )
+                )
+            else:
+                imported.append(
+                    _source_inbox_scan_import(
+                        config,
+                        candidate,
+                        file_payload=file_payload,
+                        route=route,
+                        project=project,
+                        sensitivity=selected_sensitivity,
+                        tags=tags,
+                    )
+                )
+        except Exception as exc:
+            errors.append(
+                {
+                    **file_payload,
+                    "connector": route["connector"],
+                    "command": route["command"],
+                    "code": "source_inbox_item_failed",
+                    "message": str(exc),
+                }
+            )
+
+    return {
+        "ok": not errors,
+        "implemented": True,
+        "command": "source-inbox scan",
+        "dry_run": dry_run,
+        "vault_path": str(config.vault_path),
+        "inbox_path": str(inbox),
+        "patterns": list(connector_config.patterns),
+        "ignore_disabled": ignore_disabled,
+        "connectors": config.connectors.model_dump(mode="json"),
+        "file_count": len(files),
+        "planned_count": len(planned),
+        "imported_count": len(imported),
+        "skipped_count": len(skipped),
+        "error_count": len(errors),
+        "planned": planned,
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "next_steps": _source_inbox_scan_next_steps(dry_run=dry_run, ignore_disabled=ignore_disabled),
+    }
+
+
+def _resolve_source_inbox_scan_path(config: Any, path: Optional[Path]) -> Path:
+    if path is not None:
+        candidate = path.expanduser()
+        return candidate.resolve() if candidate.is_absolute() else candidate.resolve()
+    configured = Path(config.connectors.source_inbox.path).expanduser()
+    if configured.is_absolute():
+        return configured.resolve()
+    return (config.vault_path / configured).resolve()
+
+
+def _source_inbox_scan_file_payload(config: Any, inbox: Path, path: Path) -> dict[str, Any]:
+    try:
+        inbox_relative = path.relative_to(inbox).as_posix()
+    except ValueError:
+        inbox_relative = path.name
+    return {
+        "path": str(path),
+        "relative_path": _relative_to_vault(config, path),
+        "inbox_relative_path": inbox_relative,
+        "file_name": path.name,
+        "suffix": path.suffix.lower(),
+        "size_bytes": path.stat().st_size,
+        "content_hash": _file_content_hash(path),
+    }
+
+
+def _source_inbox_matches_patterns(path: Path, *, inbox: Path, patterns: list[str]) -> bool:
+    relative = path.relative_to(inbox).as_posix()
+    return any(
+        pattern in {"*", "**", "**/*"} or fnmatch(relative, pattern) or fnmatch(path.name, pattern)
+        for pattern in patterns
+    )
+
+
+def _source_inbox_route(path: Path, *, inbox: Path) -> Optional[dict[str, str]]:
+    suffix = path.suffix.lower()
+    parts = {part.lower() for part in path.relative_to(inbox).parts[:-1]}
+    parts.add(path.parent.name.lower())
+    if suffix == ".pdf":
+        return {"connector": "pdf", "command": "import-pdf"}
+    if "slack" in parts and suffix in {*SOURCE_INBOX_SCAN_TEXT_SUFFIXES, ".json"}:
+        return {"connector": "slack", "command": "import-slack"}
+    if "zoom" in parts and suffix in SOURCE_INBOX_SCAN_TEXT_SUFFIXES:
+        return {"connector": "zoom", "command": "import-zoom"}
+    if suffix in SOURCE_INBOX_SCAN_TEXT_SUFFIXES:
+        return {"connector": "source_inbox", "command": "import-source"}
+    if suffix in SOURCE_INBOX_SCAN_SUPPORTED_SUFFIXES:
+        return None
+    return None
+
+
+def _source_inbox_disabled_connectors(config: Any, connector: str) -> list[str]:
+    disabled: list[str] = []
+    if not config.connectors.source_inbox.enabled:
+        disabled.append("source_inbox")
+    if connector != "source_inbox" and not getattr(config.connectors, connector).enabled:
+        disabled.append(connector)
+    return disabled
+
+
+def _source_inbox_scan_plan(
+    config: Any,
+    path: Path,
+    *,
+    file_payload: dict[str, Any],
+    route: dict[str, str],
+    project: Optional[str],
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    connector = route["connector"]
+    if connector == "pdf":
+        payload = _pdf_import_plan_payload(
+            config,
+            path=path,
+            title=None,
+            text_file=None,
+            project=project,
+            channel="pdf",
+            source_quality="user_provided",
+            sensitivity=sensitivity,
+            tags=tags,
+        )
+    elif connector == "zoom":
+        imported = load_zoom_content(path)
+        payload = _zoom_import_plan_payload(
+            config,
+            imported=imported,
+            project=project,
+            channel="zoom",
+            source_quality="meeting_summary",
+            sensitivity=sensitivity,
+            tags=tags,
+        )
+    elif connector == "slack":
+        imported = load_slack_content(path)
+        payload = _slack_import_plan_payload(
+            config,
+            imported=imported,
+            project=project,
+            source_quality="chat_thread",
+            sensitivity=sensitivity,
+            tags=tags,
+        )
+    else:
+        payload = {
+            "ok": True,
+            "implemented": True,
+            "command": "import-source",
+            "dry_run": True,
+            "vault_path": str(config.vault_path),
+            "path": str(path),
+            "title": path.stem,
+            "project": project,
+            "tags": tags,
+            "channel": "source_inbox",
+            "source_quality": config.connectors.source_inbox.source_quality,
+            "sensitivity": sensitivity,
+            "origin": _source_inbox_origin(file_payload, provider="source_inbox"),
+            "would_read_file": str(path),
+            "would_write": "Sources/<source_id>/source.md",
+        }
+    return {
+        **file_payload,
+        "connector": connector,
+        "command": route["command"],
+        "dry_run": True,
+        "plan": payload,
+    }
+
+
+def _source_inbox_scan_import(
+    config: Any,
+    path: Path,
+    *,
+    file_payload: dict[str, Any],
+    route: dict[str, str],
+    project: Optional[str],
+    sensitivity: str,
+    tags: list[str],
+) -> dict[str, Any]:
+    connector = route["connector"]
+    if connector == "pdf":
+        imported = load_pdf_content(path)
+        result = save_source_material(
+            config,
+            title=imported.title,
+            content=imported.content,
+            extract=imported.extract,
+            project=project,
+            tags=tags,
+            channel="pdf",
+            source_quality="user_provided",
+            sensitivity=sensitivity,
+            origin={**imported.origin, **_source_inbox_origin(file_payload)},
+        ).to_dict()
+        result.update({"content": imported.summary()})
+    elif connector == "zoom":
+        imported = load_zoom_content(path)
+        result = save_source_material(
+            config,
+            title=imported.title,
+            url=_meeting_url(imported.meeting),
+            content=imported.content,
+            extract=imported.extract,
+            project=project,
+            tags=tags,
+            channel="zoom",
+            source_quality="meeting_summary",
+            sensitivity=sensitivity,
+            origin={**imported.origin, **_source_inbox_origin(file_payload)},
+        ).to_dict()
+        result.update({"content": imported.summary(), "meeting": imported.meeting})
+    elif connector == "slack":
+        imported = load_slack_content(path)
+        result = save_source_material(
+            config,
+            title=imported.title,
+            url=_thread_permalink(imported.thread),
+            content=imported.content,
+            extract=imported.extract,
+            project=project,
+            tags=tags,
+            channel="slack",
+            source_quality="chat_thread",
+            sensitivity=sensitivity,
+            origin={**imported.origin, **_source_inbox_origin(file_payload)},
+        ).to_dict()
+        result.update({"content": imported.summary(), "thread": imported.thread})
+    else:
+        result = save_source_material(
+            config,
+            title=path.stem,
+            content=path.read_text(encoding="utf-8"),
+            project=project,
+            tags=tags,
+            channel="source_inbox",
+            source_quality=config.connectors.source_inbox.source_quality,
+            sensitivity=sensitivity,
+            origin=_source_inbox_origin(file_payload, provider="source_inbox"),
+        ).to_dict()
+    result.update(
+        {
+            **file_payload,
+            "connector": connector,
+            "command": route["command"],
+            "dry_run": False,
+        }
+    )
+    return result
+
+
+def _source_inbox_origin(file_payload: Mapping[str, Any], *, provider: Optional[str] = None) -> dict[str, str]:
+    origin = {
+        "source_inbox_path": str(file_payload["path"]),
+        "source_inbox_relative_path": str(file_payload["inbox_relative_path"]),
+        "file_name": str(file_payload["file_name"]),
+        "content_hash": str(file_payload["content_hash"]),
+    }
+    if provider is not None:
+        origin["provider"] = provider
+    return origin
+
+
+def _source_inbox_scan_next_steps(*, dry_run: bool, ignore_disabled: bool) -> list[str]:
+    steps = [
+        "Review saved Sources/ material before creating source-backed memories.",
+        "Keep inferred agent-created memories pending for explicit review.",
+    ]
+    if dry_run:
+        steps.insert(0, "Run without --dry-run to save planned local sources.")
+    if ignore_disabled:
+        steps.append("Consider enabling only the connectors you intend to scan in `.agent-memory/config.yaml`.")
+    return steps
 
 
 def _url_import_plan_payload(

@@ -13,6 +13,15 @@ from agent_memory.sources import lookup_source
 runner = CliRunner()
 
 
+def _enable_connectors(vault, *names):
+    config_path = vault / ".agent-memory" / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    connectors = config.setdefault("connectors", {})
+    for name in names:
+        connectors.setdefault(name, {})["enabled"] = True
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
 def test_init_command_creates_vault_layout(tmp_path):
     vault = tmp_path / "memory-vault"
 
@@ -137,6 +146,7 @@ def test_help_command_lists_grouped_commands():
         "curate",
         "import-source <path>",
         "import-source-inbox <path>",
+        "source-inbox scan",
         "import-url <url>",
         "import-pdf <path>",
         "import-zoom <path>",
@@ -1170,6 +1180,164 @@ def test_import_source_inbox_imports_matching_files(tmp_path):
     assert source_frontmatter["tags"] == ["clip"]
     assert source_frontmatter["channel"] == "web_clipper"
     assert source_frontmatter["origin"]["provider"] == "file"
+
+
+def test_source_inbox_scan_dry_run_reports_planned_skipped_and_no_writes(tmp_path):
+    vault = tmp_path / "memory-vault"
+    inbox = tmp_path / "Inbox"
+    nested = inbox / "nested"
+    nested.mkdir(parents=True)
+    (inbox / "clip.md").write_text("# Clip\n", encoding="utf-8")
+    (nested / "note.txt").write_text("Nested note", encoding="utf-8")
+    (inbox / "ignore.bin").write_bytes(b"ignored")
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _enable_connectors(vault, "source_inbox")
+
+    result = runner.invoke(
+        app,
+        [
+            "source-inbox",
+            "scan",
+            "--path",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["command"] == "source-inbox scan"
+    assert payload["dry_run"] is True
+    assert payload["planned_count"] == 2
+    assert payload["imported_count"] == 0
+    assert payload["skipped_count"] == 1
+    assert payload["error_count"] == 0
+    assert {item["connector"] for item in payload["planned"]} == {"source_inbox"}
+    assert payload["skipped"][0]["reason"] == "unsupported_file_type"
+    assert not list((vault / "Sources").glob("*"))
+    assert not list((vault / "Memories").rglob("*.md"))
+
+
+def test_source_inbox_scan_respects_disabled_config_unless_overridden(tmp_path):
+    vault = tmp_path / "memory-vault"
+    inbox = tmp_path / "Inbox"
+    inbox.mkdir()
+    (inbox / "clip.md").write_text("# Clip\n", encoding="utf-8")
+    runner.invoke(app, ["init", str(vault), "--json"])
+
+    disabled = runner.invoke(
+        app,
+        [
+            "source-inbox",
+            "scan",
+            "--path",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--json",
+        ],
+    )
+    override = runner.invoke(
+        app,
+        [
+            "source-inbox",
+            "scan",
+            "--path",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--dry-run",
+            "--ignore-disabled",
+            "--json",
+        ],
+    )
+
+    assert disabled.exit_code == 0, disabled.output
+    disabled_payload = json.loads(disabled.output)
+    assert disabled_payload["planned_count"] == 0
+    assert disabled_payload["skipped_count"] == 1
+    assert disabled_payload["skipped"][0]["reason"] == "connector_disabled"
+    assert disabled_payload["skipped"][0]["disabled_connectors"] == ["source_inbox"]
+
+    assert override.exit_code == 0, override.output
+    override_payload = json.loads(override.output)
+    assert override_payload["planned_count"] == 1
+    assert override_payload["planned"][0]["connector"] == "source_inbox"
+    assert not list((vault / "Sources").glob("*"))
+
+
+def test_source_inbox_scan_imports_text_and_slack_export_without_memories(tmp_path):
+    vault = tmp_path / "memory-vault"
+    inbox = tmp_path / "Inbox"
+    slack_dir = inbox / "slack"
+    slack_dir.mkdir(parents=True)
+    (inbox / "note.md").write_text("# Note\n\nKeep inbox import explicit.", encoding="utf-8")
+    (slack_dir / "thread.json").write_text(
+        json.dumps(
+            {
+                "channel": "C123",
+                "messages": [
+                    {
+                        "user": "U123",
+                        "text": "Route this as a Slack export.",
+                        "ts": "1714550400.000100",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner.invoke(app, ["init", str(vault), "--json"])
+    _enable_connectors(vault, "source_inbox", "slack")
+
+    result = runner.invoke(
+        app,
+        [
+            "source-inbox",
+            "scan",
+            "--path",
+            str(inbox),
+            "--vault",
+            str(vault),
+            "--project",
+            "agent-memory",
+            "--tag",
+            "inbox",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["planned"] == []
+    assert payload["imported_count"] == 2
+    assert payload["skipped"] == []
+    assert payload["errors"] == []
+    assert {item["connector"] for item in payload["imported"]} == {"source_inbox", "slack"}
+    assert {item["command"] for item in payload["imported"]} == {"import-source", "import-slack"}
+
+    by_connector = {item["connector"]: item for item in payload["imported"]}
+    note_text = (vault / by_connector["source_inbox"]["relative_source_path"]).read_text(encoding="utf-8")
+    note_frontmatter = yaml.safe_load(note_text.split("---", 2)[1])
+    assert note_frontmatter["channel"] == "source_inbox"
+    assert note_frontmatter["project"] == "agent-memory"
+    assert note_frontmatter["tags"] == ["inbox"]
+    assert note_frontmatter["origin"]["provider"] == "source_inbox"
+    assert "Keep inbox import explicit." in note_text
+
+    slack_text = (vault / by_connector["slack"]["relative_source_path"]).read_text(encoding="utf-8")
+    slack_frontmatter = yaml.safe_load(slack_text.split("---", 2)[1])
+    assert slack_frontmatter["channel"] == "slack"
+    assert slack_frontmatter["origin"]["provider"] == "slack"
+    assert slack_frontmatter["origin"]["source_inbox_relative_path"] == "slack/thread.json"
+    assert "Route this as a Slack export." in slack_text
+    assert not list((vault / "Memories").rglob("*.md"))
 
 
 def test_raw_list_and_inspect_report_inbox_files(tmp_path):
