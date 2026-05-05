@@ -6,13 +6,11 @@ memories_dir: Memories
 sources_dir: Sources
 wiki_dir: Wiki
 state_dir: state
-memora_dir: state
 index_path: state/index.sqlite
 default_scope: project
 default_project: memora
 user_default_status: active
 agent_default_status: pending
-default_author_name: Memora CLI
 
 semantic:
   provider: null
@@ -36,7 +34,6 @@ recall:
     project_context: 6
     fact: 8
     task: 4
-    source_extract: 3
     conversation_summary: 3
 
 recall_policies:
@@ -64,7 +61,6 @@ recall_policies:
     types:
       - decision
       - project_context
-      - source_extract
       - conversation_summary
   review:
     budget: 2400
@@ -84,7 +80,7 @@ agent_policy:
   min_pending_confidence: 0.55
   explicit_user_saves_active: true
   autonomous_lifecycle: false
-  require_review_for_source_extracts: true
+  require_review_for_source_promotions: true
 
 index_freshness:
   enabled: true

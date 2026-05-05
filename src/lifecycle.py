@@ -1160,10 +1160,7 @@ def _supersede_memory_unlocked(
         reason=reason,
     )
 
-    supersedes = _string_list(new_record.data.get("supersedes"))
-    if old_id not in supersedes:
-        supersedes.append(old_id)
-    new_record.data["supersedes"] = supersedes
+    _ensure_relation(new_record.data, relation=RelationType.SUPERSEDES.value, target=old_id)
     new_record.data["updated_at"] = now.isoformat()
     _append_history(
         new_record.data,
@@ -1226,10 +1223,7 @@ def _contradict_memories_unlocked(
     left_previous = str(left.data.get("status"))
     right_previous = str(right.data.get("status"))
 
-    contradicts = _string_list(left.data.get("contradicts"))
-    if id2 not in contradicts:
-        contradicts.append(id2)
-    left.data["contradicts"] = contradicts
+    _ensure_relation(left.data, relation=RelationType.CONTRADICTS.value, target=id2)
     left.data["updated_at"] = now.isoformat()
     _append_history(
         left.data,
@@ -1572,7 +1566,7 @@ def _review_risk_flags(
         flags.append("needs_human_judgment")
     if frontmatter.source is None:
         flags.append("missing_source")
-    if frontmatter.contradicts or has_contradiction_candidates:
+    if _outgoing_contradiction_targets(frontmatter) or has_contradiction_candidates:
         flags.append("has_contradictions")
     if has_duplicate_candidates:
         flags.append("possible_duplicate")
@@ -1697,7 +1691,6 @@ def _proposed_review_importance(
         "preference": 0.55,
         "task": 0.5,
         "fact": 0.45,
-        "source_extract": 0.4,
         "conversation_summary": 0.4,
     }.get(memory_type, 0.45)
     reasons: list[str] = [*extra_reasons, f"type:{memory_type}", f"scope:{scope}"]
@@ -1730,7 +1723,7 @@ def _proposed_review_importance(
         score += 0.05
         reasons.append("has_source")
 
-    if has_contradiction_candidates or frontmatter.contradicts:
+    if has_contradiction_candidates or _outgoing_contradiction_targets(frontmatter):
         score -= 0.15
         reasons.append("has_contradictions")
     if has_duplicate_candidates:
@@ -1849,6 +1842,22 @@ def _outgoing_contradiction_targets(frontmatter: MemoryFrontmatter) -> tuple[str
         if relation.type == RelationType.CONTRADICTS
     )
     return tuple(dict.fromkeys(targets))
+
+
+def _ensure_relation(data: dict[str, Any], *, relation: str, target: str) -> None:
+    relations = data.get("relations")
+    if not isinstance(relations, list):
+        relations = []
+    for item in relations:
+        if (
+            isinstance(item, dict)
+            and str(item.get("type")) == relation
+            and str(item.get("target")) == target
+        ):
+            data["relations"] = relations
+            return
+    relations.append({"type": relation, "target": target})
+    data["relations"] = relations
 
 
 def _heuristic_contradiction_candidate(
@@ -2048,34 +2057,6 @@ def _sorted_tuple(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(set(values)))
 
 
-def touch_last_used(
-    config: MemoryConfig, memory_ids: Iterable[str], *, when: Optional[datetime] = None
-) -> None:
-    """Best-effort frontmatter touch after recall without changing memora status."""
-
-    with vault_lock(config):
-        _touch_last_used_unlocked(config, memory_ids, when=when)
-
-
-def _touch_last_used_unlocked(
-    config: MemoryConfig,
-    memory_ids: Iterable[str],
-    *,
-    when: Optional[datetime] = None,
-) -> None:
-    selected_when = when or _now()
-    targets = set(memory_ids)
-    if not targets:
-        return
-    rendered: list[tuple[Path, str]] = []
-    for record in _iter_memory_records(config):
-        if record.document.frontmatter.id not in targets:
-            continue
-        record.data["last_used_at"] = selected_when.isoformat()
-        rendered.append((record.path, _render_updated(record.data, record.body, path=record.path)))
-    _atomic_replace_many(rendered)
-
-
 def _validate_update_options(options: MemoryUpdateOptions) -> None:
     if options.clear_project and options.project is not None:
         raise ValueError("--project and --clear-project cannot be used together")
@@ -2151,13 +2132,6 @@ def _update_observation_text(data: dict[str, Any], *, old_text: str, new_text: s
     if not isinstance(observations, list):
         return
     if not observations:
-        observations.append(
-            {
-                "category": str(data.get("type")),
-                "text": new_text,
-                "confidence": data.get("confidence"),
-            }
-        )
         return
     first = observations[0]
     if isinstance(first, dict) and str(first.get("text") or "").strip() == old_text:
@@ -2341,5 +2315,4 @@ __all__ = [
     "review_batch_action",
     "review_queue",
     "supersede_memory",
-    "touch_last_used",
 ]

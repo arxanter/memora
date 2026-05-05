@@ -12,8 +12,6 @@ import yaml
 
 from config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
 from indexer import estimate_tokens
-from markdown import aliases as presentation_aliases
-from markdown import wikilink_for_path
 from safety import (
     SafetyScanResult,
     merge_scan_results,
@@ -65,7 +63,6 @@ class SourceCaptureResult:
     relative_extract_path: Optional[Path]
     url: Optional[str]
     title: str
-    project: Optional[str]
     tags: tuple[str, ...]
     channel: str
     source_quality: str
@@ -110,7 +107,6 @@ class SourceCaptureResult:
             ),
             "url": self.url,
             "title": self.title,
-            "project": self.project,
             "tags": list(self.tags),
             "channel": self.channel,
             "source_quality": self.source_quality,
@@ -391,7 +387,6 @@ def save_source_material(
     url: Optional[str] = None,
     content: Optional[str] = None,
     extract: Optional[str] = None,
-    project: Optional[str] = None,
     tags: Iterable[str] = (),
     channel: Optional[str] = None,
     source_quality: Optional[str] = None,
@@ -426,8 +421,6 @@ def save_source_material(
     sources_root = config.vault_path / config.sources_dir
     source_dir = _unique_source_dir(sources_root, source_id)
     source_id = source_dir.name
-    relative_source_path = (source_dir / "source.md").relative_to(config.vault_path).as_posix()
-    relative_extract_path = (source_dir / "extract.md").relative_to(config.vault_path).as_posix()
     has_extract = _optional_string(extract) is not None
 
     source_markdown = _render_source_markdown(
@@ -435,7 +428,6 @@ def save_source_material(
         title=selected_title,
         url=_optional_string(url),
         content=_optional_string(content),
-        project=_optional_string(project),
         tags=selected_tags,
         channel=selected_channel,
         source_quality=selected_quality,
@@ -443,8 +435,6 @@ def save_source_material(
         origin=selected_origin,
         safety=safety,
         captured_at=selected_at,
-        source_path=relative_source_path,
-        extract_path=relative_extract_path if has_extract else None,
     )
     files: list[tuple[PathLike, str]] = [(source_dir / "source.md", source_markdown)]
 
@@ -459,7 +449,6 @@ def save_source_material(
                     title=selected_title,
                     url=_optional_string(url),
                     extract=str(extract).strip(),
-                    project=_optional_string(project),
                     tags=selected_tags,
                     channel=selected_channel,
                     source_quality=selected_quality,
@@ -467,8 +456,6 @@ def save_source_material(
                     origin=selected_origin,
                     safety=safety,
                     captured_at=selected_at,
-                    source_path=relative_source_path,
-                    extract_path=relative_extract_path,
                 ),
             )
         )
@@ -486,7 +473,6 @@ def save_source_material(
         relative_extract_path=extract_path.relative_to(config.vault_path) if extract_path else None,
         url=_optional_string(url),
         title=selected_title,
-        project=_optional_string(project),
         tags=selected_tags,
         channel=selected_channel,
         source_quality=selected_quality,
@@ -532,7 +518,7 @@ def save_source_with_memories(
     planned = tuple(
         _plan_promoted_memory(
             memory,
-            default_project=_optional_string(source_payload.get("project")),
+            default_project=_optional_string(source_payload.get("default_project")),
             policy=config.agent_policy,
         )
         for memory in memories
@@ -561,7 +547,6 @@ def save_source_with_memories(
             or source_payload.get("markdown")
         ),
         extract=_optional_string(source_payload.get("extract") or source_payload.get("summary")),
-        project=_optional_string(source_payload.get("project")),
         tags=_clean_list(source_payload.get("tags", ())),
         channel=_optional_string(source_payload.get("channel")),
         source_quality=_optional_string(source_payload.get("source_quality")),
@@ -760,7 +745,6 @@ def _render_source_markdown(
     title: str,
     url: Optional[str],
     content: Optional[str],
-    project: Optional[str],
     tags: tuple[str, ...],
     channel: str,
     source_quality: str,
@@ -768,14 +752,11 @@ def _render_source_markdown(
     origin: Mapping[str, str],
     safety: SafetyScanResult,
     captured_at: datetime,
-    source_path: str,
-    extract_path: Optional[str],
 ) -> str:
     frontmatter = _frontmatter(
         source_id=source_id,
         title=title,
         url=url,
-        project=project,
         tags=tags,
         channel=channel,
         source_quality=source_quality,
@@ -784,8 +765,6 @@ def _render_source_markdown(
         safety=safety,
         captured_at=captured_at,
         kind="source",
-        source_path=source_path,
-        extract_path=extract_path,
     )
     body = content or (
         "No raw content was provided to Memora. The agent should fetch or "
@@ -800,7 +779,6 @@ def _render_extract_markdown(
     title: str,
     url: Optional[str],
     extract: str,
-    project: Optional[str],
     tags: tuple[str, ...],
     channel: str,
     source_quality: str,
@@ -808,14 +786,11 @@ def _render_extract_markdown(
     origin: Mapping[str, str],
     safety: SafetyScanResult,
     captured_at: datetime,
-    source_path: str,
-    extract_path: str,
 ) -> str:
     frontmatter = _frontmatter(
         source_id=source_id,
         title=title,
         url=url,
-        project=project,
         tags=tags,
         channel=channel,
         source_quality=source_quality,
@@ -824,8 +799,6 @@ def _render_extract_markdown(
         safety=safety,
         captured_at=captured_at,
         kind="extract",
-        source_path=source_path,
-        extract_path=extract_path,
     )
     return f"---\n{frontmatter}\n---\n\n# Extract: {title}\n\n{_source_url_line(url)}{extract.strip()}\n"
 
@@ -835,7 +808,6 @@ def _frontmatter(
     source_id: str,
     title: str,
     url: Optional[str],
-    project: Optional[str],
     tags: tuple[str, ...],
     channel: str,
     source_quality: str,
@@ -844,31 +816,25 @@ def _frontmatter(
     safety: SafetyScanResult,
     captured_at: datetime,
     kind: str,
-    source_path: str,
-    extract_path: Optional[str],
 ) -> str:
     data = {
         "source_id": source_id,
         "kind": kind,
         "schema_version": 1,
         "title": title,
-        "aliases": presentation_aliases(title, source_id),
         "url": url,
-        "project": project,
         "tags": list(tags),
         "captured_at": captured_at.isoformat(),
         "channel": channel,
         "source_quality": source_quality,
         "sensitivity": sensitivity,
         "risk_flags": list(safety.risk_flags),
-        "safety": safety.to_dict(),
     }
-    if kind == "source" and extract_path:
-        data["extract_links"] = [wikilink_for_path(extract_path, label=f"Extract: {title}")]
-    if kind == "extract":
-        data["source_links"] = [wikilink_for_path(source_path, label=title)]
     if origin:
         data["origin"] = dict(origin)
+    for field in ("url", "tags", "risk_flags"):
+        if data.get(field) in (None, []):
+            data.pop(field, None)
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=False).strip()
 
 
@@ -1003,7 +969,7 @@ def _promoted_memory_status(
     policy: AgentPolicyConfig,
     confidence: float,
 ) -> LifecycleStatus:
-    if policy.require_review_for_source_extracts:
+    if policy.require_review_for_source_promotions:
         return LifecycleStatus.PENDING
 
     trust_level = _trust_level(policy)

@@ -13,7 +13,7 @@ Value sets:
 
 - Clients: `all`, `agents`, `cursor`, `claude`, `codex`.
 - Memory types: `fact`, `decision`, `preference`, `task`,
-  `project_context`, `source_extract`, `conversation_summary`.
+  `project_context`, `conversation_summary`.
 - Statuses: `active`, `pending`, `stale`, `rejected`, `superseded`.
 - Recall task classes: `default`, `coding`, `planning`, `review`.
 - Search modes: `auto`, `text`, `vector`, `hybrid`.
@@ -30,8 +30,8 @@ Use these most often:
 - `memora inspect <id>`
 - `memora remember --type <type> --text "<atomic memory>" --project <project>`
 - `memora memory update <id> --scope user --clear-project`
-- `memora raw add <path> --kind <kind> --format <format> --project <project>`
-- `memora source add <source.md> --extract <extract.md> --kind <kind> --project <project>`
+- `memora raw add <path> --kind <kind> --format <format>`
+- `memora source add <source.md> --extract <extract.md> --kind <kind>`
 - `memora raw mark-processed <raw-path> --source-id <source_id>`
 - `memora wiki ingest <source_id> --entity <name> --concept <name>`
 - `memora context "<query>" --project <project> --intent auto --budget 1200`
@@ -108,7 +108,7 @@ and report the CLI gap.
 
 ## Capture And Sources
 
-`memora raw add <path> --kind <kind> --format <format> [--title TEXT] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--dry-run] [--vault PATH]`
+`memora raw add <path> --kind <kind> --format <format> [--title TEXT] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--dry-run] [--vault PATH]`
 
 - Copy raw input into staging with sidecar metadata. Does not create memories.
 
@@ -125,7 +125,7 @@ and report the CLI gap.
 - Move a successfully processed raw file and sidecar metadata to `raw/processed`.
   Run this after curated source evidence has been saved with `memora source add`.
 
-`memora source add <source.md> [--extract <extract.md>] [--kind <kind>] [--format <format>] [--title TEXT] [--url URL] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--vault PATH]`
+`memora source add <source.md> [--extract <extract.md>] [--kind <kind>] [--format <format>] [--title TEXT] [--url URL] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--vault PATH]`
 
 - Save curated durable evidence under `Sources/`.
 
@@ -168,9 +168,9 @@ and report the CLI gap.
 `memora remember --type <memory_type> --text TEXT [--scope user|project] [--project NAME] [--status <status>] [--tag TAG ...] [--vault PATH]`
 
 - Create one canonical atomic memory.
-- New writes with `--type source_extract` are retired; use `memora source add`
-  for evidence and `memora wiki synthesize --save` for durable source-backed
-  summaries.
+- Legacy `source_extract` memories remain readable, but new writes should use
+  `memora source add` for evidence and `memora wiki synthesize --save` for
+  durable source-backed summaries.
 
 `memora memory update <id> [--type <memory_type>] [--scope user|project|global] [--project NAME|--clear-project] [--status <status>] [--confidence N|--clear-confidence] [--tag TAG ...|--clear-tags] [--title TEXT|--clear-title] [--text TEXT] [--reason TEXT] [--dry-run] [--vault PATH]`
 

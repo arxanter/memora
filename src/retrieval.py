@@ -106,7 +106,6 @@ MEMORY_TYPE_BOOSTS = {
     MemoryType.FACT.value: 0.15,
     MemoryType.CONVERSATION_SUMMARY.value: 0.10,
     MemoryType.TASK.value: 0.05,
-    MemoryType.SOURCE_EXTRACT.value: 0.00,
 }
 
 STATUS_BOOSTS = {

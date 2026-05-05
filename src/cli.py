@@ -839,9 +839,6 @@ def raw_add_command(
     title: Optional[str] = typer.Option(
         None, "--title", help="Optional human title for the raw material."
     ),
-    project: Optional[str] = typer.Option(
-        None, "--project", help="Project metadata for the raw material."
-    ),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
     dry_run: bool = typer.Option(
@@ -858,7 +855,6 @@ def raw_add_command(
             kind=kind,
             source_format=source_format,
             title=title,
-            project=project,
             sensitivity=sensitivity,
             tags=tag,
             dry_run=dry_run,
@@ -960,9 +956,6 @@ def source_add_command(
         None, "--title", help="Source title; defaults to file stem."
     ),
     url: Optional[str] = typer.Option(None, "--url", help="Optional source URL or permalink."),
-    project: Optional[str] = typer.Option(
-        None, "--project", help="Project metadata for the source."
-    ),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
 ) -> None:
@@ -978,7 +971,6 @@ def source_add_command(
             source_format=source_format,
             title=title,
             url=url,
-            project=project,
             sensitivity=sensitivity,
             tags=tag,
         )
@@ -2490,7 +2482,6 @@ def _raw_add_payload(
     kind: str,
     source_format: str,
     title: Optional[str],
-    project: Optional[str],
     sensitivity: str,
     tags: list[str],
     dry_run: bool,
@@ -2510,7 +2501,6 @@ def _raw_add_payload(
         "kind": selected_kind,
         "format": selected_format,
         "title": title or source_path.stem,
-        "project": project,
         "tags": list(tags),
         "sensitivity": sensitivity,
         "captured_at": now.isoformat(),
@@ -2643,7 +2633,6 @@ def _source_add_payload(
     source_format: str,
     title: Optional[str],
     url: Optional[str],
-    project: Optional[str],
     sensitivity: str,
     tags: list[str],
 ) -> dict[str, Any]:
@@ -2661,7 +2650,6 @@ def _source_add_payload(
         url=url,
         content=_read_text_file(source_path),
         extract=_read_text_file(extract_path) if extract_path is not None else None,
-        project=project,
         tags=tags,
         channel=_source_channel_for_kind(selected_kind),
         source_quality="user_provided",
@@ -3657,7 +3645,6 @@ def _agent_capture_payload(
             title=title,
             content=source_content,
             extract=summary,
-            project=project,
             tags=selected_tags,
             channel="file",
             source_quality="agent_fetched",
@@ -3682,7 +3669,6 @@ def _agent_capture_payload(
             title=title,
             content=source_content,
             extract=summary,
-            project=project,
             tags=selected_tags,
             channel="file",
             source_quality="agent_fetched",
@@ -3761,7 +3747,6 @@ def _session_finalize_payload(
             title=transcript_path.stem,
             content=transcript_content,
             extract=summary,
-            project=project,
             tags=session_tags,
             channel="ai_session",
             source_quality="imported_export",
@@ -3798,7 +3783,6 @@ def _session_finalize_payload(
             title=transcript_path.stem,
             content=transcript_content,
             extract=summary,
-            project=project,
             tags=session_tags,
             channel="ai_session",
             source_quality="imported_export",
@@ -4020,7 +4004,6 @@ def _planned_agent_source_payload(
     title: str,
     content: str,
     extract: str,
-    project: Optional[str],
     tags: list[str],
     channel: str,
     source_quality: str,
@@ -4050,7 +4033,6 @@ def _planned_agent_source_payload(
         "relative_extract_path": "Sources/<source_id>/extract.md",
         "url": None,
         "title": title,
-        "project": project,
         "tags": tags,
         "channel": channel,
         "source_quality": source_quality,

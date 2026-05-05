@@ -110,7 +110,6 @@ class RecallConfig(BaseModel):
             MemoryType.PROJECT_CONTEXT.value: 6,
             MemoryType.FACT.value: 8,
             MemoryType.TASK.value: 4,
-            MemoryType.SOURCE_EXTRACT.value: 3,
             MemoryType.CONVERSATION_SUMMARY.value: 3,
         }
     )
@@ -174,7 +173,6 @@ def _default_recall_policies() -> dict[str, TaskRecallPolicyConfig]:
             types=[
                 MemoryType.DECISION.value,
                 MemoryType.PROJECT_CONTEXT.value,
-                MemoryType.SOURCE_EXTRACT.value,
                 MemoryType.CONVERSATION_SUMMARY.value,
             ],
         ),
@@ -201,7 +199,24 @@ class AgentPolicyConfig(BaseModel):
     min_pending_confidence: float = Field(default=0.55, ge=0, le=1)
     explicit_user_saves_active: bool = True
     autonomous_lifecycle: bool = False
-    require_review_for_source_extracts: bool = True
+    require_review_for_source_promotions: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_source_promotion_policy(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if (
+            "require_review_for_source_extracts" in data
+            and "require_review_for_source_promotions" not in data
+        ):
+            return {
+                **data,
+                "require_review_for_source_promotions": data[
+                    "require_review_for_source_extracts"
+                ],
+            }
+        return data
 
     @field_validator("aliases")
     @classmethod
@@ -263,13 +278,11 @@ class MemoryConfig(BaseModel):
     sources_dir: str = "Sources"
     wiki_dir: str = "Wiki"
     state_dir: str = DEFAULT_STATE_DIR_NAME
-    memora_dir: str = DEFAULT_STATE_DIR_NAME
     index_path: str = "state/index.sqlite"
     default_scope: MemoryScope = MemoryScope.USER
     default_project: Optional[str] = None
     user_default_status: LifecycleStatus = LifecycleStatus.ACTIVE
     agent_default_status: LifecycleStatus = LifecycleStatus.PENDING
-    default_author_name: str = "Memora CLI"
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     recall: RecallConfig = Field(default_factory=RecallConfig)
     recall_policies: dict[str, TaskRecallPolicyConfig] = Field(
@@ -306,9 +319,7 @@ class MemoryConfig(BaseModel):
         "sources_dir",
         "wiki_dir",
         "state_dir",
-        "memora_dir",
         "index_path",
-        "default_author_name",
     )
     @classmethod
     def require_non_empty_string(cls, value: str) -> str:

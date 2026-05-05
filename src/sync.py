@@ -193,7 +193,10 @@ def atomic_write_many(files: Sequence[tuple[PathLike, str]]) -> None:
 def detect_sync_conflicts(config: MemoryConfig) -> ConflictReport:
     """Detect practical Markdown sync conflicts without attempting resolution."""
 
-    markdown_files = _iter_syncable_markdown_files(config.vault_path, config.memora_dir)
+    markdown_files = _iter_syncable_markdown_files(
+        config.vault_path,
+        excluded_roots=_sync_excluded_roots(config),
+    )
     memory_files = iter_memory_markdown_files(config.vault_path)
     issues: list[ConflictIssue] = []
     raw_by_path: dict[Path, str] = {}
@@ -293,14 +296,23 @@ def _fsync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def _iter_syncable_markdown_files(vault_path: PathLike, memora_dir: str) -> tuple[Path, ...]:
+def _sync_excluded_roots(config: MemoryConfig) -> tuple[Path, ...]:
+    roots = [config.vault_path / ".memora"]
+    if _is_relative_to(config.state_root, config.vault_path):
+        roots.append(config.state_root)
+    return tuple(dict.fromkeys(path.resolve() for path in roots))
+
+
+def _iter_syncable_markdown_files(
+    vault_path: PathLike, *, excluded_roots: tuple[Path, ...]
+) -> tuple[Path, ...]:
     root = Path(vault_path)
-    local_state_root = root / memora_dir
     return tuple(
         sorted(
             path
             for path in root.rglob("*.md")
-            if path.is_file() and not _is_relative_to(path, local_state_root)
+            if path.is_file()
+            and not any(_is_relative_to(path.resolve(), excluded) for excluded in excluded_roots)
         )
     )
 

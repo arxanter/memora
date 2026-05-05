@@ -26,7 +26,6 @@ FACT_TYPES = {
     MemoryType.PREFERENCE.value,
     MemoryType.PROJECT_CONTEXT.value,
     MemoryType.CONVERSATION_SUMMARY.value,
-    MemoryType.SOURCE_EXTRACT.value,
 }
 WARNING_STATUSES = {
     LifecycleStatus.PENDING.value,

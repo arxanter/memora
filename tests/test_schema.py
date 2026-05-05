@@ -91,7 +91,7 @@ def test_migration_field_is_supported():
     assert frontmatter.migration.from_schema_version == 0
 
 
-def test_render_memory_markdown_adds_graph_friendly_metadata():
+def test_render_memory_markdown_omits_generated_presentation_metadata():
     frontmatter = MemoryFrontmatter.model_validate(
         base_frontmatter(
             type="decision",
@@ -110,17 +110,16 @@ def test_render_memory_markdown_adds_graph_friendly_metadata():
     document = parse_markdown_document(markdown)
 
     assert document.frontmatter.id == "mem_20260429_test01"
-    assert document.frontmatter.title == "Use Markdown as durable memory."
-    assert document.frontmatter.aliases == [
-        "Use Markdown as durable memory.",
-        "mem_20260429_test01",
-    ]
-    assert document.frontmatter.source_links == [
-        "[[Sources/2026-05-01_demo/extract|Demo Source]]",
-    ]
-    assert document.frontmatter.relation_links == [
-        "supports: [[mem_20260429_target]]",
-        "supersedes: [[mem_20260429_old]]",
+    assert document.frontmatter.title is None
+    assert document.frontmatter.aliases == []
+    assert document.frontmatter.source_links == []
+    assert document.frontmatter.relation_links == []
+    assert document.frontmatter.supersedes == []
+    assert [
+        (relation.type.value, relation.target) for relation in document.frontmatter.relations
+    ] == [
+        ("supports", "mem_20260429_target"),
+        ("supersedes", "mem_20260429_old"),
     ]
 
 
@@ -143,6 +142,5 @@ def test_sample_vault_validates():
         "fact",
         "preference",
         "project_context",
-        "source_extract",
         "task",
     }

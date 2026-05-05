@@ -81,7 +81,10 @@ def test_supersede_updates_status_relation_and_audit_together(tmp_path):
     new_doc = validate_markdown_file(vault / "Memories/decisions/new.md")
     assert old_doc.frontmatter.status == "superseded"
     assert old_doc.frontmatter.valid_to is not None
-    assert "mem_20260430_old" in new_doc.frontmatter.supersedes
+    assert any(
+        relation.type == "supersedes" and relation.target == "mem_20260430_old"
+        for relation in new_doc.frontmatter.relations
+    )
     assert old_doc.frontmatter.model_dump(mode="json")["history"][0]["by"] == "mem_20260430_new"
     assert new_doc.frontmatter.model_dump(mode="json")["history"][0]["target"] == "mem_20260430_old"
 

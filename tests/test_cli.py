@@ -269,9 +269,9 @@ def test_remember_command_creates_valid_markdown(tmp_path):
     assert payload["type"] == "decision"
     assert payload["status"] == "active"
     assert document.frontmatter.id == payload["id"]
-    assert document.frontmatter.title == "Use Markdown as durable memory."
-    assert document.frontmatter.aliases == ["Use Markdown as durable memory.", payload["id"]]
-    assert document.frontmatter.observations[0].text == "Use Markdown as durable memory."
+    assert document.frontmatter.title is None
+    assert document.frontmatter.aliases == []
+    assert document.frontmatter.observations == []
     assert document.body.strip() == "Use Markdown as durable memory."
 
 
@@ -861,8 +861,6 @@ def test_raw_add_stages_file_with_metadata_only(tmp_path):
             "text",
             "--format",
             "markdown",
-            "--project",
-            "memora",
             "--tag",
             "clip",
         ],
@@ -874,7 +872,7 @@ def test_raw_add_stages_file_with_metadata_only(tmp_path):
     assert payload["command"] == "raw add"
     assert payload["metadata"]["kind"] == "text"
     assert payload["metadata"]["format"] == "markdown"
-    assert payload["metadata"]["project"] == "memora"
+    assert "project" not in payload["metadata"]
     assert payload["metadata"]["tags"] == ["clip"]
     assert (vault / payload["relative_path"]).read_text(encoding="utf-8") == source.read_text(
         encoding="utf-8"
@@ -952,8 +950,6 @@ def test_source_add_saves_curated_source_and_extract(tmp_path):
             "text",
             "--format",
             "markdown",
-            "--project",
-            "memora",
         ],
     )
 

@@ -66,7 +66,6 @@ class RelationType(str, Enum):
     CONTRADICTS = "contradicts"
     DEPENDS_ON = "depends_on"
     RELATED_TO = "related_to"
-    BELONGS_TO_PROJECT = "belongs_to_project"
 
 
 class SourceRef(BaseModel):

@@ -1,3 +1,17 @@
+---
+source_id: 2026-04-29_abcd1234
+kind: source
+schema_version: 1
+title: Stage 0 Planning Notes
+captured_at: 2026-04-29T12:00:00+02:00
+channel: manual
+source_quality: user_provided
+sensitivity: normal
+origin:
+  provider: sample
+  format: markdown
+---
+
 # Stage 0 Planning Notes
 
 This sample source represents imported planning material. Canonical memories

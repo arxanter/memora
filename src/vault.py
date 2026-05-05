@@ -12,8 +12,6 @@ from typing import Any, Iterable, Optional, Union
 import yaml
 
 from config import MemoryConfig, create_default_config, load_config, write_config
-from markdown import aliases as presentation_aliases
-from markdown import readable_title, wikilink_for_memory, wikilink_for_path
 from schema import (
     AuthorKind,
     AuthorMetadata,
@@ -21,7 +19,6 @@ from schema import (
     MemoryFrontmatter,
     MemoryScope,
     MemoryType,
-    Observation,
     RelationType,
     SCHEMA_VERSION,
     SourceRef,
@@ -261,24 +258,13 @@ def remember_memory(
         status=selected_status,
         created_at=now,
         updated_at=now,
-        valid_from=now.date(),
-        valid_to=None,
         confidence=confidence,
         source=selected_source,
         author=AuthorMetadata(
             kind=selected_author_kind,
-            name=author_name or config.default_author_name,
+            name=author_name,
         ),
-        supersedes=[],
-        contradicts=[],
         relations=[],
-        observations=[
-            Observation(
-                category=memory_type.value,
-                text=cleaned_text,
-                confidence=confidence,
-            )
-        ],
         tags=list(selected_tags),
         risk_flags=list(selected_risk_flags),
     )
@@ -305,60 +291,53 @@ def remember_memory(
 def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
     """Render a validated memory as portable Markdown."""
 
-    frontmatter_data = _memory_frontmatter_with_presentation(frontmatter, body)
+    frontmatter_data = _memory_frontmatter_data(frontmatter)
     rendered_yaml = yaml.safe_dump(frontmatter_data, sort_keys=False, allow_unicode=False).strip()
     return f"---\n{rendered_yaml}\n---\n\n{body.strip()}\n"
 
 
-def _memory_frontmatter_with_presentation(
-    frontmatter: MemoryFrontmatter, body: str
-) -> dict[str, Any]:
-    """Add optional presentation fields without changing canonical ids."""
+def _memory_frontmatter_data(frontmatter: MemoryFrontmatter) -> dict[str, Any]:
+    """Return compact canonical frontmatter without generated presentation fields."""
 
-    frontmatter_data = frontmatter.model_dump(mode="json", exclude_none=False)
-    title = frontmatter.title or readable_title(body, fallback=frontmatter.id)
-    frontmatter_data["title"] = title
-    frontmatter_data["aliases"] = frontmatter.aliases or presentation_aliases(title, frontmatter.id)
-
-    source_links = list(frontmatter.source_links)
-    if frontmatter.source and frontmatter.source.path and not source_links:
-        source_links = [
-            wikilink_for_path(
-                frontmatter.source.path,
-                label=frontmatter.source.title or "Source",
-            )
-        ]
-    frontmatter_data["source_links"] = source_links
-
-    relation_links = list(frontmatter.relation_links)
-    if not relation_links:
-        relation_links = _memory_relation_links(frontmatter)
-    frontmatter_data["relation_links"] = relation_links
-
-    for field in ("aliases", "source_links", "relation_links"):
-        if not frontmatter_data[field]:
-            frontmatter_data.pop(field)
+    frontmatter_data = frontmatter.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude_defaults=True,
+    )
+    _fold_legacy_relation_lists(frontmatter_data, frontmatter)
+    for field in ("title", "aliases", "source_links", "relation_links"):
+        frontmatter_data.pop(field, None)
+    frontmatter_data.pop("supersedes", None)
+    frontmatter_data.pop("contradicts", None)
+    for field in ("author", "source", "migration"):
+        if frontmatter_data.get(field) == {}:
+            frontmatter_data.pop(field, None)
     return frontmatter_data
 
 
-def _memory_relation_links(frontmatter: MemoryFrontmatter) -> list[str]:
-    links: list[str] = []
-    seen: set[str] = set()
-
-    def add_link(relation: str, target: str) -> None:
-        link = f"{relation}: {wikilink_for_memory(target)}"
-        if link in seen:
-            return
-        seen.add(link)
-        links.append(link)
-
-    for relation in frontmatter.relations:
-        add_link(relation.type.value, relation.target)
-    for target in frontmatter.supersedes:
-        add_link(RelationType.SUPERSEDES.value, target)
-    for target in frontmatter.contradicts:
-        add_link(RelationType.CONTRADICTS.value, target)
-    return links
+def _fold_legacy_relation_lists(
+    frontmatter_data: dict[str, Any], frontmatter: MemoryFrontmatter
+) -> None:
+    relations = list(frontmatter_data.get("relations") or [])
+    seen = {
+        (str(relation.get("type")), str(relation.get("target")))
+        for relation in relations
+        if isinstance(relation, dict)
+    }
+    for relation_type, targets in (
+        (RelationType.SUPERSEDES.value, frontmatter.supersedes),
+        (RelationType.CONTRADICTS.value, frontmatter.contradicts),
+    ):
+        for target in targets:
+            key = (relation_type, target)
+            if key in seen:
+                continue
+            seen.add(key)
+            relations.append({"type": relation_type, "target": target})
+    if relations:
+        frontmatter_data["relations"] = relations
+    else:
+        frontmatter_data.pop("relations", None)
 
 
 def status_summary(config: MemoryConfig) -> dict[str, Any]:

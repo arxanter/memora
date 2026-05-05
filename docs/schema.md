@@ -73,10 +73,6 @@ The initial memory schema should include:
 ```yaml
 schema_version: 1
 id: mem_20260429_9f3a21
-title: Use Markdown as durable memory
-aliases:
-  - mem_20260429_9f3a21
-  - Markdown as durable memory
 type: decision
 scope: project
 project: memora
@@ -84,35 +80,23 @@ status: active
 confidence: 0.86
 created_at: 2026-04-29T12:00:00+02:00
 updated_at: 2026-04-29T12:00:00+02:00
-valid_from: 2026-04-29
-valid_to:
 source:
   path: Sources/2026-04-29_abcd1234/extract.md
   title: Stage 0 planning extract
-source_links:
-  - "[[Sources/2026-04-29_abcd1234/extract|Stage 0 planning extract]]"
 author:
   kind: agent
   name: Cursor
-supersedes: []
-contradicts: []
 relations:
   - type: supports
     target: mem_20260429_7ab901
-relation_links:
-  - "supports: [[mem_20260429_7ab901]]"
-observations:
-  - category: decision
-    text: SQLite is a disposable index, not durable state.
 tags: [memory, retrieval, markdown]
-last_used_at: 2026-04-30T12:30:00+02:00
 history:
   - at: 2026-04-30T12:15:00+02:00
-    action: superseded
+    action: update
     actor: memora
     from_status: active
-    to_status: superseded
-    by: mem_20260430_replacement
+    to_status: active
+    reason: normalized schema metadata
 ```
 
 The Stage 1 implementation lives in `src/schema.py`. `MemoryFrontmatter`
@@ -138,13 +122,10 @@ Conditional fields:
 - `history` is optional audit metadata. Lifecycle commands append deterministic
   entries with `at`, `action`, `actor`, `from_status`, `to_status`, and optional
   relation-specific fields such as `target`, `by`, or `reason`.
-- `last_used_at` is optional metadata updated after recall on a best-effort
-  basis. It does not affect schema validity or durable graph validation.
-
-Presentation fields such as `title`, `aliases`, `source_links`, and
-`relation_links` are optional readable metadata. They do not replace stable IDs,
-`source.path`, or structured `relations[]`; they make sample vaults and generated
-notes easier to browse as a graph.
+- Legacy fields such as `title`, `aliases`, `source_links`, `relation_links`,
+  `supersedes`, `contradicts`, and `observations` may still be parsed from older
+  vaults. New writes should not persist generated presentation metadata or a
+  duplicate observation that repeats the memory body.
 
 ## Supported Types
 
@@ -154,13 +135,12 @@ Initial memory types:
 - `preference`
 - `decision`
 - `task`
-- `source_extract`
 - `project_context`
 - `conversation_summary`
 
-`source_extract` is compatibility-only for existing imported memories. New source
-evidence should be stored in `Sources/`, and durable source-backed analyses should
-be saved as `Wiki/syntheses/`.
+`source_extract` is legacy-read-only for existing imported memories. New source
+evidence belongs in `Sources/`, and durable source-backed analyses belong in
+`Wiki/syntheses/`.
 
 Initial lifecycle statuses:
 
@@ -170,9 +150,10 @@ Initial lifecycle statuses:
 - `superseded`
 - `rejected`
 
-## Observations And Relations
+## Relations
 
-Memories may contain typed observations and typed relations. Observations are atomic recall units. Relations are directional graph edges and should be validated during `memora doctor`.
+Memories may contain typed relations. Relations are directional graph edges and
+should be validated during `memora doctor`.
 
 Initial relation vocabulary:
 
@@ -181,15 +162,12 @@ Initial relation vocabulary:
 - `contradicts`
 - `depends_on`
 - `related_to`
-- `belongs_to_project`
 
 Lifecycle links such as supersession and contradiction belong in durable Markdown, not only in SQLite.
 
-Stage 9 lifecycle behavior stores supersession links in the top-level
-`supersedes` list on the replacement memory and contradiction links in the
-top-level `contradicts` list on the source memory. The indexer projects both
-lists into `links`, alongside explicit `relations[]` entries, so graph traversal,
-brief generation, and doctor checks all use the same relation vocabulary.
+Lifecycle behavior stores supersession and contradiction links in `relations[]`.
+The indexer still projects old top-level `supersedes` and `contradicts` lists for
+legacy files, but new writes should use the single relation representation.
 
 Default retrieval includes `active` and `stale` memories. It excludes `pending`,
 `rejected`, and `superseded` memories unless a caller passes an explicit
@@ -217,12 +195,12 @@ reindexing parses current Markdown but skips chunk, observation, and relation
 rewrites for documents whose content hash is unchanged.
 
 `chunk_fts` is the low-level SQLite FTS5 foundation for keyword retrieval.
-Stage 4 populates it with body chunks, heading section chunks, and observation
-chunks. Stage 6 adds optional semantic search through the `embeddings` table.
+It is populated from memory bodies, heading section chunks, and legacy
+observations when present. Optional semantic search uses the `embeddings` table.
 
-Graph validation checks relation targets from `relations`, `supersedes`, and
-`contradicts` against known memory IDs. `memora doctor` reports orphan targets as
-graph issues.
+Graph validation checks relation targets from `relations` plus legacy
+`supersedes` and `contradicts` against known memory IDs. `memora doctor` reports
+orphan targets as graph issues.
 
 Embeddings are cache data keyed by chunk, model, and `content_hash`. If a chunk
 changes, lazy semantic search refreshes the stale vector. The vectors can be
@@ -230,16 +208,15 @@ deleted and rebuilt from Markdown plus the configured embedding provider.
 
 ## Compatibility Notes
 
-Basic Memory-like observations and relations should map naturally into
-`observations` and `relations` where feasible:
+Basic Memory-like observations and relations are legacy import input:
 
-- Basic Memory observations become `observations[]` entries with a preserved
-  `category`, `text`, and optional `confidence`.
+- Basic Memory observations should be folded into the memory body when they
+  become durable memory. Existing imported `observations[]` remain readable.
 - Directional Basic Memory relations become `relations[]` entries when the
   relation type fits the Stage 1 vocabulary: `supports`, `supersedes`,
-  `contradicts`, `depends_on`, `related_to`, or `belongs_to_project`.
+  `contradicts`, `depends_on`, or `related_to`.
 - Unsupported relation names should be preserved as source material during
   import until a later migration maps or rejects them explicitly.
 - Imported project memory files such as `CLAUDE.md`, `AGENTS.md`, and Cursor
-  rules should be represented as `source_extract` material unless a user
-  promotes extracted items into canonical memories.
+  rules should be represented as `Sources/` material unless a user promotes
+  extracted items into canonical memories.

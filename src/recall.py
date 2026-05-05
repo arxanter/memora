@@ -11,7 +11,6 @@ import yaml
 
 from config import MemoryConfig, RecallConfig
 from indexer import estimate_tokens
-from lifecycle import touch_last_used
 from retrieval import SearchFilters, search_memory
 from schema import LifecycleStatus, RelationType
 from session import SessionRecallState, normalize_session_recall_state, session_trace
@@ -291,10 +290,6 @@ def recall_memory(
     )
     candidates, selected_session_trace = _apply_session_dedupe(candidates, session_state)
     chunks = pack_candidates(candidates, budget=selected_budget, recall_config=config.recall)
-    try:
-        touch_last_used(config, (chunk.document_id for chunk in chunks))
-    except Exception:
-        pass
     return RecallResponse(
         config=config,
         query=search_response.query,

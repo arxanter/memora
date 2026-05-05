@@ -73,19 +73,18 @@ and sidecar metadata into `raw/processed`.
 under `Sources/<source_id>/source.md` and, when provided, `extract.md`.
 
 `Sources/` is the citation layer. It stores normalized source text, an optional
-agent-authored extract, metadata (`kind`, `format`, `project`, `tags`,
-`sensitivity`, origin), safety scan results, and links between source and
-extract. `lookup-source` reads from this layer when an agent needs compact
-evidence.
+agent-authored extract, and compact provenance/safety metadata such as `kind`,
+`channel`, `source_quality`, `tags`, `sensitivity`, `risk_flags`, and `origin`.
+Project scope belongs on promoted memories, not on source evidence.
+`lookup-source` reads from this layer when an agent needs compact evidence.
 
 ## Canonical Memories
 
-`Memories/` stores small atomic claims as Markdown with YAML frontmatter. Memory
-types include `fact`, `decision`, `preference`, `task`, `project_context`,
-`source_extract`, and `conversation_summary`; the public write path should
-prefer the durable atomic types. New `project_context` files are written under
-`Memories/context/`. `source_extract` is compatibility-only; source evidence
-belongs in `Sources/`, and durable source-backed analyses belong in
+`Memories/` stores small atomic claims as Markdown with YAML frontmatter. Active
+memory types are `fact`, `decision`, `preference`, `task`, `project_context`,
+and `conversation_summary`. New `project_context` files are written under
+`Memories/context/`. Legacy `source_extract` memories remain readable, but source
+evidence belongs in `Sources/`, and durable source-backed analyses belong in
 `Wiki/syntheses/`.
 
 Agent-created memories default to `pending` unless policy allows activation.

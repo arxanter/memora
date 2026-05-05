@@ -25,7 +25,6 @@ TYPE_ORDER = (
     MemoryType.PROJECT_CONTEXT.value,
     MemoryType.FACT.value,
     MemoryType.TASK.value,
-    MemoryType.SOURCE_EXTRACT.value,
     MemoryType.CONVERSATION_SUMMARY.value,
 )
 TYPE_TITLES = {
@@ -34,7 +33,6 @@ TYPE_TITLES = {
     MemoryType.PROJECT_CONTEXT.value: "Project Context",
     MemoryType.FACT.value: "Facts",
     MemoryType.TASK.value: "Tasks",
-    MemoryType.SOURCE_EXTRACT.value: "Source Extracts",
     MemoryType.CONVERSATION_SUMMARY.value: "Conversation Summaries",
 }
 PROFILE_INJECTION_CITATION_PREFIX = "P"
