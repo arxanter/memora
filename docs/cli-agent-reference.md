@@ -211,6 +211,8 @@ and report the CLI gap.
 
 - Main agent recall command. Use returned context only when
   `memory_needed=true`.
+- If trigger policy does not request memory, `build-context` probes indexed
+  keyword and local semantic results before returning `memory_needed=false`.
 - `--include-profile` adds a bounded in-memory rollup to this response.
 - Default output is compact agent text.
 

@@ -376,9 +376,15 @@ def search_memory(
     query_plan = plan_query_variants(cleaned_query)
     requested_mode, effective_mode = _resolve_search_mode(config, mode=mode, semantic=semantic)
     semantic_enabled = effective_mode in SEMANTIC_SEARCH_MODES
-    provider = (
-        (embedding_provider or provider_from_config(config.semantic)) if semantic_enabled else None
-    )
+    provider: Optional[EmbeddingProvider] = None
+    if semantic_enabled:
+        try:
+            provider = embedding_provider or provider_from_config(config.semantic)
+        except EmbeddingProviderError:
+            if requested_mode != "auto":
+                raise
+            effective_mode = "text"
+            semantic_enabled = False
     attempts: list[SearchAttempt] = []
     results_by_id: dict[str, SearchResult] = {}
     fallback_trigger: Optional[str] = None
@@ -390,16 +396,33 @@ def search_memory(
                 break
             fallback_trigger = fallback_trigger or _fallback_reason(current_results, selected_limit)
 
-        attempt_results = _search_memory_once(
-            config,
-            planned_query,
-            selected_filters,
-            include_related=include_related,
-            limit=selected_limit,
-            mode=effective_mode,
-            provider=provider,
-            include_superseded_targets=include_superseded_targets,
-        )
+        try:
+            attempt_results = _search_memory_once(
+                config,
+                planned_query,
+                selected_filters,
+                include_related=include_related,
+                limit=selected_limit,
+                mode=effective_mode,
+                provider=provider,
+                include_superseded_targets=include_superseded_targets,
+            )
+        except EmbeddingProviderError:
+            if requested_mode != "auto":
+                raise
+            effective_mode = "text"
+            semantic_enabled = False
+            provider = None
+            attempt_results = _search_memory_once(
+                config,
+                planned_query,
+                selected_filters,
+                include_related=include_related,
+                limit=selected_limit,
+                mode=effective_mode,
+                provider=provider,
+                include_superseded_targets=include_superseded_targets,
+            )
         _merge_results_by_id(results_by_id, attempt_results)
         attempts.append(
             SearchAttempt(

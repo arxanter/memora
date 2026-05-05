@@ -95,9 +95,12 @@ The SQLite index is disposable local state rebuilt from Markdown with
 `memora reindex`. Search and recall read from the index and can refresh it before
 queries according to `index_freshness` config.
 
-`build-context` first applies recall policy from `recall_policy.py`. If memory is
-not needed, it returns `memory_needed=false` and no context. When memory is
-needed, it packs a citation-preserving brief under a task-class budget.
+`build-context` first applies recall policy from `recall_policy.py`. If the
+trigger policy does not request memory, it runs a cheap data probe against the
+index: keyword search first, then local semantic search when configured and
+available. If neither policy nor probe finds a strong signal, it returns
+`memory_needed=false` and no context. When memory is needed, it packs a
+citation-preserving brief under a task-class budget.
 `memora brief` is ephemeral stdout/JSON output only; persistent saved briefs
 should be stored as `Wiki/syntheses/`.
 

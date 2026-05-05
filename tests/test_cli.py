@@ -1489,6 +1489,36 @@ def test_build_context_command_json_preserves_legacy_fields(tmp_path):
     assert payload["trace"]["task_budget"]["selected"] == 1200
 
 
+def test_build_context_command_uses_keyword_probe_when_policy_skips(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+    _write_memory(
+        vault,
+        "Memories/facts/probe-fallback.md",
+        memory_id="mem_20260505_probe_fallback",
+        memory_type="fact",
+        body="Probe fallback routing loads memory without trigger policy.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault)])
+
+    result = runner.invoke(
+        app,
+        [
+            "build-context",
+            "Probe fallback routing",
+            "--vault",
+            str(vault),
+            "--no-semantic",
+            "--no-include-profile",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "memory_needed: true" in result.output
+    assert "Brief: 1 item(s)" in result.output
+    assert "Summary: Probe fallback routing loads memory without trigger policy." in result.output
+
+
 def test_build_context_command_defaults_to_compact_agent_output(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault)])

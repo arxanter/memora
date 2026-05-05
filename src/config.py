@@ -53,8 +53,8 @@ class ConfigError(ValueError):
 class SemanticConfig(BaseModel):
     """Optional semantic search configuration."""
 
-    provider: Optional[str] = None
-    model: str = "local-embedding-model"
+    provider: Optional[str] = "fastembed"
+    model: str = "BAAI/bge-small-en-v1.5"
     command: Optional[list[str]] = None
     timeout_seconds: float = Field(default=30.0, gt=0)
     batch_size: int = Field(default=32, ge=1)

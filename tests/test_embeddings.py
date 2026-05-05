@@ -6,6 +6,7 @@ from config import SemanticConfig
 from embeddings import (
     DeterministicEmbeddingProvider,
     EmbeddingProviderError,
+    FastEmbedEmbeddingProvider,
     LocalCommandEmbeddingProvider,
     provider_from_config,
 )
@@ -26,8 +27,16 @@ def test_provider_from_config_builds_deterministic_test_provider():
     assert len(provider.embed(["fixture"])[0]) == 8
 
 
-def test_provider_from_config_rejects_open_public_providers():
-    for provider_name in ("openai", "ollama", "fastembed"):
+def test_provider_from_config_builds_fastembed_provider_without_importing_model():
+    provider = provider_from_config(SemanticConfig(provider="fastembed"))
+
+    assert isinstance(provider, FastEmbedEmbeddingProvider)
+    assert provider.name == "fastembed"
+    assert provider.model == "BAAI/bge-small-en-v1.5"
+
+
+def test_provider_from_config_rejects_unsupported_public_providers():
+    for provider_name in ("openai", "ollama"):
         with pytest.raises(
             EmbeddingProviderError,
             match=f"unsupported semantic provider: {provider_name}",

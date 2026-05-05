@@ -234,8 +234,9 @@ def test_search_modes_auto_and_legacy_semantic_boolean(tmp_path):
     assert text_payload["mode"] == "text"
     assert text_payload["requested_mode"] == "auto"
     assert text_payload["semantic"]["enabled"] is False
-    assert injected_auto_payload["mode"] == "text"
-    assert injected_auto_payload["semantic"]["enabled"] is False
+    assert injected_auto_payload["mode"] == "hybrid"
+    assert injected_auto_payload["semantic"]["enabled"] is True
+    assert injected_auto_payload["semantic"]["provider"] == "deterministic"
     assert injected_hybrid_payload["mode"] == "hybrid"
     assert injected_hybrid_payload["semantic"]["enabled"] is True
     assert injected_hybrid_payload["semantic"]["provider"] == "deterministic"

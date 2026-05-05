@@ -104,6 +104,54 @@ class LocalCommandEmbeddingProvider:
         return _validate_vectors(vectors, expected_count=len(texts))
 
 
+class FastEmbedEmbeddingProvider:
+    """Local ONNX embedding provider backed by Qdrant FastEmbed."""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        batch_size: int = 32,
+    ) -> None:
+        self._model = model
+        self._batch_size = batch_size
+        self._embedder = None
+
+    @property
+    def name(self) -> str:
+        return "fastembed"
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        selected_texts = list(texts)
+        if not selected_texts:
+            return []
+        embedder = self._embedding_model()
+        try:
+            vectors = list(embedder.embed(selected_texts, batch_size=self._batch_size))
+        except Exception as exc:
+            raise EmbeddingProviderError(f"fastembed embedding failed: {exc}") from exc
+        return _validate_vectors([_vector_to_list(vector) for vector in vectors], expected_count=len(selected_texts))
+
+    def _embedding_model(self):
+        if self._embedder is not None:
+            return self._embedder
+        try:
+            from fastembed import TextEmbedding
+        except ImportError as exc:
+            raise EmbeddingProviderError(
+                "fastembed semantic provider requires the fastembed package"
+            ) from exc
+        try:
+            self._embedder = TextEmbedding(model_name=self.model)
+        except Exception as exc:
+            raise EmbeddingProviderError(f"fastembed model initialization failed: {exc}") from exc
+        return self._embedder
+
+
 def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
     """Build the configured provider, or raise if semantic search is disabled."""
 
@@ -125,6 +173,11 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
             command=config.command,
             model=config.model,
             timeout_seconds=config.timeout_seconds,
+            batch_size=config.batch_size,
+        )
+    if config.provider == "fastembed":
+        return FastEmbedEmbeddingProvider(
+            model=config.model,
             batch_size=config.batch_size,
         )
     raise EmbeddingProviderError(f"unsupported semantic provider: {config.provider}")
@@ -204,6 +257,12 @@ def _validate_vectors(vectors: list[object], *, expected_count: int) -> list[lis
     return [_validate_vector(vector) for vector in vectors]
 
 
+def _vector_to_list(value: object) -> object:
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return value
+
+
 def _validate_vector(value: object) -> list[float]:
     if not isinstance(value, list) or not value:
         raise EmbeddingProviderError("embedding vectors must be non-empty lists")
@@ -217,6 +276,7 @@ __all__ = [
     "DeterministicEmbeddingProvider",
     "EmbeddingProvider",
     "EmbeddingProviderError",
+    "FastEmbedEmbeddingProvider",
     "LocalCommandEmbeddingProvider",
     "cosine_similarity",
     "deserialize_vector",

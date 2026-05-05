@@ -103,6 +103,8 @@ AGENT_CAPTURE_ALLOWED_MEMORY_TYPES = {
     MemoryType.PROJECT_CONTEXT,
 }
 AGENT_SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
+BUILD_CONTEXT_KEYWORD_PROBE_MIN_SCORE = 7.0
+BUILD_CONTEXT_SEMANTIC_PROBE_MIN_SIMILARITY = 0.35
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Vault and health",
@@ -1823,7 +1825,20 @@ def build_context_command(
             }
         else:
             decision = should_recall(task, aliases=config.agent_policy.aliases).to_dict()
-        if not decision["should_recall"]:
+        freshness = None
+        probe_payload = None
+        memory_needed = bool(decision["should_recall"])
+        if not memory_needed and config.agent_policy.enabled and config.agent_policy.auto_recall:
+            freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
+            probe_payload = _build_context_probe(
+                config,
+                str(decision["query"]),
+                project=project,
+                semantic=semantic,
+                mode=mode,
+            )
+            memory_needed = bool(probe_payload.get("memory_needed"))
+        if not memory_needed:
             session_payload = session_trace(
                 normalize_session_recall_state(
                     session_id=session_id,
@@ -1847,6 +1862,7 @@ def build_context_command(
                 "task_class": selected_task_class,
                 "budget": selected_budget,
                 "policy": decision,
+                "probe": probe_payload,
                 "profile": profile_payload,
                 "trace": _build_context_trace(
                     decision,
@@ -1854,7 +1870,9 @@ def build_context_command(
                     task_policy=task_policy,
                     profile=profile_payload,
                     task_budget=selected_budget,
+                    freshness=freshness,
                     session=session_payload,
+                    probe=probe_payload,
                     empty_reason="policy_skipped",
                 ),
                 "markdown": "",
@@ -1864,7 +1882,8 @@ def build_context_command(
             if session_payload:
                 payload["session"] = session_payload
         else:
-            freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
+            if freshness is None:
+                freshness = _maybe_refresh_index(config, before="recall", refresh=refresh)
             filters = SearchFilters(project=project)
             profile_payload = build_context_profile_payload(
                 config,
@@ -1895,6 +1914,7 @@ def build_context_command(
                 "task_class": selected_task_class,
                 "budget": selected_budget,
                 "policy": decision,
+                "probe": probe_payload,
                 "freshness": freshness,
                 "recall_policy": task_policy.model_dump(mode="json"),
                 "profile": profile_payload,
@@ -1907,6 +1927,7 @@ def build_context_command(
                     freshness=freshness,
                     retrieval=brief_payload.get("retrieval"),
                     session=session_payload,
+                    probe=probe_payload,
                     selected_count=int(brief_payload.get("recall", {}).get("chunk_count", 0)),
                 ),
                 "markdown": _compose_context_markdown(profile_payload, brief_payload["markdown"]),
@@ -2692,6 +2713,111 @@ def _resolve_profile_request(
     return requested, sources
 
 
+def _build_context_probe(
+    config: Any,
+    query: str,
+    *,
+    project: Optional[str],
+    semantic: Optional[bool],
+    mode: str,
+) -> dict[str, Any]:
+    filters = SearchFilters(project=project)
+    keyword_probe = _build_context_search_probe(
+        config,
+        query,
+        filters=filters,
+        semantic=False,
+        mode="text",
+        min_score=BUILD_CONTEXT_KEYWORD_PROBE_MIN_SCORE,
+    )
+    if keyword_probe.get("hit"):
+        return {
+            "memory_needed": True,
+            "reason": "keyword_probe_hit",
+            "query": query,
+            "keyword": keyword_probe,
+            "semantic": None,
+        }
+
+    semantic_probe = None
+    if semantic is not False and getattr(config.semantic, "enabled", False):
+        semantic_probe = _build_context_search_probe(
+            config,
+            query,
+            filters=filters,
+            semantic=True,
+            mode=mode,
+            min_score=0.0,
+            min_similarity=max(
+                float(getattr(config.semantic, "min_similarity", 0.0) or 0.0),
+                BUILD_CONTEXT_SEMANTIC_PROBE_MIN_SIMILARITY,
+            ),
+        )
+        if semantic_probe.get("hit"):
+            return {
+                "memory_needed": True,
+                "reason": "semantic_probe_hit",
+                "query": query,
+                "keyword": keyword_probe,
+                "semantic": semantic_probe,
+            }
+
+    return {
+        "memory_needed": False,
+        "reason": "no_probe_hit",
+        "query": query,
+        "keyword": keyword_probe,
+        "semantic": semantic_probe,
+    }
+
+
+def _build_context_search_probe(
+    config: Any,
+    query: str,
+    *,
+    filters: SearchFilters,
+    semantic: bool,
+    mode: str,
+    min_score: float,
+    min_similarity: Optional[float] = None,
+) -> dict[str, Any]:
+    try:
+        payload = search_memory(
+            config,
+            query,
+            filters=filters,
+            limit=3,
+            semantic=semantic,
+            mode=mode,
+        ).to_dict()
+    except RetrievalIndexError as exc:
+        return {"hit": False, "reason": "index_unavailable", "error": str(exc)}
+    except Exception as exc:
+        return {"hit": False, "reason": "probe_failed", "error": str(exc)}
+
+    results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    top = results[0] if results and isinstance(results[0], Mapping) else None
+    score = float(top.get("score") or 0.0) if top else 0.0
+    metadata = top.get("metadata") if isinstance(top, Mapping) else {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    similarity = metadata.get("semantic_similarity")
+    selected_similarity = float(similarity) if similarity is not None else None
+    hit = bool(top) and score >= min_score
+    if min_similarity is not None:
+        hit = bool(top) and selected_similarity is not None and selected_similarity >= min_similarity
+    return {
+        "hit": hit,
+        "reason": "strong_hit" if hit else "weak_or_empty",
+        "mode": payload.get("mode"),
+        "semantic": payload.get("semantic"),
+        "result_count": len(results),
+        "top_id": top.get("id") if top else None,
+        "top_score": score if top else None,
+        "top_similarity": selected_similarity,
+    }
+
+
 def _policy_skipped_profile_payload(
     config: Any,
     *,
@@ -3104,6 +3230,7 @@ def _build_context_trace(
     retrieval: Optional[Any] = None,
     freshness: Optional[Any] = None,
     session: Optional[Any] = None,
+    probe: Optional[Any] = None,
     selected_count: int = 0,
     empty_reason: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -3125,6 +3252,7 @@ def _build_context_trace(
     if not isinstance(attempts, list):
         attempts = []
     session_trace_payload = dict(session) if isinstance(session, Mapping) else None
+    probe_payload = dict(probe) if isinstance(probe, Mapping) else None
 
     profile_budget = int(profile.get("budget") or 0)
     payload: dict[str, Any] = {
@@ -3145,12 +3273,18 @@ def _build_context_trace(
         "semantic": dict(semantic),
         "attempted_searches": attempts,
         "freshness": freshness_trace,
+        "probe": probe_payload,
         "selected_count": selected_count,
         "empty_reason": empty_reason or retrieval_trace.get("empty_reason"),
         "recall_ladder": [
             {
                 "step": "policy",
                 "memory_needed": bool(policy.get("should_recall")),
+            },
+            {
+                "step": "probe",
+                "memory_needed": bool(probe_payload and probe_payload.get("memory_needed")),
+                "reason": probe_payload.get("reason") if probe_payload else None,
             },
             {
                 "step": "profile",

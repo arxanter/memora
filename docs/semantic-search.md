@@ -1,32 +1,35 @@
 # Semantic Search Setup
 
-Semantic search is optional and disabled by default. Keyword FTS search and
-deterministic query planning continue to work without embeddings and are the safe
-default for the standalone CLI.
+Semantic search is local-first and enabled for new vaults by default. Keyword FTS
+search and deterministic query planning remain the baseline retrieval path, while
+local embeddings add semantic candidates and score boosts when the provider is
+available.
 
-## Current Constraint
+## Product Position
 
-Production embeddings must come from the same AI model/session that the user is
-interacting with. The standalone `memora` CLI does not currently have technical
-access to Cursor's active AI session embeddings, so it must not claim that
-same-session semantic search is available.
+Local embeddings are retrieval infrastructure, not the agent's reasoning model.
+They do not need to come from the same AI session as the user-facing assistant as
+long as retrieval stays local, deterministic, traceable, and safely falls back to
+keyword search.
 
-Memora therefore does not include first-class OpenAI, Ollama, FastEmbed, or
-other public/open/local model providers. Under this constraint, normal production
-retrieval should use `auto` mode with no semantic provider configured; it falls
-back to text search plus query planning.
+The default provider for new vaults is `fastembed` with
+`BAAI/bge-small-en-v1.5`. The model is downloaded to the normal FastEmbed cache
+on first use; it is not bundled into the Memora wheel. If the provider is not
+installed, cannot initialize, or cannot embed on the current machine, `auto`
+mode degrades to text search instead of failing agent recall.
 
 ## Provider Surfaces
 
 The code keeps two narrow provider surfaces:
 
-- `EmbeddingProvider` is the library protocol for future same-session embedding
-  integrations. Tests or embedding-aware callers can inject an implementation
-  into `search_memory(..., embedding_provider=...)` and explicitly request
-  `hybrid` or `vector` mode.
+- `EmbeddingProvider` is the library protocol for embedding integrations. Tests
+  or embedding-aware callers can inject an implementation into
+  `search_memory(..., embedding_provider=...)` and explicitly request `hybrid`
+  or `vector` mode.
+- `fastembed` is the built-in local provider. It runs ONNX embeddings locally and
+  is the default for new vaults.
 - `local-command` is a pre-existing generic JSON stdin/stdout protocol. It is
-  preserved for compatibility, but it is not the recommended production path
-  under the same-session constraint.
+  preserved for compatibility and custom local/session embedding bridges.
 - `deterministic` is a test-only fixture provider. It has no external
   dependencies and produces stable vectors, but it is not a quality embedding
   model and should not be used for production retrieval.
@@ -45,8 +48,7 @@ field to stdout:
 ```
 
 If a future Cursor/session embedding bridge is available, it can sit behind the
-`EmbeddingProvider` protocol or this generic command contract. Until then, do
-not configure a provider just to get semantic search.
+`EmbeddingProvider` protocol or this generic command contract.
 
 ## Operation
 
@@ -59,8 +61,8 @@ memora search "agent memory retrieval" --vault ./memory-vault --mode auto
 
 Retrieval modes:
 
-- `auto`: default; uses `hybrid` only when a semantic provider is explicitly
-  configured, and `text` otherwise.
+- `auto`: default; uses `hybrid` when a semantic provider is configured and
+  available, and `text` otherwise.
 - `text`: SQLite FTS plus deterministic query planning.
 - `vector`: embedding similarity only; requires a configured or injected
   provider.
@@ -108,9 +110,9 @@ JSON search responses include the semantic mode state:
 Use `--no-semantic` to force keyword-only search for one query even when a
 provider is configured.
 
-Use `--semantic` or `--mode hybrid` only when a provider that satisfies the
-same-session constraint is explicitly available. Use `--mode vector` when you
-want vector-only retrieval; it also requires a configured or injected provider.
+Use `--semantic` or `--mode hybrid` when you want semantic retrieval to be
+required for that query. Use `--mode vector` when you want vector-only retrieval;
+it also requires a configured or injected provider.
 
 ## Environment Overrides
 
@@ -125,5 +127,4 @@ export MEMORA_SEMANTIC_MIN_SIMILARITY=0.15
 ```
 
 These overrides are applied when config is loaded. They do not rewrite
-`.memora/config.yaml`. Do not use them to point Memora at public/open
-or local-model providers when the same-session constraint applies.
+`.memora/config.yaml`.

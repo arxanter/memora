@@ -38,6 +38,8 @@ def test_load_config_from_explicit_vault(tmp_path):
     assert config.raw_root == vault.resolve() / "raw"
     assert config.memory_root == vault.resolve() / "Memories"
     assert config.config_path == vault.resolve() / ".memora" / "config.yaml"
+    assert config.semantic.provider == "fastembed"
+    assert config.semantic.model == "BAAI/bge-small-en-v1.5"
 
 
 def test_load_config_walks_up_from_child_path(tmp_path):
