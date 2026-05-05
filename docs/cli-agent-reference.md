@@ -62,6 +62,14 @@ and report the CLI gap.
 
 - Validate that `<vault>` is initialized, then set it as the installed wrapper default.
 
+`memora self update [--checkout PATH] [--remote NAME] [--remote-url URL] [--branch NAME] [--wrapper PATH] [--reinstall|--no-reinstall] [--dry-run]`
+
+- Soft-update the source checkout with stash/pull/pop.
+- By default, rerun the installer afterward to refresh the managed venv,
+  wrapper, runtime dependencies, and the default local semantic provider. This
+  keeps semantic search available even when `uv` is not installed because the
+  installer falls back to `pip`.
+
 `memora help`
 
 - Return public command groups. Useful for lightweight capability discovery.

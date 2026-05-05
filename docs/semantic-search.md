@@ -13,10 +13,12 @@ long as retrieval stays local, deterministic, traceable, and safely falls back t
 keyword search.
 
 The default provider for new vaults is `fastembed` with
-`BAAI/bge-small-en-v1.5`. The model is downloaded to the normal FastEmbed cache
-on first use; it is not bundled into the Memora wheel. If the provider is not
-installed, cannot initialize, or cannot embed on the current machine, `auto`
-mode degrades to text search instead of failing agent recall.
+`BAAI/bge-small-en-v1.5`. The installer verifies this provider with a tiny
+embedding request, which also warms the normal FastEmbed model cache. The model
+is not bundled into the Memora wheel. If the provider is not installed, cannot
+initialize, or cannot embed on the current machine, `auto` mode degrades to text
+search instead of failing agent recall; a normal install or `memora self update`
+should fail earlier instead of leaving users with a silent missing provider.
 
 ## Provider Surfaces
 

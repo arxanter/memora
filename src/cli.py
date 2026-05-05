@@ -8,6 +8,7 @@ import shlex
 import shutil
 import hashlib
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
@@ -306,11 +307,21 @@ def self_update_command(
     branch: Optional[str] = typer.Option(
         None, "--branch", help="Branch to pull; defaults to the current branch."
     ),
+    wrapper: Optional[Path] = typer.Option(
+        None,
+        "--wrapper",
+        help="Installed memora wrapper path; defaults to PATH lookup or ~/.local/bin/memora.",
+    ),
+    reinstall: bool = typer.Option(
+        True,
+        "--reinstall/--no-reinstall",
+        help="Reinstall Memora into the managed venv after updating the checkout.",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview git actions without running them."
     ),
 ) -> None:
-    """Soft-update the Memora source checkout with git stash, pull, and stash pop."""
+    """Soft-update the checkout and refresh the managed runtime environment."""
 
     try:
         payload = _self_update_payload(
@@ -318,6 +329,8 @@ def self_update_command(
             remote=remote,
             remote_url=remote_url,
             branch=branch,
+            wrapper=wrapper,
+            reinstall=reinstall,
             dry_run=dry_run,
         )
     except Exception as exc:
@@ -4314,6 +4327,8 @@ def _self_update_payload(
     remote: str,
     remote_url: Optional[str],
     branch: Optional[str],
+    wrapper: Optional[Path],
+    reinstall: bool,
     dry_run: bool,
 ) -> dict[str, Any]:
     checkout_path = _resolve_memora_update_checkout(checkout)
@@ -4380,6 +4395,8 @@ def _self_update_payload(
                 },
             ]
         )
+        if reinstall:
+            actions.append(_self_reinstall_payload(checkout_path, wrapper=wrapper, dry_run=True))
         return {
             "ok": True,
             "implemented": True,
@@ -4392,6 +4409,7 @@ def _self_update_payload(
             "remote_added": False,
             "branch": selected_branch,
             "dirty": dirty,
+            "reinstall": reinstall,
             "stash_created": dirty,
             "stash_restored": dirty,
             "pull_command": _git_command_text(pull_args),
@@ -4459,6 +4477,9 @@ def _self_update_payload(
     else:
         actions.append({"description": "no stash to reapply", "skipped": True})
 
+    if reinstall:
+        actions.append(_self_reinstall_payload(checkout_path, wrapper=wrapper, dry_run=False))
+
     return {
         "ok": True,
         "implemented": True,
@@ -4471,11 +4492,138 @@ def _self_update_payload(
         "remote_added": remote_added,
         "branch": selected_branch,
         "dirty": dirty,
+        "reinstall": reinstall,
         "stash_created": stash_created,
         "stash_restored": stash_restored,
         "pull_command": _git_command_text(pull_args),
         "actions": actions,
     }
+
+
+def _self_reinstall_payload(
+    checkout_path: Path, *, wrapper: Optional[Path], dry_run: bool
+) -> dict[str, Any]:
+    install_script = checkout_path / "scripts" / "install.sh"
+    if not install_script.is_file():
+        raise FileNotFoundError(f"installer not found: {install_script}")
+
+    wrapper_path = _resolve_self_update_wrapper_path(wrapper)
+    install_dir = _self_update_install_dir(wrapper_path)
+    bin_dir = wrapper_path.parent
+    default_vault = _self_update_default_vault(wrapper_path)
+    command = [
+        "bash",
+        str(install_script),
+        "--force",
+        "--install-dir",
+        str(install_dir),
+        "--bin-dir",
+        str(bin_dir),
+        "--python",
+        sys.executable,
+    ]
+    if default_vault is not None:
+        command.extend(["--vault", str(default_vault)])
+    else:
+        command.append("--no-vault")
+    if dry_run:
+        command.append("--dry-run")
+        return {
+            "description": "reinstall Memora package dependencies and wrapper",
+            "command": _shell_command_text(command),
+            "dry_run": True,
+        }
+
+    result = subprocess.run(
+        command,
+        cwd=checkout_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "updated checkout, but failed to reinstall Memora dependencies: "
+            f"{_process_error_text(result)}"
+        )
+    return {
+        "description": "reinstalled Memora package dependencies and wrapper",
+        "command": _shell_command_text(command),
+        "install_dir": str(install_dir),
+        "bin_dir": str(bin_dir),
+        "wrapper_path": str(wrapper_path),
+        "default_vault": str(default_vault) if default_vault is not None else None,
+    }
+
+
+def _resolve_self_update_wrapper_path(wrapper: Optional[Path]) -> Path:
+    if wrapper is not None:
+        return wrapper.expanduser().resolve()
+    discovered = shutil.which("memora")
+    if discovered:
+        return Path(discovered).resolve()
+    bin_dir = os.environ.get("MEMORA_BIN_DIR")
+    if bin_dir:
+        return (Path(bin_dir).expanduser().resolve() / "memora")
+    return Path.home().joinpath(".local", "bin", "memora").resolve()
+
+
+def _self_update_install_dir(wrapper_path: Path) -> Path:
+    env_install_dir = os.environ.get("MEMORA_INSTALL_DIR")
+    if env_install_dir:
+        return Path(env_install_dir).expanduser().resolve()
+    if wrapper_path.is_file():
+        parsed = _read_install_dir_from_wrapper(wrapper_path)
+        if parsed is not None:
+            return parsed
+    return Path.home().joinpath(".local", "share", "memora").resolve()
+
+
+def _self_update_default_vault(wrapper_path: Path) -> Optional[Path]:
+    if wrapper_path.is_file():
+        default_vault = _read_default_vault_from_wrapper(wrapper_path)
+        if default_vault is not None:
+            return default_vault
+        legacy_vault = _read_env_path_from_wrapper(wrapper_path, "MEMORA_VAULT")
+        if legacy_vault is not None:
+            return legacy_vault
+    env_default = os.environ.get("MEMORA_DEFAULT_VAULT") or os.environ.get(ENV_VAULT_PATH)
+    return Path(env_default).expanduser().resolve() if env_default else None
+
+
+def _read_install_dir_from_wrapper(wrapper_path: Path) -> Optional[Path]:
+    raw_value = _read_env_value_from_wrapper(wrapper_path, "MEMORA_INSTALL_DIR")
+    if not raw_value:
+        return None
+    value = raw_value.strip()
+    if value.startswith("${MEMORA_INSTALL_DIR:-") and value.endswith("}"):
+        value = value[len("${MEMORA_INSTALL_DIR:-") : -1]
+    return Path(value).expanduser().resolve() if value else None
+
+
+def _read_env_path_from_wrapper(wrapper_path: Path, name: str) -> Optional[Path]:
+    value = _read_env_value_from_wrapper(wrapper_path, name)
+    return Path(value).expanduser().resolve() if value else None
+
+
+def _read_env_value_from_wrapper(wrapper_path: Path, name: str) -> Optional[str]:
+    try:
+        content = wrapper_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    prefix = f"{name}="
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(f"export {prefix}"):
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            return None
+        for part in parts:
+            if part.startswith(prefix):
+                return part.split("=", 1)[1]
+    return None
 
 
 def _resolve_memora_update_checkout(checkout: Optional[Path]) -> Path:
@@ -4547,7 +4695,15 @@ def _git_command_text(args: list[str]) -> str:
     return "git " + " ".join(shlex.quote(part) for part in args)
 
 
+def _shell_command_text(args: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in args)
+
+
 def _git_error_text(result: subprocess.CompletedProcess[str]) -> str:
+    return (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+
+
+def _process_error_text(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
 
 

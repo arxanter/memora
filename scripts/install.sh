@@ -326,6 +326,19 @@ if [ "$SKIP_INSTALL" != "1" ]; then
   fi
   log "installing Memora $INSTALL_TARGET"
   run_cmd "${INSTALL_CMD[@]}"
+  log "verifying runtime dependencies and semantic provider"
+  run_cmd "$PYTHON_CMD" - <<'PY'
+import fastembed
+import pydantic
+import rich
+import typer
+import yaml
+from config import SemanticConfig
+from embeddings import provider_from_config
+
+provider = provider_from_config(SemanticConfig())
+provider.embed(["memora semantic install check"])
+PY
 fi
 
 MEMORA_WRAPPER='#!/usr/bin/env bash

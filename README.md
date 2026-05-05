@@ -46,7 +46,13 @@ memora self update --remote-url https://github.com/arxanter/memora.git
 ```
 
 This stashes local checkout changes, pulls fast-forward updates, and reapplies
-the saved stash. The `--remote-url` value is only used when the checkout is
+the saved stash. By default it also reruns the installer with `--force`, so the
+managed virtual environment and wrapper pick up new runtime dependencies such as
+the local semantic search provider. The installer verifies the default semantic
+provider with a tiny embedding request, warming the local model cache during
+install/update. It uses `uv` when available and falls back to Python `venv` plus
+`pip`, so users do not need `uv` for semantic search to work. The `--remote-url`
+value is only used when the checkout is
 missing an `origin` remote. It does not remove or modify your vault.
 
 Advanced install options

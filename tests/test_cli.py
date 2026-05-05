@@ -148,7 +148,9 @@ def test_self_update_stashes_pulls_and_restores_local_changes(tmp_path):
     _git(seed, "push")
     (checkout / "local-note.txt").write_text("keep me\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["self", "update", "--checkout", str(checkout)])
+    result = runner.invoke(
+        app, ["self", "update", "--checkout", str(checkout), "--no-reinstall"]
+    )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -179,6 +181,7 @@ def test_self_update_dry_run_adds_remote_url_when_missing(tmp_path):
             str(checkout),
             "--remote-url",
             "https://github.com/arxanter/memora.git",
+            "--no-reinstall",
             "--dry-run",
         ],
     )
@@ -192,6 +195,41 @@ def test_self_update_dry_run_adds_remote_url_when_missing(tmp_path):
         payload["actions"][0]["command"]
         == "git remote add origin https://github.com/arxanter/memora.git"
     )
+
+
+def test_self_update_dry_run_reinstalls_managed_runtime(tmp_path):
+    checkout = tmp_path / "checkout"
+    wrapper = tmp_path / "bin" / "memora"
+    checkout.mkdir()
+    wrapper.parent.mkdir()
+    _write_memora_source_markers(checkout)
+    _init_git_repo(checkout)
+    _git(checkout, "add", ".")
+    _git(checkout, "commit", "-m", "initial")
+    _write_memora_wrapper(wrapper)
+
+    result = runner.invoke(
+        app,
+        [
+            "self",
+            "update",
+            "--checkout",
+            str(checkout),
+            "--wrapper",
+            str(wrapper),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    reinstall_action = payload["actions"][-1]
+    assert payload["reinstall"] is True
+    assert reinstall_action["dry_run"] is True
+    assert "scripts/install.sh" in reinstall_action["command"]
+    assert "--force" in reinstall_action["command"]
+    assert "--install-dir /tmp/memora" in reinstall_action["command"]
+    assert f"--bin-dir {wrapper.parent}" in reinstall_action["command"]
 
 
 def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
@@ -1861,7 +1899,7 @@ def test_probe_command_checks_variants_in_one_agent_call(tmp_path):
         app,
         [
             "probe",
-            "написание тестов",
+            "unrelated setup",
             "--vault",
             str(vault),
             "--project",
@@ -1880,7 +1918,7 @@ def test_probe_command_checks_variants_in_one_agent_call(tmp_path):
     assert "has_context: true" in result.output
     assert "memory_needed: true" in result.output
     assert "reason: memory_candidates" in result.output
-    assert "variants: написание тестов | pytest fixture tests | testing strategy" in result.output
+    assert "variants: unrelated setup | pytest fixture tests | testing strategy" in result.output
     assert "semantic: status=not_used" in result.output
     assert "Memory: 1 candidate(s)" in result.output
     assert "[M1] mem_20260505_pytest_fixtures" in result.output
