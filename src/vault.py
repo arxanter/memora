@@ -37,9 +37,17 @@ MEMORY_TYPE_DIRECTORIES: dict[MemoryType, str] = {
     MemoryType.DECISION: "decisions",
     MemoryType.TASK: "tasks",
     MemoryType.SOURCE_EXTRACT: "sources",
-    MemoryType.PROJECT_CONTEXT: "projects",
+    MemoryType.PROJECT_CONTEXT: "context",
     MemoryType.CONVERSATION_SUMMARY: "conversations",
 }
+
+ACTIVE_MEMORY_DIRECTORIES: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        directory
+        for memory_type, directory in MEMORY_TYPE_DIRECTORIES.items()
+        if memory_type is not MemoryType.SOURCE_EXTRACT
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -127,6 +135,12 @@ def init_vault(vault_path: Union[Path, str]) -> InitResult:
             created_paths.append(path)
         path.mkdir(parents=True, exist_ok=True)
 
+    for path, content in _vault_seed_files(config).items():
+        if path.exists():
+            continue
+        atomic_write_text(path, content)
+        created_paths.append(path)
+
     config_created = write_config(config, overwrite=False)
     if config_created:
         created_paths.append(config.config_path)
@@ -146,6 +160,8 @@ def setup_vault(vault_path: Union[Path, str], *, dry_run: bool = False) -> Setup
 
     config = create_default_config(vault_path)
     planned_paths = (*_vault_directories(config), config.config_path)
+    planned_files = tuple(_vault_seed_files(config))
+    planned_paths = (*planned_paths, *planned_files)
     exists_before = {path: path.exists() for path in planned_paths}
 
     created_paths: tuple[Path, ...] = ()
@@ -218,6 +234,11 @@ def remember_memory(
         and selected_risk_flags
     ):
         selected_status = LifecycleStatus.PENDING
+    if memory_type == MemoryType.SOURCE_EXTRACT:
+        raise ValueError(
+            "source_extract memories are retired; use `memora source add` for evidence "
+            "and `memora wiki synthesize --save` for durable source-backed summaries"
+        )
     selected_source = (
         source
         if isinstance(source, SourceRef) or source is None
@@ -451,9 +472,7 @@ def _contradiction_warnings(documents: Iterable[Any], config: MemoryConfig) -> l
 
 
 def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
-    memory_dirs = tuple(
-        config.memory_root / directory for directory in MEMORY_TYPE_DIRECTORIES.values()
-    )
+    memory_dirs = tuple(config.memory_root / directory for directory in ACTIVE_MEMORY_DIRECTORIES)
     return (
         config.vault_path,
         config.raw_root,
@@ -469,13 +488,51 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
         config.memory_root,
         *memory_dirs,
         config.vault_path / config.sources_dir,
-        config.vault_path / config.briefs_dir,
+        config.wiki_root,
+        config.wiki_root / "sources",
+        config.wiki_root / "entities",
+        config.wiki_root / "concepts",
+        config.wiki_root / "syntheses",
         config.vault_path / config.memora_dir,
         config.vault_path / config.memora_dir / "schemas",
         config.vault_path / config.memora_dir / "cache",
         config.vault_path / config.memora_dir / "embeddings",
         config.vault_path / config.memora_dir / "locks",
     )
+
+
+def _vault_seed_files(config: MemoryConfig) -> dict[Path, str]:
+    return {
+        config.wiki_root / "index.md": (
+            "---\n"
+            "title: Wiki Index\n"
+            "type: index\n"
+            "---\n\n"
+            "# Wiki Index\n\n"
+            "## Overview\n\n"
+            "- [Overview](overview.md) - living synthesis across wiki pages.\n\n"
+            "## Sources\n\n"
+            "## Entities\n\n"
+            "## Concepts\n\n"
+            "## Syntheses\n"
+        ),
+        config.wiki_root / "log.md": (
+            "---\n"
+            "title: Wiki Log\n"
+            "type: log\n"
+            "---\n\n"
+            "# Wiki Log\n\n"
+            "Append-only record of wiki ingest, query, synthesis, and lint operations.\n"
+        ),
+        config.wiki_root / "overview.md": (
+            "---\n"
+            "title: Wiki Overview\n"
+            "type: overview\n"
+            "---\n\n"
+            "# Wiki Overview\n\n"
+            "Living synthesis across curated sources, memories, entities, concepts, and syntheses.\n"
+        ),
+    }
 
 
 def _setup_actions(
@@ -494,6 +551,19 @@ def _setup_actions(
                 path,
                 kind="directory",
                 action="create_directory",
+                existed=existed,
+                created=path in created_paths,
+                dry_run=dry_run,
+            )
+        )
+    for path in _vault_seed_files(config):
+        existed = exists_before.get(path, path.exists())
+        actions.append(
+            _setup_action(
+                config,
+                path,
+                kind="file",
+                action="write_seed_file",
                 existed=existed,
                 created=path in created_paths,
                 dry_run=dry_run,

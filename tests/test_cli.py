@@ -73,6 +73,9 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert (vault / "raw" / "processed").is_dir()
     assert (vault / "raw" / "quarantine").is_dir()
     assert (vault / "Memories" / "decisions").is_dir()
+    assert (vault / "Memories" / "context").is_dir()
+    assert (vault / "Wiki" / "index.md").exists()
+    assert not (vault / "Briefs").exists()
 
 
 def test_init_command_can_set_default_vault_in_wrapper(tmp_path):
@@ -232,7 +235,11 @@ def test_setup_command_creates_vault_layout(tmp_path):
     assert payload["config_created"] is True
     assert (vault / ".memora" / "config.yaml").exists()
     assert (vault / "raw" / "inbox" / "files").is_dir()
-    assert (vault / "Memories" / "projects").is_dir()
+    assert (vault / "Memories" / "context").is_dir()
+    assert (vault / "Wiki" / "index.md").exists()
+    assert (vault / "Wiki" / "log.md").exists()
+    assert (vault / "Wiki" / "overview.md").exists()
+    assert not (vault / "Briefs").exists()
 
 
 def test_remember_command_creates_valid_markdown(tmp_path):
@@ -265,6 +272,33 @@ def test_remember_command_creates_valid_markdown(tmp_path):
     assert document.frontmatter.aliases == ["Use Markdown as durable memory.", payload["id"]]
     assert document.frontmatter.observations[0].text == "Use Markdown as durable memory."
     assert document.body.strip() == "Use Markdown as durable memory."
+
+
+def test_remember_project_context_writes_context_directory(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+
+    result = runner.invoke(
+        app,
+        [
+            "remember",
+            "--vault",
+            str(vault),
+            "--type",
+            "project_context",
+            "--scope",
+            "project",
+            "--project",
+            "memora",
+            "--text",
+            "Wiki and memory structure is being redesigned.",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["relative_path"].startswith("Memories/context/")
+    assert (vault / payload["relative_path"]).exists()
 
 
 def test_memory_update_command_changes_scope_type_tags_and_moves_file(tmp_path):

@@ -32,6 +32,8 @@ Use these most often:
 - `memora raw add <path> --kind <kind> --format <format> --project <project>`
 - `memora source add <source.md> --extract <extract.md> --kind <kind> --project <project>`
 - `memora raw mark-processed <raw-path> --source-id <source_id>`
+- `memora wiki ingest <source_id> --entity <name> --concept <name>`
+- `memora context "<query>" --project <project> --intent auto --budget 1200`
 - `memora review`
 - `memora review approve <id...> --reason "<reason>"`
 - `memora review reject <id...> --reason "<reason>"`
@@ -134,11 +136,44 @@ and report the CLI gap.
 
 - Return compact source evidence with citations.
 
+## Wiki
+
+`memora wiki status [--vault PATH]`
+
+- Show Wiki page counts, recent log entries, and lint issue count.
+
+`memora wiki read <path-or-id> [--full] [--max-chars N] [--vault PATH]`
+
+- Read one Wiki page. Default output is a compact preview; use `--full` only
+  when the page body is explicitly needed.
+
+`memora wiki search <query> [--limit N] [--vault PATH]`
+
+- Search only `Wiki/` pages and return compact candidates plus read commands.
+
+`memora wiki ingest <source_id> [--title TEXT] [--entity NAME ...] [--concept NAME ...] [--vault PATH]`
+
+- Create or update `Wiki/sources/<source>.md`, ensure related entity/concept
+  pages, update `Wiki/index.md`, and append `Wiki/log.md`.
+
+`memora wiki synthesize <question> [--title TEXT] [--save] [--limit N] [--vault PATH]`
+
+- Draft a synthesis page from Wiki and memory candidates. Without `--save`, it
+  prints a candidate only. Durable saved briefs, analyses, and query answers
+  belong in `Wiki/syntheses/`.
+
+`memora wiki lint [--vault PATH]`
+
+- Check Wiki broken links, missing citations, and orphan pages.
+
 ## Memory Writes And Review
 
 `memora remember --type <memory_type> --text TEXT [--scope user|project] [--project NAME] [--status <status>] [--tag TAG ...] [--vault PATH]`
 
 - Create one canonical atomic memory.
+- New writes with `--type source_extract` are retired; use `memora source add`
+  for evidence and `memora wiki synthesize --save` for durable source-backed
+  summaries.
 
 `memora memory update <id> [--type <memory_type>] [--scope user|project|global] [--project NAME|--clear-project] [--status <status>] [--confidence N|--clear-confidence] [--tag TAG ...|--clear-tags] [--title TEXT|--clear-title] [--text TEXT] [--reason TEXT] [--dry-run] [--vault PATH]`
 
@@ -164,6 +199,14 @@ and report the CLI gap.
 
 ## Retrieval
 
+`memora context <query> [--budget N] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--limit N] [--load] [--refresh|--no-refresh] [--vault PATH]`
+
+- Route a query across `Memories/`, `Wiki/`, and `Sources/` with a strict
+  compact output contract.
+- Default output returns the route decision, per-surface budgets, compact
+  candidates, and expansion commands. Use `--load` sparingly when snippets are
+  needed immediately.
+
 `memora build-context <task> [--budget N] [--project NAME] [--task-class <class>] [--include-related] [--include-profile|--no-include-profile] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH]`
 
 - Main agent recall command. Use returned context only when
@@ -185,6 +228,8 @@ and report the CLI gap.
 
 - Produce citation-preserving Markdown context.
 - Default output is a compact cited brief with memory IDs.
+- Brief output is ephemeral stdout/JSON only; save durable analyses as
+  `Wiki/syntheses/`.
 
 ## Inspect And Open
 

@@ -52,6 +52,15 @@ from vault import (
     setup_vault,
     status_summary,
 )
+from wiki import (
+    search_source_evidence,
+    wiki_ingest_source,
+    wiki_lint,
+    wiki_read,
+    wiki_search,
+    wiki_status,
+    wiki_synthesize,
+)
 
 app = typer.Typer(
     help="Local-first Obsidian-backed Memora CLI.",
@@ -63,6 +72,7 @@ review_app = typer.Typer(help="Review pending agent-generated memories.", no_arg
 memory_app = typer.Typer(help="Update existing canonical memories.", no_args_is_help=True)
 agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
 session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
+wiki_app = typer.Typer(help="Maintain the Memora Wiki layer.", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage the installed default vault.", no_args_is_help=True)
 self_app = typer.Typer(help="Manage the installed Memora checkout.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
@@ -71,6 +81,7 @@ app.add_typer(review_app, name="review")
 app.add_typer(memory_app, name="memory")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
+app.add_typer(wiki_app, name="wiki")
 app.add_typer(vault_app, name="vault")
 app.add_typer(self_app, name="self")
 agent_aliases_app = typer.Typer(
@@ -119,6 +130,9 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
                 "source add <source.md>",
                 "Save curated source text and optional extract under Sources/.",
             ),
+            ("wiki status", "Show Wiki page counts, recent log entries, and lint state."),
+            ("wiki ingest <source_id>", "Create or update Wiki pages from a saved source."),
+            ("wiki synthesize <question>", "Draft or save a Wiki synthesis page."),
         ),
     ),
     (
@@ -139,6 +153,9 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("lookup-source <source_id>", "Return compact evidence from a saved source."),
             ("brief", "Render a citation-preserving Memora Brief."),
             ("build-context", "Apply recall policy and return agent-ready context."),
+            ("context", "Route a bounded query across Memories, Wiki, and Sources."),
+            ("wiki search <query>", "Search only Wiki pages."),
+            ("wiki read <path>", "Read one Wiki page preview or full content."),
         ),
     ),
     (
@@ -992,6 +1009,155 @@ def source_add_command(
         console.print(f"Extract: {payload['relative_extract_path']}")
 
 
+@wiki_app.command("status")
+def wiki_status_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+) -> None:
+    """Show Wiki page counts, lint status, and recent log entries."""
+
+    try:
+        config = load_config(vault)
+        payload = wiki_status(config)
+    except Exception as exc:
+        _handle_error(exc, code="wiki_status_failed")
+
+    console.print(
+        f"Wiki status: {payload['page_count']} page(s), {payload['issue_count']} issue(s)",
+        markup=False,
+    )
+    for page_type, count in sorted(payload.get("type_counts", {}).items()):
+        console.print(f"- {page_type}: {count}", markup=False)
+    for entry in payload.get("recent_log", []):
+        console.print(f"Log: {entry}", markup=False)
+
+
+@wiki_app.command("read")
+def wiki_read_command(
+    target: str = typer.Argument(..., help="Wiki path, slug, or exact title."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    full: bool = typer.Option(False, "--full", help="Return the full page body."),
+    max_chars: int = typer.Option(1200, "--max-chars", min=1, help="Preview character budget."),
+) -> None:
+    """Read one Wiki page as a compact preview by default."""
+
+    try:
+        config = load_config(vault)
+        payload = wiki_read(config, target, full=full, max_chars=max_chars)
+    except Exception as exc:
+        _handle_error(exc, code="wiki_read_failed")
+
+    page = payload["page"]
+    console.print(f"Wiki page: {page['relative_path']} [{page['type']}]", markup=False)
+    console.print(f"Title: {page['title']}", markup=False)
+    body = str(page.get("body") or "")
+    if body:
+        console.print(body, markup=False, soft_wrap=True)
+
+
+@wiki_app.command("search")
+def wiki_search_command(
+    query: str = typer.Argument(..., help="Wiki search query."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
+) -> None:
+    """Search only the Wiki layer and return compact candidates."""
+
+    try:
+        config = load_config(vault)
+        payload = wiki_search(config, query, limit=limit)
+    except Exception as exc:
+        _handle_error(exc, code="wiki_search_failed")
+
+    _print_agent_wiki_search(payload)
+
+
+@wiki_app.command("ingest")
+def wiki_ingest_command(
+    source_id: str = typer.Argument(..., help="Saved source id under Sources/."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Override Wiki source title."),
+    entity: list[str] = typer.Option([], "--entity", help="Related entity page to ensure."),
+    concept: list[str] = typer.Option([], "--concept", help="Related concept page to ensure."),
+) -> None:
+    """Create or update Wiki pages from a saved source."""
+
+    try:
+        config = load_config(vault)
+        payload = wiki_ingest_source(
+            config,
+            source_id,
+            title=title,
+            entities=entity,
+            concepts=concept,
+        )
+    except Exception as exc:
+        _handle_error(exc, code="wiki_ingest_failed")
+
+    console.print(f"[green]Wiki source page:[/green] {payload['wiki_page']}")
+    for path in payload.get("touched_pages", []):
+        console.print(f"- {path}", markup=False)
+
+
+@wiki_app.command("synthesize")
+def wiki_synthesize_command(
+    question: str = typer.Argument(..., help="Question or synthesis topic."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    title: Optional[str] = typer.Option(None, "--title", help="Synthesis page title."),
+    save: bool = typer.Option(False, "--save", help="Write the synthesis shell to Wiki/."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Support candidate limit."),
+) -> None:
+    """Draft or save a Wiki synthesis shell."""
+
+    try:
+        config = load_config(vault)
+        _maybe_refresh_index(config, before="search", refresh=None)
+        wiki_payload = wiki_search(config, question, limit=limit)
+        filters = SearchFilters()
+        memory_payload = search_memory(
+            config,
+            question,
+            filters=filters,
+            limit=limit,
+        ).to_dict()
+        payload = wiki_synthesize(
+            config,
+            question,
+            title=title,
+            save=save,
+            wiki_results=wiki_payload.get("results", []),
+            memory_results=memory_payload.get("results", []),
+        )
+    except Exception as exc:
+        _handle_error(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "wiki_synthesize_failed",
+        )
+
+    label = "Saved Wiki synthesis" if payload["saved"] else "Draft Wiki synthesis"
+    console.print(f"{label}: {payload['relative_path']}", markup=False)
+    console.print(str(payload["markdown"]), markup=False, soft_wrap=True)
+
+
+@wiki_app.command("lint")
+def wiki_lint_command(
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+) -> None:
+    """Validate Wiki links, citations, and orphan pages."""
+
+    try:
+        config = load_config(vault)
+        payload = wiki_lint(config)
+    except Exception as exc:
+        _handle_error(exc, code="wiki_lint_failed")
+
+    if not payload["issues"]:
+        console.print(f"[green]Wiki lint passed:[/green] {payload['page_count']} page(s)")
+        return
+    console.print(f"[yellow]Wiki lint issues:[/yellow] {payload['issue_count']}")
+    for issue in payload["issues"]:
+        console.print(f"- {issue['kind']}: {issue['path']} - {issue['message']}", markup=False)
+
+
 @app.command()
 def remember(
     memory_type: MemoryType = typer.Option(..., "--type", help="Memory type."),
@@ -1198,6 +1364,50 @@ def search(
 
 
     _print_agent_search(payload)
+
+
+@app.command("context")
+def context_command(
+    query: str = typer.Argument(..., help="Context query."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    intent: str = typer.Option(
+        "auto", "--intent", help="Context intent: auto, memory, wiki, evidence, or mixed."
+    ),
+    budget: int = typer.Option(1200, "--budget", min=1, help="Approximate output budget."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Candidates per surface."),
+    load: bool = typer.Option(False, "--load", help="Load selected snippets within budget."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the memory index before context search.",
+    ),
+) -> None:
+    """Route a bounded query across Memories, Wiki, and Sources."""
+
+    try:
+        config = load_config(vault)
+        freshness = _maybe_refresh_index(config, before="search", refresh=refresh)
+        selected_intent, reason = _context_intent(query, intent)
+        payload = _context_payload(
+            config,
+            query,
+            project=project,
+            intent=selected_intent,
+            requested_intent=intent,
+            reason=reason,
+            budget=budget,
+            limit=limit,
+            load=load,
+        )
+        payload["freshness"] = freshness
+    except Exception as exc:
+        _handle_error(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "context_failed",
+        )
+
+    _print_agent_context(payload)
 
 
 @app.command()
@@ -2499,6 +2709,170 @@ _AGENT_BRIEF_SECTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _context_intent(query: str, requested: str) -> tuple[str, str]:
+    selected = requested.strip().lower()
+    allowed = {"auto", "memory", "wiki", "evidence", "mixed"}
+    if selected not in allowed:
+        raise ValueError("context intent must be one of: auto, memory, wiki, evidence, mixed")
+    if selected != "auto":
+        return selected, "explicit_intent"
+    lowered = query.casefold()
+    if any(token in lowered for token in ("source", "citation", "evidence", "quote", "откуда", "цит")):
+        return "evidence", "source_or_citation_question"
+    if any(
+        token in lowered
+        for token in (
+            "decided",
+            "decision",
+            "preference",
+            "task",
+            "todo",
+            "status",
+            "решил",
+            "решили",
+            "предпоч",
+            "задач",
+        )
+    ):
+        return "memory", "operational_memory_question"
+    if any(
+        token in lowered
+        for token in (
+            "overview",
+            "compare",
+            "comparison",
+            "concept",
+            "entity",
+            "topic",
+            "wiki",
+            "обзор",
+            "сравн",
+            "концеп",
+        )
+    ):
+        return "wiki", "knowledge_overview_question"
+    return "mixed", "auto_default_mixed"
+
+
+def _context_payload(
+    config: Any,
+    query: str,
+    *,
+    project: Optional[str],
+    intent: str,
+    requested_intent: str,
+    reason: str,
+    budget: int,
+    limit: int,
+    load: bool,
+) -> dict[str, Any]:
+    budgets = _context_budgets(intent, budget)
+    surfaces = _context_surfaces(intent)
+    payload: dict[str, Any] = {
+        "ok": True,
+        "implemented": True,
+        "command": "context",
+        "query": query,
+        "requested_intent": requested_intent,
+        "route": intent,
+        "reason": reason,
+        "budget": budget,
+        "budgets": budgets,
+        "load": load,
+        "results": {},
+    }
+    if "memory" in surfaces:
+        filters = SearchFilters(project=project)
+        memory = search_memory(config, query, filters=filters, limit=limit).to_dict()
+        payload["results"]["memory"] = _budget_results(
+            memory.get("results", ()),
+            budget=budgets.get("memory", 0),
+            load=load,
+            surface="memory",
+        )
+    if "wiki" in surfaces:
+        wiki = wiki_search(config, query, limit=limit)
+        payload["results"]["wiki"] = _budget_results(
+            wiki.get("results", ()),
+            budget=budgets.get("wiki", 0),
+            load=load,
+            surface="wiki",
+        )
+    if "sources" in surfaces:
+        source_results = search_source_evidence(config, query, limit=limit)
+        payload["results"]["sources"] = _budget_results(
+            source_results,
+            budget=budgets.get("sources", 0),
+            load=load,
+            surface="sources",
+        )
+    payload["result_count"] = sum(len(items) for items in payload["results"].values())
+    return payload
+
+
+def _context_surfaces(intent: str) -> tuple[str, ...]:
+    if intent == "memory":
+        return ("memory",)
+    if intent == "wiki":
+        return ("wiki",)
+    if intent == "evidence":
+        return ("sources",)
+    return ("memory", "wiki", "sources")
+
+
+def _context_budgets(intent: str, budget: int) -> dict[str, int]:
+    if intent == "memory":
+        return {"memory": budget}
+    if intent == "wiki":
+        return {"wiki": budget}
+    if intent == "evidence":
+        return {"sources": budget}
+    return {
+        "memory": max(1, int(budget * 0.5)),
+        "wiki": max(1, int(budget * 0.35)),
+        "sources": max(1, budget - int(budget * 0.5) - int(budget * 0.35)),
+    }
+
+
+def _budget_results(
+    results: Any,
+    *,
+    budget: int,
+    load: bool,
+    surface: str,
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    used = 0
+    for item in results if isinstance(results, (list, tuple)) else ():
+        if not isinstance(item, Mapping):
+            continue
+        candidate = dict(item)
+        text = str(candidate.get("snippet") or candidate.get("body") or "")
+        if not load:
+            text = _agent_one_line(text)
+        tokens = max(1, len(text.split()))
+        if selected and used + tokens > budget:
+            break
+        used += tokens
+        candidate["snippet"] = text
+        candidate["tokens_estimate"] = tokens
+        candidate["surface"] = surface
+        candidate["expand_command"] = _expand_command(surface, candidate)
+        selected.append(candidate)
+    return selected
+
+
+def _expand_command(surface: str, item: Mapping[str, Any]) -> str:
+    if surface == "memory":
+        memory_id = str(item.get("id") or "")
+        return f"memora inspect {shlex.quote(memory_id)}" if memory_id else "memora search"
+    if surface == "wiki":
+        path = str(item.get("path") or "")
+        return f"memora wiki read {shlex.quote(path)}" if path else "memora wiki search"
+    source_id = str(item.get("id") or "")
+    return f"memora lookup-source {shlex.quote(source_id)}" if source_id else "memora lookup-source"
+
+
 def _print_agent_search(payload: Mapping[str, Any]) -> None:
     results = [item for item in payload.get("results", []) if isinstance(item, Mapping)]
     query = str(payload.get("query") or "")
@@ -2519,6 +2893,52 @@ def _print_agent_search(payload: Mapping[str, Any]) -> None:
             console.print(f"Inspect: memora inspect {shlex.quote(memory_id)}", markup=False)
         if position != len(results):
             console.print("", markup=False)
+
+
+def _print_agent_wiki_search(payload: Mapping[str, Any]) -> None:
+    results = [item for item in payload.get("results", []) if isinstance(item, Mapping)]
+    query = str(payload.get("query") or "")
+    if not results:
+        console.print(f"Found 0 wiki candidates for: {query}", markup=False)
+        return
+    console.print(f"Found {len(results)} wiki candidate(s) for: {query}", markup=False)
+    for position, result in enumerate(results, start=1):
+        marker = f"W{position}"
+        path = str(result.get("path") or "")
+        page_type = str(result.get("type") or "-")
+        title = str(result.get("title") or path)
+        console.print(f"[{marker}] {path} {page_type}", markup=False)
+        console.print(f"Title: {title}", markup=False)
+        console.print(f"Summary: {_agent_one_line(result.get('snippet'))}", markup=False)
+        if path:
+            console.print(f"Read: memora wiki read {shlex.quote(path)}", markup=False)
+        if position != len(results):
+            console.print("", markup=False)
+
+
+def _print_agent_context(payload: Mapping[str, Any]) -> None:
+    console.print(f"route: {payload.get('route')}", markup=False)
+    console.print(f"reason: {payload.get('reason')}", markup=False)
+    console.print(f"query: {payload.get('query')}", markup=False)
+    budgets = payload.get("budgets") if isinstance(payload.get("budgets"), Mapping) else {}
+    if budgets:
+        budget_text = ", ".join(f"{key}={value}" for key, value in budgets.items())
+        console.print(f"budgets: {budget_text}", markup=False)
+    results = payload.get("results") if isinstance(payload.get("results"), Mapping) else {}
+    if not results:
+        console.print("Context: no candidates found", markup=False)
+        return
+    for surface, items in results.items():
+        selected = [item for item in items if isinstance(item, Mapping)]
+        console.print("", markup=False)
+        console.print(f"{str(surface).title()}: {len(selected)} candidate(s)", markup=False)
+        for position, item in enumerate(selected, start=1):
+            marker = f"{str(surface)[:1].upper()}{position}"
+            label = str(item.get("id") or item.get("path") or item.get("title") or "-")
+            console.print(f"[{marker}] {label}", markup=False)
+            console.print(f"Summary: {_agent_one_line(item.get('snippet'))}", markup=False)
+            if item.get("expand_command"):
+                console.print(f"Expand: {item['expand_command']}", markup=False)
 
 
 def _print_agent_brief(payload: Mapping[str, Any], *, heading: str = "Memory context") -> None:

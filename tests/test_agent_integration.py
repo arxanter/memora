@@ -63,6 +63,8 @@ def test_render_agent_rules_preserves_phase_one_content(tmp_path):
     assert '--project "memora"' in content
     assert "prefer the default compact agent output" in content
     assert 'memora search "<query>"' in content
+    assert 'memora context "<query>"' in content
+    assert 'memora wiki search "<topic>"' in content
     assert "Choose recall/search scope deliberately" in content
     assert "For unscoped recall/search, omit the project filter" in content
     assert "During a session, notice memory-worthy information" in content
@@ -81,7 +83,7 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     for private_path in (
         "`Memories/`",
         "`Sources/`",
-        "`Briefs/`",
+        "`Wiki/`",
         "`raw/`",
         "`.memora/index.sqlite`",
         "cache",
@@ -93,6 +95,7 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     assert "If the CLI lacks an operation, stop and report the missing command" in content
     assert "Remi intent routing examples" in content
     assert "Remi, show current facts about <topic>" in content
+    assert "Remi, show what the wiki knows about <topic>" in content
     assert "Рэми, что мы решили по <topic>" in content
     assert "Реми, что мы решили по <topic>" in content
     assert "Remi, save this fact/decision/preference" in content

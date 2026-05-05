@@ -22,15 +22,21 @@ Obsidian Vault/
     facts/
     preferences/
     decisions/
-    projects/
+    context/
     tasks/
-    sources/
     conversations/
+  Wiki/
+    index.md
+    log.md
+    overview.md
+    sources/
+    entities/
+    concepts/
+    syntheses/
   Sources/
     YYYY-MM-DD_hash/
       source.md
       extract.md
-  Briefs/
   .memora/
     config.yaml
     schemas/
@@ -51,6 +57,15 @@ source-backed pending memories under `Memories/`. Once curated evidence is saved
 the processed raw file should be moved from `raw/inbox` to `raw/processed` with
 `memora raw mark-processed` so future raw reviews stay focused on unprocessed
 material.
+
+`Wiki/` is the LLM-maintained compounding knowledge layer. It stores readable
+overview, index, log, source summary, entity, concept, and synthesis pages. Wiki
+pages are derived from `Sources/` and `Memories/`; they are not the authority for
+current decisions or preferences. If `Wiki/` conflicts with active `Memories/`,
+the wiki page is stale and should be updated through the CLI.
+
+`memora brief` returns ephemeral citation-preserving context in stdout/JSON only.
+Durable saved analyses belong in `Wiki/syntheses/`.
 
 ## Memory Frontmatter
 
@@ -143,6 +158,10 @@ Initial memory types:
 - `source_extract`
 - `project_context`
 - `conversation_summary`
+
+`source_extract` is compatibility-only for existing imported memories. New source
+evidence should be stored in `Sources/`, and durable source-backed analyses should
+be saved as `Wiki/syntheses/`.
 
 Initial lifecycle statuses:
 

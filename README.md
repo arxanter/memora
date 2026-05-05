@@ -1,8 +1,9 @@
 # Memora
 
 Memora is a tiny CLI-first memory vault for coding agents. It stores durable
-facts, decisions, preferences, tasks, and curated source notes as Markdown, then
-lets agents retrieve compact context through the `memora` CLI.
+facts, decisions, preferences, tasks, curated source evidence, and maintained
+Wiki pages as Markdown, then lets agents retrieve compact context through the
+`memora` CLI.
 
 Use it when you want Cursor, Claude, Codex, or another agent to remember project
 decisions without editing memory files directly.
@@ -99,10 +100,10 @@ After that, the agent uses Memora itself. Address the assistant as `Remi`,
 
 ## How It Works
 
-The agent follows one simple flow:
+The agent follows one layered flow:
 
 ```text
-raw input -> curated source -> atomic memory -> recalled context
+raw input -> curated source -> atomic memory + Wiki -> recalled context
 ```
 
 Humans usually do not need to run the lower-level memory commands directly.
@@ -114,12 +115,16 @@ What the agent does behind the scenes
 - Saves durable facts, decisions, preferences, tasks, and project context with
 small atomic memory entries.
 - Stages raw files separately from curated source evidence.
+- Maintains Wiki pages for overviews, entities, concepts, source summaries, and
+  saved syntheses.
 - Moves successfully processed raw files out of `raw/inbox` with
   `memora raw mark-processed`.
 - Leaves inferred agent-authored memories pending for review unless policy says
 otherwise.
 - Avoids storing secrets, raw logs, and temporary implementation chatter as
 canonical memory.
+- Treats `memora brief` as ephemeral output; durable saved briefs and analyses
+  go into `Wiki/syntheses/`.
 
 
 

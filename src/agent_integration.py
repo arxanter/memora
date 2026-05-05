@@ -112,7 +112,12 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, show current facts about <topic>",
             "покажи текущие факты по <topic>",
-            "run `memora brief` or `memora search`, then answer with citations.",
+            "run `memora context --intent memory` or `memora build-context`, then answer with citations.",
+        ),
+        (
+            f"{primary}, show what the wiki knows about <topic>",
+            "покажи wiki по <topic>",
+            "run `memora context --intent wiki` or `memora wiki search`, then expand only the needed pages.",
         ),
         (
             f"{primary}, what did we decide about <topic>",
@@ -137,7 +142,7 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, analyze this source and save it",
             "проанализируй источник и сохрани",
-            "stage raw material when needed, create an extract, save curated source evidence, then promote only durable atomic items.",
+            "stage raw material when needed, create an extract, save curated source evidence, promote only durable atomic items, and update Wiki when useful.",
         ),
     ]
     lines: list[str] = []
@@ -418,11 +423,13 @@ def agent_scheduled_template_payload(
         "Preserve curated evidence with `memora source add`.",
         "Move each successfully processed raw input out of the inbox with `memora raw mark-processed`.",
         "Promote only durable atomic facts, decisions, preferences, tasks, or project context with `memora remember`.",
+        "Update the maintained Wiki layer with `memora wiki ingest <source_id>` when the source should enrich topic/entity/concept pages.",
         "Return a compact report with inspected source count, saved source id/path, pending memory count, rejected proposal count, and review command.",
     ]
     safety = [
         "Do not store secrets, credentials, auth tokens, private dumps, raw mailbox exports, or sensitive personal data as canonical memory.",
         "Preserve raw/source material and a concise extract under Sources/; do not promote unprocessed dumps into Memories/.",
+        "Use Wiki/ for maintained overviews, entities, concepts, and saved syntheses; use Memories/ only for atomic operational memory.",
         "Promote only small durable atomic memories that will be useful later.",
         "Leave inferred or agent-authored memories pending unless vault policy explicitly allows activation.",
         "Keep scheduled workflows bounded; do not turn Memora into an email, Slack, calendar, or web daemon.",
@@ -451,6 +458,7 @@ def agent_scheduled_template_payload(
             f'memora source add <source.md> --extract <extract.md> --kind {selected_kind if selected_kind in {"slack"} else "text"} --project "{selected_project}"',
             "memora raw mark-processed <raw-file> --source-id <source_id>",
             f'memora remember --type fact --project "{selected_project}" --text "<durable atomic fact>"',
+            "memora wiki ingest <source_id> --entity <Entity> --concept <Concept>",
             "```",
             "",
             "Safety guidance:",
@@ -489,8 +497,9 @@ def agent_session_template_payload(
             "1. Create a concise session summary with decisions, durable facts, tasks, and open questions.",
             "2. If a transcript export is available, save it with `memora session finalize --summary-file <summary>`.",
             "3. Propose only durable atomic memories; avoid raw logs, secrets, and transient implementation chatter.",
-            "4. Leave inferred memories pending unless policy explicitly allows activation.",
-            "5. Report the source saved, pending memory count, and review command.",
+            "4. Save durable research answers or broad summaries as Wiki syntheses only when explicitly requested.",
+            "5. Leave inferred memories pending unless policy explicitly allows activation.",
+            "6. Report the source saved, pending memory count, Wiki synthesis/page updates, and review command.",
         ]
     )
     return {
@@ -840,6 +849,11 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning'
     unscoped_build_context = f'memora build-context "<task>"{vault_arg} --task-class planning'
     unscoped_search = f'memora search "<query>"{vault_arg}'
+    context = f'memora context "<query>"{vault_arg}{project_arg} --intent auto --budget 1200'
+    wiki_search = f'memora wiki search "<topic>"{vault_arg}'
+    wiki_read = f"memora wiki read <page>{vault_arg}"
+    wiki_ingest = f"memora wiki ingest <source_id>{vault_arg}"
+    wiki_synthesize = f'memora wiki synthesize "<question>"{vault_arg} --save'
     brief = f'memora brief "<topic>"{vault_arg}{project_arg}'
     search = f'memora search "<query>"{vault_arg}{project_arg}'
     review = f"memora review{vault_arg}"
@@ -854,11 +868,11 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     addressing = "/".join(aliases)
     routing_lines = _intent_routing_lines(aliases)
     return [
-        "Current product direction is CLI-first and CLI-only for agents. Use `memora ...` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
+        "Current product direction is CLI-first and CLI-only for agents. Use `memora ...` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, Wiki maintenance, memory writes, review, status, indexing, and session capture.",
         "",
         "Prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`.",
         "",
-        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
+        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Wiki/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
         "",
@@ -888,6 +902,20 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
         "",
+        "Use `memora context` when the request may need flexible routing across Memories, Wiki, and Sources without overloading the agent context:",
+        "",
+        "```bash",
+        context,
+        "```",
+        "",
+        "Context routing rules:",
+        "",
+        "- Current decisions, preferences, tasks, project status, and facts that should affect agent behavior belong in `Memories/` and should be retrieved with `memora context --intent memory` or `memora build-context`.",
+        "- Topic overviews, entity/concept pages, comparisons, and saved research answers belong in `Wiki/` and should be retrieved with `memora context --intent wiki` or `memora wiki search`.",
+        "- Provenance, quotations, article text, transcripts, and evidence belong in `Sources/` and should be retrieved with `memora context --intent evidence` or `memora lookup-source`.",
+        "- Ambiguous research/planning questions should start with `memora context --intent mixed`; expand individual candidates with the printed `inspect`, `wiki read`, or `lookup-source` command instead of loading everything.",
+        "- If `Wiki/` conflicts with active `Memories/`, treat the Wiki page as stale and update it through the CLI; do not silently overwrite active memories.",
+        "",
         f"{primary} intent routing examples:",
         "",
         *routing_lines,
@@ -897,6 +925,8 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "```bash",
         brief,
         search,
+        wiki_search,
+        wiki_read,
         remember,
         "```",
         "",
@@ -906,16 +936,18 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "- Do not propose saving transient implementation chatter, temporary logs, speculative ideas, secrets, raw dumps, sensitive personal data, or facts already obvious from the current code.",
         '- Keep prompts lightweight: "This seems useful to remember as <type>. Save it?" Only write after explicit approval unless the user directly asks to remember/save it.',
         "",
-        "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, moves the processed raw file to `raw/processed` with `memora raw mark-processed`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
+        "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, moves the processed raw file to `raw/processed` with `memora raw mark-processed`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks. If the source should enrich maintained knowledge, update `Wiki/` through `memora wiki ingest` or save a durable answer through `memora wiki synthesize --save`.",
         "",
         "```bash",
         raw_add,
         source_add,
         raw_processed,
         remember,
+        wiki_ingest,
+        wiki_synthesize,
         "```",
         "",
-        "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory. Canonical memories should be small, durable, cited when possible, and reviewable.",
+        "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory. Canonical memories should be small, durable, cited when possible, and reviewable. `memora brief` is ephemeral agent output; durable briefs and analyses should be saved as `Wiki/syntheses/` through the CLI.",
         "",
         "Review and lifecycle workflow: agent-created or inferred memories should stay reviewable according to `.memora/config.yaml` policy. Review pending items with:",
         "",

@@ -619,6 +619,11 @@ def _update_memory_unlocked(
 
     if options.memory_type is not None:
         selected_type = MemoryType(options.memory_type).value
+        if selected_type == MemoryType.SOURCE_EXTRACT.value:
+            raise ValueError(
+                "source_extract memories are retired; use `memora source add` for evidence "
+                "and `memora wiki synthesize --save` for durable source-backed summaries"
+            )
         if data.get("type") != selected_type:
             data["type"] = selected_type
             _retag_observations(data, old_type=old_type, new_type=selected_type)

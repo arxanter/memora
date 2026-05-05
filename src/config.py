@@ -255,7 +255,7 @@ class MemoryConfig(BaseModel):
     raw_dir: str = "raw"
     memories_dir: str = "Memories"
     sources_dir: str = "Sources"
-    briefs_dir: str = "Briefs"
+    wiki_dir: str = "Wiki"
     memora_dir: str = CONFIG_DIR_NAME
     index_path: str = ".memora/index.sqlite"
     default_scope: MemoryScope = MemoryScope.USER
@@ -297,7 +297,7 @@ class MemoryConfig(BaseModel):
         "raw_dir",
         "memories_dir",
         "sources_dir",
-        "briefs_dir",
+        "wiki_dir",
         "memora_dir",
         "index_path",
         "default_author_name",
@@ -319,6 +319,10 @@ class MemoryConfig(BaseModel):
     @property
     def raw_root(self) -> Path:
         return self.vault_path / self.raw_dir
+
+    @property
+    def wiki_root(self) -> Path:
+        return self.vault_path / self.wiki_dir
 
     @property
     def index_file(self) -> Path:

@@ -1,12 +1,13 @@
 # Memora Architecture
 
 Memora is a CLI-first local memory core backed by an Obsidian-compatible vault.
-The durable data model has three layers:
+The durable data model has four persistent layers:
 
 ```text
 raw/      staging for unprocessed input and sidecar metadata
 Sources/  curated durable source evidence plus optional extracts
 Memories/ atomic durable facts, decisions, preferences, tasks, and context
+Wiki/     maintained overviews, entities, concepts, source notes, and syntheses
 ```
 
 `.memora/` stores config plus rebuildable local state such as SQLite indexes,
@@ -19,9 +20,12 @@ The public CLI is intentionally small:
 - Vault basics: `init`, `setup`, `status`, `doctor`, `conflicts`, `reindex`.
 - Raw staging: `raw add`, `raw list`, `raw inspect`.
 - Curated evidence: `source add`, `lookup-source`.
+- Wiki maintenance: `wiki status`, `wiki read`, `wiki search`, `wiki ingest`,
+  `wiki synthesize`, `wiki lint`.
 - Memory writes and review: `remember`, `review`, `review approve`,
   `review reject`.
-- Retrieval: `search`, `recall`, `brief`, `build-context`, `inspect`, `open`.
+- Retrieval: `search`, `context`, `recall`, `brief`, `build-context`,
+  `inspect`, `open`.
 - Agent integration: `agent rules`, `agent integrate`, `agent update`,
   `agent status`, `agent-aliases list`, `agent-aliases set`.
 - Session capture: `session finalize`.
@@ -64,10 +68,26 @@ evidence.
 `Memories/` stores small atomic claims as Markdown with YAML frontmatter. Memory
 types include `fact`, `decision`, `preference`, `task`, `project_context`,
 `source_extract`, and `conversation_summary`; the public write path should
-prefer the durable atomic types.
+prefer the durable atomic types. New `project_context` files are written under
+`Memories/context/`. `source_extract` is compatibility-only; source evidence
+belongs in `Sources/`, and durable source-backed analyses belong in
+`Wiki/syntheses/`.
 
 Agent-created memories default to `pending` unless policy allows activation.
 Review commands approve or reject pending memories with audit history.
+
+## Wiki Layer
+
+`Wiki/` is the LLM-maintained compounding knowledge layer inspired by the LLM
+Wiki pattern. It contains `index.md`, `log.md`, `overview.md`, `sources/`,
+`entities/`, `concepts/`, and `syntheses/`. It is optimized for browsing,
+navigation, and saved analysis, not for authoritative operational memory.
+
+Authority order is `raw/` -> `Sources/` -> `Memories/` -> `Wiki/`. If a wiki
+page contradicts an active memory, the memory wins and the wiki page should be
+treated as stale. `memora context` routes bounded queries across `Memories/`,
+`Wiki/`, and `Sources/` without loading all matching content into the agent
+context.
 
 ## Indexing And Recall
 
@@ -78,6 +98,8 @@ queries according to `index_freshness` config.
 `build-context` first applies recall policy from `recall_policy.py`. If memory is
 not needed, it returns `memory_needed=false` and no context. When memory is
 needed, it packs a citation-preserving brief under a task-class budget.
+`memora brief` is ephemeral stdout/JSON output only; persistent saved briefs
+should be stored as `Wiki/syntheses/`.
 
 `agent_policy.enabled=false` disables agent memory use. `auto_recall=false`
 keeps memory writable/searchable but makes `build-context` skip automatic recall.
@@ -93,6 +115,7 @@ Generated rules are the contract for Cursor, Claude, Codex, and generic
 - use returned context only when `memory_needed=true`;
 - stage raw input with `raw add`;
 - save durable evidence with `source add`;
+- maintain wiki pages with `wiki ingest`, `wiki synthesize`, and `wiki lint`;
 - create only small atomic memories with `remember`;
 - review pending memory with `review`, `review approve`, and `review reject`;
 - avoid direct vault edits.
