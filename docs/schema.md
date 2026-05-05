@@ -2,53 +2,52 @@
 
 ## Canonical Storage
 
-Markdown files in the Obsidian vault are the durable source of truth. Each memory is a Markdown document with YAML frontmatter plus human-readable body content. The SQLite database is only a rebuildable cache derived from these files.
+Markdown files in the managed vault are the durable source of truth. Each memory
+is a Markdown document with YAML frontmatter plus human-readable body content.
+The SQLite database is only a rebuildable cache derived from these files.
 
-Recommended vault layout:
+Recommended managed layout:
 
 ```text
-Obsidian Vault/
-  raw/
-    inbox/
-      webclips/
-      files/
-      sessions/
-      slack/
-      zoom/
-      failed/
-    processed/
-    quarantine/
-  Memories/
-    facts/
-    preferences/
-    decisions/
-    context/
-    tasks/
-    conversations/
-  Wiki/
-    index.md
-    log.md
-    overview.md
-    sources/
-    entities/
-    concepts/
-    syntheses/
-  Sources/
-    YYYY-MM-DD_hash/
-      source.md
-      extract.md
-  .memora/
-    config.yaml
-    schemas/
+memora/
+  engine/
+  vault/
+    raw/
+      inbox/
+      processed/
+      quarantine/
+    Memories/
+      facts/
+      preferences/
+      decisions/
+      context/
+      tasks/
+      conversations/
+    Wiki/
+      index.md
+      log.md
+      overview.md
+      sources/
+      entities/
+      concepts/
+      syntheses/
+    Sources/
+      YYYY-MM-DD_hash/
+        source.md
+        extract.md
+  config.yaml
+  state/
     index.sqlite
     cache/
     embeddings/
     locks/
+  venv/
 ```
 
-Generated paths under `.memora/` are local and disposable. They should be rebuildable from Markdown.
+Generated paths under `state/` are local and disposable. They should be
+rebuildable from Markdown.
 
-`raw/` is the unprocessed input layer. Users, Obsidian Web Clipper, exports, and
+`raw/` is the unprocessed input layer. Users, exports, and
 future pollers can drop original material there without understanding the
 canonical memory schema. Raw files are not canonical memories and should not be
 loaded by default recall. Processing raw material should copy or normalize it
@@ -105,7 +104,7 @@ relation_links:
 observations:
   - category: decision
     text: SQLite is a disposable index, not durable state.
-tags: [memory, retrieval, obsidian]
+tags: [memory, retrieval, markdown]
 last_used_at: 2026-04-30T12:30:00+02:00
 history:
   - at: 2026-04-30T12:15:00+02:00
@@ -143,9 +142,9 @@ Conditional fields:
   basis. It does not affect schema validity or durable graph validation.
 
 Presentation fields such as `title`, `aliases`, `source_links`, and
-`relation_links` are optional Obsidian-friendly metadata. They do not replace
-stable IDs, `source.path`, or structured `relations[]`; they make sample vaults
-and generated notes easier to browse as a graph.
+`relation_links` are optional readable metadata. They do not replace stable IDs,
+`source.path`, or structured `relations[]`; they make sample vaults and generated
+notes easier to browse as a graph.
 
 ## Supported Types
 

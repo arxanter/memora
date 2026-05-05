@@ -1,7 +1,7 @@
 ---
 schema_version: 1
 id: mem_20260429_9f3a21
-title: Use Obsidian Markdown as source of truth
+title: Use managed Markdown as source of truth
 aliases:
   - mem_20260429_9f3a21
   - Markdown as durable memory
@@ -37,9 +37,9 @@ relation_links:
   - "belongs_to_project: [[mem_20260429_c0ffee]]"
 observations:
   - category: decision
-    text: Obsidian-compatible Markdown is the durable source of truth.
+    text: Managed Markdown is the durable source of truth.
     confidence: 0.86
-tags: [memory, retrieval, obsidian]
+tags: [memory, retrieval, markdown]
 ---
 
-Use Obsidian Markdown as source of truth and SQLite only as a rebuildable cache.
+Use managed Markdown as source of truth and SQLite only as a rebuildable cache.

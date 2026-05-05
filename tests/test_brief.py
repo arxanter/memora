@@ -15,7 +15,7 @@ def test_brief_formats_golden_markdown_with_citations(tmp_path):
         "Memories/facts/fact.md",
         memory_id="mem_20260430_fact",
         memory_type="fact",
-        body="Memory brief facts use Obsidian Markdown as the durable source of truth.",
+        body="Memory brief facts use managed Markdown as the durable source of truth.",
     )
     _write_memory(
         vault,

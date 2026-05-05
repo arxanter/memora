@@ -670,7 +670,7 @@ def _semantic_status(mode: str, enabled: bool, provider: Optional[str]) -> str:
 def _connect_index(config: MemoryConfig) -> sqlite3.Connection:
     if not config.index_file.exists():
         raise RetrievalIndexError(
-            f"SQLite index not found at {config.index_file}; run `memora reindex --vault {config.vault_path}` before searching."
+            f"SQLite index not found at {config.index_file}; run `memora reindex` before searching."
         )
 
     connection = sqlite3.connect(config.index_file)
@@ -685,7 +685,7 @@ def _connect_index(config: MemoryConfig) -> sqlite3.Connection:
     except sqlite3.DatabaseError as exc:
         connection.close()
         raise RetrievalIndexError(
-            f"SQLite index at {config.index_file} could not be read; run `memora reindex --vault {config.vault_path}`."
+            f"SQLite index at {config.index_file} could not be read; run `memora reindex`."
         ) from exc
 
     missing = [name for name in REQUIRED_INDEX_OBJECTS if name not in existing]

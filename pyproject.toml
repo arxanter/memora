@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "memora"
 version = "0.1.0"
-description = "CLI-first local memory engine for coding agents backed by Obsidian Markdown."
+description = "CLI-first local Markdown memory engine for coding agents."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

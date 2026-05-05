@@ -1,4 +1,4 @@
-"""Configuration loading for Memora vaults."""
+"""Configuration loading for managed Memora homes."""
 
 from __future__ import annotations
 
@@ -12,8 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from schema import LifecycleStatus, MemoryScope, MemoryType, SCHEMA_VERSION
 
-CONFIG_DIR_NAME = ".memora"
 CONFIG_FILE_NAME = "config.yaml"
+DEFAULT_HOME_DIR_NAME = "memora"
+DEFAULT_VAULT_DIR_NAME = "vault"
+DEFAULT_STATE_DIR_NAME = "state"
+LEGACY_CONFIG_DIR_NAME = ".memora"
+CONFIG_DIR_NAME = LEGACY_CONFIG_DIR_NAME
+ENV_MEMORA_HOME = "MEMORA_HOME"
 ENV_VAULT_PATH = "MEMORA_VAULT"
 ENV_SEMANTIC_PROVIDER = "MEMORA_SEMANTIC_PROVIDER"
 ENV_SEMANTIC_MODEL = "MEMORA_SEMANTIC_MODEL"
@@ -47,7 +52,7 @@ class AgentTrustLevel(str, Enum):
 
 
 class ConfigError(ValueError):
-    """Raised when a vault config cannot be found or loaded."""
+    """Raised when Memora configuration cannot be found or loaded."""
 
 
 class SemanticConfig(BaseModel):
@@ -246,18 +251,20 @@ class ProfileConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    """Configuration for a local Memora vault."""
+    """Configuration for a managed local Memora home."""
 
     model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
 
     schema_version: int = SCHEMA_VERSION
+    home_path: Path
     vault_path: Path
     raw_dir: str = "raw"
     memories_dir: str = "Memories"
     sources_dir: str = "Sources"
     wiki_dir: str = "Wiki"
-    memora_dir: str = CONFIG_DIR_NAME
-    index_path: str = ".memora/index.sqlite"
+    state_dir: str = DEFAULT_STATE_DIR_NAME
+    memora_dir: str = DEFAULT_STATE_DIR_NAME
+    index_path: str = "state/index.sqlite"
     default_scope: MemoryScope = MemoryScope.USER
     default_project: Optional[str] = None
     user_default_status: LifecycleStatus = LifecycleStatus.ACTIVE
@@ -298,6 +305,7 @@ class MemoryConfig(BaseModel):
         "memories_dir",
         "sources_dir",
         "wiki_dir",
+        "state_dir",
         "memora_dir",
         "index_path",
         "default_author_name",
@@ -310,7 +318,7 @@ class MemoryConfig(BaseModel):
 
     @property
     def config_path(self) -> Path:
-        return self.vault_path / self.memora_dir / CONFIG_FILE_NAME
+        return self.home_path / CONFIG_FILE_NAME
 
     @property
     def memory_root(self) -> Path:
@@ -325,18 +333,54 @@ class MemoryConfig(BaseModel):
         return self.vault_path / self.wiki_dir
 
     @property
+    def state_root(self) -> Path:
+        return self.home_path / self.state_dir
+
+    @property
     def index_file(self) -> Path:
-        return self.vault_path / self.index_path
+        return self.home_path / self.index_path
 
 
-def create_default_config(vault_path: Union[Path, str]) -> MemoryConfig:
-    """Create the default config model for a vault path."""
+def default_memora_home() -> Path:
+    """Return the default managed Memora home."""
 
-    return MemoryConfig(vault_path=Path(vault_path).expanduser().resolve())
+    return Path.home().joinpath(DEFAULT_HOME_DIR_NAME).resolve()
+
+
+def resolve_memora_home(home_path: Optional[Union[Path, str]] = None) -> Path:
+    """Resolve the managed Memora home from an explicit path or environment."""
+
+    if home_path is not None:
+        return Path(home_path).expanduser().resolve()
+    env_home = os.environ.get(ENV_MEMORA_HOME)
+    if env_home:
+        return Path(env_home).expanduser().resolve()
+    return default_memora_home()
+
+
+def create_default_config(
+    vault_path: Optional[Union[Path, str]] = None,
+    *,
+    home_path: Optional[Union[Path, str]] = None,
+) -> MemoryConfig:
+    """Create the default config model for a managed Memora home."""
+
+    if vault_path is None:
+        resolved_home = resolve_memora_home(home_path)
+        resolved_vault = resolved_home / DEFAULT_VAULT_DIR_NAME
+    else:
+        resolved_vault = Path(vault_path).expanduser().resolve()
+        if home_path is not None or os.environ.get(ENV_MEMORA_HOME):
+            resolved_home = resolve_memora_home(home_path)
+        elif resolved_vault.name == DEFAULT_VAULT_DIR_NAME:
+            resolved_home = resolved_vault.parent
+        else:
+            resolved_home = resolved_vault
+    return MemoryConfig(home_path=resolved_home, vault_path=resolved_vault)
 
 
 def set_agent_aliases(vault_path: Union[Path, str], aliases: Sequence[str]) -> list[str]:
-    """Persist `agent_policy.aliases` in `.memora/config.yaml` and return normalized aliases."""
+    """Persist `agent_policy.aliases` in managed config and return normalized aliases."""
 
     normalized = AgentPolicyConfig(aliases=list(aliases)).aliases
     config = load_config(vault_path)
@@ -348,7 +392,7 @@ def set_agent_aliases(vault_path: Union[Path, str], aliases: Sequence[str]) -> l
 
 
 def write_config(config: MemoryConfig, *, overwrite: bool = False) -> bool:
-    """Write `.memora/config.yaml`.
+    """Write the managed `config.yaml`.
 
     Returns True when a file was written and False when an existing config was
     preserved.
@@ -359,7 +403,7 @@ def write_config(config: MemoryConfig, *, overwrite: bool = False) -> bool:
         return False
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_data = config.model_dump(mode="json", exclude={"vault_path"})
+    config_data = config.model_dump(mode="json", exclude={"home_path", "vault_path"})
     config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
     return True
 
@@ -368,11 +412,15 @@ def load_config(
     vault_path: Optional[Union[Path, str]] = None,
     *,
     start_path: Optional[Union[Path, str]] = None,
+    home_path: Optional[Union[Path, str]] = None,
 ) -> MemoryConfig:
-    """Load vault config from an explicit vault, env var, or nearest parent."""
+    """Load config from an explicit path, `MEMORA_HOME`, or nearest parent."""
 
-    resolved_vault = _resolve_vault_path(vault_path, start_path=start_path)
-    config_path = resolved_vault / CONFIG_DIR_NAME / CONFIG_FILE_NAME
+    resolved_home, resolved_vault, config_path = _resolve_layout_paths(
+        vault_path,
+        start_path=start_path,
+        home_path=home_path,
+    )
     if not config_path.exists():
         raise ConfigError(f"config not found at {config_path}")
 
@@ -388,44 +436,77 @@ def load_config(
 
     try:
         return MemoryConfig.model_validate(
-            _apply_environment_overrides({**loaded, "vault_path": resolved_vault})
+            _apply_environment_overrides(
+                {**loaded, "home_path": resolved_home, "vault_path": resolved_vault}
+            )
         )
     except ValidationError as exc:
         raise ConfigError(str(exc)) from exc
 
 
 def find_config_path(start_path: Optional[Union[Path, str]] = None) -> Optional[Path]:
-    """Find the nearest parent directory containing `.memora/config.yaml`."""
+    """Find the nearest parent directory containing managed or legacy config."""
 
     current = Path(start_path or Path.cwd()).expanduser().resolve()
     if current.is_file():
         current = current.parent
 
     for candidate in (current, *current.parents):
-        config_path = candidate / CONFIG_DIR_NAME / CONFIG_FILE_NAME
+        config_path = candidate / CONFIG_FILE_NAME
         if config_path.exists():
             return config_path
+        legacy_config_path = candidate / LEGACY_CONFIG_DIR_NAME / CONFIG_FILE_NAME
+        if legacy_config_path.exists():
+            return legacy_config_path
     return None
 
 
-def _resolve_vault_path(
+def _resolve_layout_paths(
     vault_path: Optional[Union[Path, str]],
     *,
     start_path: Optional[Union[Path, str]] = None,
-) -> Path:
-    if vault_path is not None:
-        return Path(vault_path).expanduser().resolve()
+    home_path: Optional[Union[Path, str]] = None,
+) -> tuple[Path, Path, Path]:
+    if home_path is not None:
+        home = resolve_memora_home(home_path)
+        vault = Path(vault_path).expanduser().resolve() if vault_path is not None else home / DEFAULT_VAULT_DIR_NAME
+        return home, vault, home / CONFIG_FILE_NAME
 
-    env_vault = os.environ.get(ENV_VAULT_PATH)
-    if env_vault:
-        return Path(env_vault).expanduser().resolve()
+    if vault_path is not None:
+        vault = Path(vault_path).expanduser().resolve()
+        managed_home = vault.parent if vault.name == DEFAULT_VAULT_DIR_NAME else vault
+        managed_config_path = managed_home / CONFIG_FILE_NAME
+        legacy_config_path = vault / LEGACY_CONFIG_DIR_NAME / CONFIG_FILE_NAME
+        if managed_config_path.exists() or not legacy_config_path.exists():
+            return managed_home, vault, managed_config_path
+        return vault, vault, legacy_config_path
+
+    env_home = os.environ.get(ENV_MEMORA_HOME)
+    if env_home:
+        home = Path(env_home).expanduser().resolve()
+        return home, home / DEFAULT_VAULT_DIR_NAME, home / CONFIG_FILE_NAME
 
     config_path = find_config_path(start_path=start_path)
     if config_path:
-        return config_path.parent.parent
+        if config_path.parent.name == LEGACY_CONFIG_DIR_NAME:
+            vault = config_path.parent.parent
+            return vault, vault, config_path
+        home = config_path.parent
+        vault = home / DEFAULT_VAULT_DIR_NAME if (home / DEFAULT_VAULT_DIR_NAME).exists() else home
+        return home, vault, config_path
+
+    env_vault = os.environ.get(ENV_VAULT_PATH)
+    if env_vault:
+        vault = Path(env_vault).expanduser().resolve()
+        managed_home = vault.parent if vault.name == DEFAULT_VAULT_DIR_NAME else vault
+        managed_config_path = managed_home / CONFIG_FILE_NAME
+        legacy_config_path = vault / LEGACY_CONFIG_DIR_NAME / CONFIG_FILE_NAME
+        if managed_config_path.exists() or not legacy_config_path.exists():
+            return managed_home, vault, managed_config_path
+        return vault, vault, legacy_config_path
 
     raise ConfigError(
-        f"could not find {CONFIG_DIR_NAME}/{CONFIG_FILE_NAME}; pass --vault or set {ENV_VAULT_PATH}"
+        f"could not find {CONFIG_FILE_NAME}; set {ENV_MEMORA_HOME} or pass --vault"
     )
 
 
@@ -523,6 +604,8 @@ def config_to_dict(config: MemoryConfig) -> dict[str, Any]:
     """Return a JSON-safe config summary."""
 
     data = config.model_dump(mode="json")
+    data["home_path"] = str(config.home_path)
     data["vault_path"] = str(config.vault_path)
     data["config_path"] = str(config.config_path)
+    data["state_path"] = str(config.state_root)
     return data

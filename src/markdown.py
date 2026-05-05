@@ -1,4 +1,4 @@
-"""Small Markdown presentation helpers for Obsidian-friendly output."""
+"""Small Markdown presentation helpers for readable generated output."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def readable_title(text: str, *, fallback: str, max_words: int = 10) -> str:
 
 
 def aliases(*values: Optional[str]) -> list[str]:
-    """Return de-duplicated aliases suitable for Obsidian frontmatter."""
+    """Return de-duplicated aliases suitable for Markdown frontmatter."""
 
     selected: list[str] = []
     seen: set[str] = set()
@@ -37,7 +37,7 @@ def aliases(*values: Optional[str]) -> list[str]:
 
 
 def wikilink(target: str, *, label: Optional[str] = None) -> str:
-    """Render an Obsidian wikilink with conservative escaping for generated labels."""
+    """Render a wiki-style link with conservative escaping for generated labels."""
 
     cleaned_target = _clean_link_part(target)
     cleaned_label = _clean_link_part(label) if label else None
@@ -47,7 +47,7 @@ def wikilink(target: str, *, label: Optional[str] = None) -> str:
 
 
 def wikilink_for_path(path: PathLike, *, label: Optional[str] = None) -> str:
-    """Render a vault-relative Markdown path as an Obsidian wikilink target."""
+    """Render a vault-relative Markdown path as a wiki-style link target."""
 
     target = Path(path).as_posix()
     if target.endswith(".md"):

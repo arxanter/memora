@@ -28,7 +28,15 @@ from agent_integration import (
     agent_update_payload as _agent_update_payload,
 )
 from brief import brief_memory
-from config import ENV_VAULT_PATH, ConfigError, load_config, set_agent_aliases
+from config import (
+    DEFAULT_VAULT_DIR_NAME,
+    ENV_MEMORA_HOME,
+    ENV_VAULT_PATH,
+    ConfigError,
+    load_config,
+    resolve_memora_home,
+    set_agent_aliases,
+)
 from freshness import refresh_index_if_needed
 from indexer import reindex_vault
 from lifecycle import (
@@ -65,7 +73,7 @@ from wiki import (
 )
 
 app = typer.Typer(
-    help="Local-first Obsidian-backed Memora CLI.",
+    help="Local-first Markdown memory engine for coding agents.",
     no_args_is_help=True,
 )
 raw_app = typer.Typer(help="Stage and inspect raw source material.", no_args_is_help=True)
@@ -75,7 +83,6 @@ memory_app = typer.Typer(help="Update existing canonical memories.", no_args_is_
 agent_app = typer.Typer(help="Manage coding-agent integrations.", no_args_is_help=True)
 session_app = typer.Typer(help="Finalize AI-agent sessions.", no_args_is_help=True)
 wiki_app = typer.Typer(help="Maintain the Memora Wiki layer.", no_args_is_help=True)
-vault_app = typer.Typer(help="Manage the installed default vault.", no_args_is_help=True)
 self_app = typer.Typer(help="Manage the installed Memora checkout.", no_args_is_help=True)
 app.add_typer(raw_app, name="raw")
 app.add_typer(source_app, name="source")
@@ -84,7 +91,6 @@ app.add_typer(memory_app, name="memory")
 app.add_typer(agent_app, name="agent")
 app.add_typer(session_app, name="session")
 app.add_typer(wiki_app, name="wiki")
-app.add_typer(vault_app, name="vault")
 app.add_typer(self_app, name="self")
 agent_aliases_app = typer.Typer(
     help="Configure assistant names for recall routing and generated agent rules.",
@@ -108,17 +114,13 @@ BUILD_CONTEXT_KEYWORD_PROBE_MIN_SCORE = 7.0
 BUILD_CONTEXT_SEMANTIC_PROBE_MIN_SIMILARITY = 0.35
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
-        "Vault and health",
+        "Home and health",
         (
-            ("init <vault>", "Create the vault layout and config."),
-            ("setup [vault]", "Preview or create the default vault layout."),
+            ("setup [home]", "Preview or create the managed Memora home."),
             ("status", "Show vault health and local index state."),
             ("doctor", "Validate schema, graph links, and conflicts."),
-            ("conflicts", "Detect Markdown sync conflicts."),
             ("reindex", "Rebuild the local SQLite index."),
-            ("vault show", "Show the wrapper default vault."),
-            ("vault set <vault>", "Set the installed wrapper's default vault."),
-            ("self update", "Update the checkout with stash/pull/pop."),
+            ("self update", "Update the engine checkout with stash/pull/pop."),
         ),
     ),
     (
@@ -183,64 +185,50 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         "Inspect and open",
         (
             ("inspect <id>", "Show one memory by ID."),
-            ("open <id>", "Print memory path and Obsidian URI."),
+            ("open <id>", "Print memory path and optionally open it."),
         ),
     ),
 )
 
 
-@app.command("init")
+@app.command("init", hidden=True)
 def init_command(
     vault: Path = typer.Argument(..., help="Vault directory to initialize."),
-    set_default: bool = typer.Option(
-        False, "--set-default", help="Set this vault as the installed wrapper default."
-    ),
-    wrapper: Optional[Path] = typer.Option(
-        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
-    ),
 ) -> None:
-    """Create an Obsidian-compatible vault layout and config."""
+    """Compatibility helper for explicit test/local vault setup."""
 
     try:
-        result = init_vault(vault)
-        payload = result.to_dict()
-        if set_default:
-            payload["default_vault"] = _set_default_vault_payload(
-                Path(payload["vault_path"]), wrapper=wrapper
-            )
+        payload = init_vault(vault).to_dict()
     except Exception as exc:  # pragma: no cover - exercised through CLI error handling
         _handle_error(exc, code="init_failed")
-
 
     console.print(f"[green]Initialized vault:[/green] {payload['vault_path']}")
     if payload["config_created"]:
         console.print(f"Created config: {payload['config_path']}")
     else:
         console.print(f"Preserved existing config: {payload['config_path']}")
-    if payload.get("default_vault"):
-        console.print(f"Default vault: {payload['default_vault']['vault_path']}")
 
 
 @app.command("setup")
 def setup_command(
-    vault: Optional[Path] = typer.Argument(
-        None, help="Vault directory; defaults to MEMORA_VAULT, then current directory."
+    home: Optional[Path] = typer.Argument(
+        None, help="Memora home directory; defaults to MEMORA_HOME, then ~/memora."
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview setup actions without writing files."
     ),
 ) -> None:
-    """Preview or create the default CLI-first Memora vault layout."""
+    """Preview or create the default managed Memora home layout."""
 
     try:
-        selected_vault = _resolve_setup_vault_path(vault)
+        selected_vault = _resolve_setup_vault_path(home)
         payload = setup_vault(selected_vault, dry_run=dry_run).to_dict()
     except Exception as exc:
         _handle_error(exc, code="setup_failed")
 
 
     label = "Setup dry run" if payload["dry_run"] else "Setup complete"
-    console.print(f"[green]{label}:[/green] {payload['vault_path']}")
+    console.print(f"[green]{label}:[/green] {payload['home_path']}")
     for action in payload["actions"]:
         if action["exists"]:
             continue
@@ -248,47 +236,6 @@ def setup_command(
         console.print(f"- {verb} {action['relative_path']}")
     if not payload["would_write"] and payload["dry_run"]:
         console.print("[green]Vault already has the default layout.[/green]")
-
-
-@vault_app.command("show")
-def vault_show_command(
-    wrapper: Optional[Path] = typer.Option(
-        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
-    ),
-) -> None:
-    """Show the default vault configured in the installed wrapper."""
-
-    try:
-        wrapper_path = _resolve_memora_wrapper_path(wrapper)
-        payload = _default_vault_payload(wrapper_path)
-    except Exception as exc:
-        _handle_error(exc, code="vault_show_failed")
-
-
-    if payload["configured"]:
-        console.print(f"Default vault: {payload['vault_path']}")
-    else:
-        console.print("[yellow]No default vault configured in wrapper.[/yellow]")
-    console.print(f"Wrapper: {payload['wrapper_path']}")
-
-
-@vault_app.command("set")
-def vault_set_command(
-    vault: Path = typer.Argument(..., help="Initialized vault directory to use by default."),
-    wrapper: Optional[Path] = typer.Option(
-        None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
-    ),
-) -> None:
-    """Set the installed wrapper default vault after validating it exists."""
-
-    try:
-        payload = _set_default_vault_payload(vault, wrapper=wrapper)
-    except Exception as exc:
-        _handle_error(exc, code="vault_set_failed")
-
-
-    console.print(f"[green]Default vault updated:[/green] {payload['vault_path']}")
-    console.print(f"Wrapper: {payload['wrapper_path']}")
 
 
 @self_app.command("update")
@@ -663,7 +610,7 @@ def agent_aliases_set_command(
         None, "--vault", "-v", help="Vault path; default: resolve from cwd."
     ),
 ) -> None:
-    """Persist assistant names to .memora/config.yaml (agent_policy.aliases)."""
+    """Persist assistant names to config.yaml (agent_policy.aliases)."""
 
     try:
         if vault is not None:
@@ -2108,10 +2055,10 @@ def open_command(
     memory_id: str = typer.Argument(..., help="Memory id to locate."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
     launch: bool = typer.Option(
-        False, "--launch", help="Open the Obsidian URI with the system `open` command."
+        False, "--launch", help="Open the Markdown file with the system `open` command."
     ),
 ) -> None:
-    """Print the Markdown path and Obsidian URI for a memory."""
+    """Print the Markdown path and optionally open it."""
 
     try:
         config = load_config(vault)
@@ -2124,7 +2071,7 @@ def open_command(
 
 
     console.print(f"Path: {payload['path']}")
-    console.print(f"Obsidian: {payload['obsidian_uri']}")
+    console.print(f"File URI: {payload['file_uri']}")
     if payload["launch_requested"]:
         if payload["opened"]:
             console.print("[green]Opened with system handler.[/green]")
@@ -2189,7 +2136,7 @@ def doctor(
         raise typer.Exit(1)
 
 
-@app.command()
+@app.command(hidden=True)
 def conflicts(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
 ) -> None:
@@ -4294,25 +4241,10 @@ def _read_text_file(path: Optional[Path]) -> Optional[str]:
     return path.read_text(encoding="utf-8")
 
 
-def _resolve_memora_wrapper_path(wrapper: Optional[Path]) -> Path:
-    if wrapper is not None:
-        return wrapper.expanduser().resolve()
+def _resolve_setup_vault_path(home: Optional[Path]) -> Path:
+    selected_home = resolve_memora_home(home)
+    return selected_home / DEFAULT_VAULT_DIR_NAME
 
-    discovered = shutil.which("memora")
-    if not discovered:
-        raise FileNotFoundError("could not find installed memora wrapper on PATH; pass --wrapper")
-    return Path(discovered).resolve()
-
-
-def _resolve_setup_vault_path(vault: Optional[Path]) -> Path:
-    if vault is not None:
-        return vault
-
-    env_vault = os.environ.get(ENV_VAULT_PATH)
-    if env_vault:
-        return Path(env_vault)
-
-    return Path.cwd()
 
 
 def _resolve_agent_project_path(project: Optional[Path], *, scope: str, command: str) -> Path:
@@ -4532,24 +4464,19 @@ def _self_reinstall_payload(
         raise FileNotFoundError(f"installer not found: {install_script}")
 
     wrapper_path = _resolve_self_update_wrapper_path(wrapper)
-    install_dir = _self_update_install_dir(wrapper_path)
+    memora_home = _self_update_memora_home(wrapper_path)
     bin_dir = wrapper_path.parent
-    default_vault = _self_update_default_vault(wrapper_path)
     command = [
         "bash",
         str(install_script),
         "--force",
-        "--install-dir",
-        str(install_dir),
+        "--home",
+        str(memora_home),
         "--bin-dir",
         str(bin_dir),
         "--python",
         sys.executable,
     ]
-    if default_vault is not None:
-        command.extend(["--vault", str(default_vault)])
-    else:
-        command.append("--no-vault")
     if dry_run:
         command.append("--dry-run")
         return {
@@ -4573,10 +4500,10 @@ def _self_reinstall_payload(
     return {
         "description": "reinstalled Memora package dependencies and wrapper",
         "command": _shell_command_text(command),
-        "install_dir": str(install_dir),
+        "home_path": str(memora_home),
         "bin_dir": str(bin_dir),
         "wrapper_path": str(wrapper_path),
-        "default_vault": str(default_vault) if default_vault is not None else None,
+        "vault_path": str(memora_home / DEFAULT_VAULT_DIR_NAME),
     }
 
 
@@ -4592,27 +4519,25 @@ def _resolve_self_update_wrapper_path(wrapper: Optional[Path]) -> Path:
     return Path.home().joinpath(".local", "bin", "memora").resolve()
 
 
-def _self_update_install_dir(wrapper_path: Path) -> Path:
-    env_install_dir = os.environ.get("MEMORA_INSTALL_DIR")
-    if env_install_dir:
-        return Path(env_install_dir).expanduser().resolve()
+def _self_update_memora_home(wrapper_path: Path) -> Path:
+    env_home = os.environ.get(ENV_MEMORA_HOME)
+    if env_home:
+        return Path(env_home).expanduser().resolve()
     if wrapper_path.is_file():
-        parsed = _read_install_dir_from_wrapper(wrapper_path)
+        parsed = _read_memora_home_from_wrapper(wrapper_path)
         if parsed is not None:
             return parsed
-    return Path.home().joinpath(".local", "share", "memora").resolve()
+    return resolve_memora_home()
 
 
-def _self_update_default_vault(wrapper_path: Path) -> Optional[Path]:
-    if wrapper_path.is_file():
-        default_vault = _read_default_vault_from_wrapper(wrapper_path)
-        if default_vault is not None:
-            return default_vault
-        legacy_vault = _read_env_path_from_wrapper(wrapper_path, "MEMORA_VAULT")
-        if legacy_vault is not None:
-            return legacy_vault
-    env_default = os.environ.get("MEMORA_DEFAULT_VAULT") or os.environ.get(ENV_VAULT_PATH)
-    return Path(env_default).expanduser().resolve() if env_default else None
+def _read_memora_home_from_wrapper(wrapper_path: Path) -> Optional[Path]:
+    raw_value = _read_env_value_from_wrapper(wrapper_path, ENV_MEMORA_HOME)
+    if raw_value:
+        value = raw_value.strip()
+        if value.startswith("${MEMORA_HOME:-") and value.endswith("}"):
+            value = value[len("${MEMORA_HOME:-") : -1]
+        return Path(value).expanduser().resolve() if value else None
+    return _read_install_dir_from_wrapper(wrapper_path)
 
 
 def _read_install_dir_from_wrapper(wrapper_path: Path) -> Optional[Path]:
@@ -4622,11 +4547,6 @@ def _read_install_dir_from_wrapper(wrapper_path: Path) -> Optional[Path]:
     value = raw_value.strip()
     if value.startswith("${MEMORA_INSTALL_DIR:-") and value.endswith("}"):
         value = value[len("${MEMORA_INSTALL_DIR:-") : -1]
-    return Path(value).expanduser().resolve() if value else None
-
-
-def _read_env_path_from_wrapper(wrapper_path: Path, name: str) -> Optional[Path]:
-    value = _read_env_value_from_wrapper(wrapper_path, name)
     return Path(value).expanduser().resolve() if value else None
 
 
@@ -4654,8 +4574,11 @@ def _resolve_memora_update_checkout(checkout: Optional[Path]) -> Path:
     if checkout is not None:
         checkout_path = checkout.expanduser().resolve()
     else:
-        checkout_path = _module_memora_source_checkout() or _nearest_memora_source_checkout(
-            Path.cwd()
+        managed_checkout = resolve_memora_home() / "engine"
+        checkout_path = (
+            managed_checkout
+            if _looks_like_memora_source_checkout(managed_checkout)
+            else _module_memora_source_checkout() or _nearest_memora_source_checkout(Path.cwd())
         )
         if checkout_path is None:
             raise ValueError(
@@ -4666,7 +4589,18 @@ def _resolve_memora_update_checkout(checkout: Optional[Path]) -> Path:
         raise ValueError(f"{checkout_path} does not look like a Memora source checkout")
     if not (checkout_path / ".git").exists():
         raise ValueError(f"{checkout_path} is not a git checkout")
+    managed_vault = resolve_memora_home() / DEFAULT_VAULT_DIR_NAME
+    if _path_is_relative_to(checkout_path, managed_vault):
+        raise ValueError("refusing to self-update from inside the managed vault")
     return checkout_path
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _module_memora_source_checkout() -> Optional[Path]:
@@ -4729,114 +4663,6 @@ def _git_error_text(result: subprocess.CompletedProcess[str]) -> str:
 
 def _process_error_text(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
-
-
-def _default_vault_payload(wrapper_path: Path) -> dict[str, Any]:
-    default_vault = _read_default_vault_from_wrapper(wrapper_path)
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "vault show",
-        "wrapper_path": str(wrapper_path),
-        "configured": default_vault is not None,
-        "vault_path": str(default_vault) if default_vault is not None else None,
-    }
-
-
-def _set_default_vault_payload(vault_path: Path, *, wrapper: Optional[Path]) -> dict[str, Any]:
-    config = load_config(vault_path)
-    wrapper_path = _resolve_memora_wrapper_path(wrapper)
-    _write_default_vault_to_wrapper(wrapper_path, config.vault_path)
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "vault set",
-        "wrapper_path": str(wrapper_path),
-        "vault_path": str(config.vault_path),
-    }
-
-
-def _read_default_vault_from_wrapper(wrapper_path: Path) -> Optional[Path]:
-    try:
-        content = wrapper_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise OSError(f"could not read memora wrapper at {wrapper_path}: {exc}") from exc
-
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("export MEMORA_DEFAULT_VAULT="):
-            continue
-        try:
-            parts = shlex.split(stripped)
-        except ValueError as exc:
-            raise ValueError(
-                f"could not parse MEMORA_DEFAULT_VAULT in {wrapper_path}: {exc}"
-            ) from exc
-        for part in parts:
-            if part.startswith("MEMORA_DEFAULT_VAULT="):
-                value = part.split("=", 1)[1]
-                return Path(value).expanduser().resolve() if value else None
-    return None
-
-
-def _write_default_vault_to_wrapper(wrapper_path: Path, vault_path: Path) -> None:
-    try:
-        content = wrapper_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise OSError(f"could not read memora wrapper at {wrapper_path}: {exc}") from exc
-
-    if "MEMORA_INSTALL_DIR" not in content or "-m cli" not in content:
-        raise ValueError(f"{wrapper_path} does not look like a Memora-managed wrapper")
-
-    lines = content.splitlines()
-    marker = "# memora default vault (managed)"
-    default_line = f"export MEMORA_DEFAULT_VAULT={_shell_double_quoted(str(vault_path))}"
-
-    updated = False
-    if marker in lines:
-        marker_index = lines.index(marker)
-        if marker_index + 1 < len(lines):
-            lines[marker_index + 1] = default_line
-        else:
-            lines.append(default_line)
-        updated = True
-    else:
-        for index, line in enumerate(lines):
-            if line.startswith("export MEMORA_DEFAULT_VAULT="):
-                lines[index] = default_line
-                updated = True
-                break
-
-    if not updated:
-        for index in range(len(lines) - 1):
-            if lines[index].strip() == ":" and lines[index + 1].startswith(
-                "export MEMORA_INSTALL_DIR="
-            ):
-                lines[index] = marker
-                lines.insert(index + 1, default_line)
-                updated = True
-                break
-
-    if not updated:
-        for index, line in enumerate(lines):
-            if line.startswith("export MEMORA_INSTALL_DIR="):
-                lines.insert(index, default_line)
-                lines.insert(index, marker)
-                updated = True
-                break
-
-    if not updated:
-        raise ValueError(f"could not find a writable default vault section in {wrapper_path}")
-
-    trailing_newline = "\n" if content.endswith("\n") else ""
-    wrapper_path.write_text("\n".join(lines) + trailing_newline, encoding="utf-8")
-
-
-def _shell_double_quoted(value: str) -> str:
-    escaped = (
-        value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
-    )
-    return f'"{escaped}"'
 
 
 def _relative_to_vault(config: Any, path: Path) -> str:

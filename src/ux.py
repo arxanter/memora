@@ -7,7 +7,6 @@ import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote
 
 from config import MemoryConfig
 from schema import (
@@ -36,7 +35,7 @@ def inspect_memory(config: MemoryConfig, memory_id: str) -> dict[str, Any]:
         "vault_path": str(config.vault_path),
         "path": str(path),
         "relative_path": relative_path,
-        "obsidian_uri": _obsidian_uri(path),
+        "file_uri": path.resolve().as_uri(),
         "memory": document.frontmatter.model_dump(mode="json"),
         "body": document.body.strip(),
         "citations": [_citation(memory_id, relative_path)],
@@ -44,10 +43,10 @@ def inspect_memory(config: MemoryConfig, memory_id: str) -> dict[str, Any]:
 
 
 def open_memory(config: MemoryConfig, memory_id: str, *, launch: bool = False) -> dict[str, Any]:
-    """Resolve a memory to a local Markdown path and optionally launch Obsidian."""
+    """Resolve a memory to a local Markdown path and optionally open it."""
 
     payload = inspect_memory(config, memory_id)
-    target = str(payload["obsidian_uri"] or payload["path"])
+    target = str(payload["path"])
     opened = False
     launch_error: Optional[str] = None
     if launch:
@@ -74,7 +73,7 @@ def open_memory(config: MemoryConfig, memory_id: str, *, launch: bool = False) -
         "id": memory_id,
         "path": payload["path"],
         "relative_path": payload["relative_path"],
-        "obsidian_uri": payload["obsidian_uri"],
+        "file_uri": payload["file_uri"],
         "open_target": target,
         "opened": opened,
         "launch_requested": launch,
@@ -350,10 +349,6 @@ def _graph_payload(
         "link_count": len(incoming) + len(outgoing),
         "citations": _dedupe_citations(citations),
     }
-
-
-def _obsidian_uri(path: Path) -> str:
-    return "obsidian://open?path=" + quote(str(path), safe="")
 
 
 def _citation(memory_id: str, path: str) -> dict[str, str]:

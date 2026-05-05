@@ -87,11 +87,11 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
     assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
     assert "docs/cli-agent-reference.md" in content
     for private_path in (
-        "`Memories/`",
-        "`Sources/`",
-        "`Wiki/`",
-        "`raw/`",
-        "`.memora/index.sqlite`",
+        "`vault/Memories/`",
+        "`vault/Sources/`",
+        "`vault/Wiki/`",
+        "`vault/raw/`",
+        "`state/index.sqlite`",
         "cache",
         "embeddings",
         "locks",
@@ -133,9 +133,7 @@ def test_user_scope_targets_use_real_global_files_when_supported(tmp_path):
     assert cursor_target.client == AgentClient.CURSOR
     assert cursor_target.scope == IntegrationScope.USER
     assert cursor_target.support == TargetSupport.FALLBACK
-    assert (
-        cursor_target.path == tmp_path.resolve() / ".memora" / "integrations" / "cursor-memora.mdc"
-    )
+    assert cursor_target.path == tmp_path.resolve() / ".memora" / "cursor-memora.mdc"
     assert claude_target.client == AgentClient.CLAUDE
     assert claude_target.support == TargetSupport.SUPPORTED
     assert claude_target.path == tmp_path.resolve() / ".claude" / "CLAUDE.md"

@@ -52,6 +52,7 @@ ACTIVE_MEMORY_DIRECTORIES: tuple[str, ...] = tuple(
 
 @dataclass(frozen=True)
 class InitResult:
+    home_path: Path
     vault_path: Path
     config_path: Path
     created_paths: tuple[Path, ...]
@@ -60,6 +61,7 @@ class InitResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": True,
+            "home_path": str(self.home_path),
             "vault_path": str(self.vault_path),
             "config_path": str(self.config_path),
             "config_created": self.config_created,
@@ -69,6 +71,7 @@ class InitResult:
 
 @dataclass(frozen=True)
 class SetupResult:
+    home_path: Path
     vault_path: Path
     config_path: Path
     dry_run: bool
@@ -83,6 +86,7 @@ class SetupResult:
             "implemented": True,
             "command": "setup",
             "dry_run": self.dry_run,
+            "home_path": str(self.home_path),
             "vault_path": str(self.vault_path),
             "config_path": str(self.config_path),
             "would_write": would_write,
@@ -96,7 +100,7 @@ class SetupResult:
             ]
             if self.dry_run
             else [
-                "Run `memora doctor --vault <vault>` to validate the vault.",
+                "Run `memora doctor` to validate the vault.",
                 "Run `memora agent rules --client agents` to generate coding-agent instructions.",
                 "Run `memora agent integrate --client cursor --project <path>` to connect a project agent.",
             ],
@@ -148,6 +152,7 @@ def init_vault(vault_path: Union[Path, str]) -> InitResult:
         config = load_config(config.vault_path)
 
     return InitResult(
+        home_path=config.home_path,
         vault_path=config.vault_path,
         config_path=config.config_path,
         created_paths=tuple(created_paths),
@@ -178,6 +183,7 @@ def setup_vault(vault_path: Union[Path, str], *, dry_run: bool = False) -> Setup
         dry_run=dry_run,
     )
     return SetupResult(
+        home_path=config.home_path,
         vault_path=config.vault_path,
         config_path=config.config_path,
         dry_run=dry_run,
@@ -297,7 +303,7 @@ def remember_memory(
 
 
 def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
-    """Render a validated memory as Obsidian-compatible Markdown."""
+    """Render a validated memory as portable Markdown."""
 
     frontmatter_data = _memory_frontmatter_with_presentation(frontmatter, body)
     rendered_yaml = yaml.safe_dump(frontmatter_data, sort_keys=False, allow_unicode=False).strip()
@@ -307,7 +313,7 @@ def render_memory_markdown(frontmatter: MemoryFrontmatter, body: str) -> str:
 def _memory_frontmatter_with_presentation(
     frontmatter: MemoryFrontmatter, body: str
 ) -> dict[str, Any]:
-    """Add optional Obsidian presentation fields without changing canonical ids."""
+    """Add optional presentation fields without changing canonical ids."""
 
     frontmatter_data = frontmatter.model_dump(mode="json", exclude_none=False)
     title = frontmatter.title or readable_title(body, fallback=frontmatter.id)
@@ -364,6 +370,7 @@ def status_summary(config: MemoryConfig) -> dict[str, Any]:
     )
     return {
         "ok": report.ok,
+        "home_path": str(config.home_path),
         "vault_path": str(config.vault_path),
         "config_path": str(config.config_path),
         "memory_count": len(report.documents),
@@ -422,6 +429,7 @@ def doctor_report(config: MemoryConfig) -> dict[str, Any]:
     issues = [*schema_issues, *graph_issues, *sync_issues]
     return {
         "ok": not issues,
+        "home_path": str(config.home_path),
         "vault_path": str(config.vault_path),
         "documents": len(report.documents),
         "graph": graph_payload,
@@ -474,6 +482,7 @@ def _contradiction_warnings(documents: Iterable[Any], config: MemoryConfig) -> l
 def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
     memory_dirs = tuple(config.memory_root / directory for directory in ACTIVE_MEMORY_DIRECTORIES)
     return (
+        config.home_path,
         config.vault_path,
         config.raw_root,
         config.raw_root / "inbox",
@@ -493,11 +502,11 @@ def _vault_directories(config: MemoryConfig) -> tuple[Path, ...]:
         config.wiki_root / "entities",
         config.wiki_root / "concepts",
         config.wiki_root / "syntheses",
-        config.vault_path / config.memora_dir,
-        config.vault_path / config.memora_dir / "schemas",
-        config.vault_path / config.memora_dir / "cache",
-        config.vault_path / config.memora_dir / "embeddings",
-        config.vault_path / config.memora_dir / "locks",
+        config.state_root,
+        config.state_root / "schemas",
+        config.state_root / "cache",
+        config.state_root / "embeddings",
+        config.state_root / "locks",
     )
 
 
@@ -609,6 +618,10 @@ def _setup_action(
 
 
 def _setup_relative_path(config: MemoryConfig, path: Path) -> str:
+    try:
+        return path.relative_to(config.home_path).as_posix() or "."
+    except ValueError:
+        pass
     try:
         return path.relative_to(config.vault_path).as_posix() or "."
     except ValueError:

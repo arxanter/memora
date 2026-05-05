@@ -1,7 +1,7 @@
 ## Memora Brief
 
 Current relevant facts:
-- Memory brief facts use Obsidian Markdown as the durable source of truth. [C1]
+- Memory brief facts use managed Markdown as the durable source of truth. [C1]
 
 Current decisions:
 - Memory brief decisions do not sync SQLite indexes across devices. [C2]

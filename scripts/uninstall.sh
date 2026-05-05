@@ -5,10 +5,11 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/uninstall.sh [options]
 
-Remove local Memora wrappers. Vault Markdown is never deleted by default.
+Remove local Memora wrappers. Managed vault data is never deleted.
 
 Options:
-  --install-dir PATH    Install state directory. Default: ~/.local/share/memora
+  --home PATH           Managed Memora home. Default: ~/memora
+  --install-dir PATH    Deprecated alias for --home.
   --bin-dir PATH        Wrapper directory. Default: ~/.local/bin
   --remove-venv         Remove the managed virtual environment.
   --dry-run             Print actions without changing files.
@@ -37,16 +38,21 @@ remove_path() {
   rm -rf "$path"
 }
 
-INSTALL_DIR="${MEMORA_INSTALL_DIR:-$HOME/.local/share/memora}"
+MEMORA_HOME_DIR="${MEMORA_HOME:-${MEMORA_INSTALL_DIR:-$HOME/memora}}"
 BIN_DIR="${MEMORA_BIN_DIR:-$HOME/.local/bin}"
 REMOVE_VENV=0
 DRY_RUN=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --home)
+      [ "$#" -ge 2 ] || { printf '%s\n' "error: --home requires a path" >&2; exit 1; }
+      MEMORA_HOME_DIR="$2"
+      shift 2
+      ;;
     --install-dir)
       [ "$#" -ge 2 ] || { printf '%s\n' "error: --install-dir requires a path" >&2; exit 1; }
-      INSTALL_DIR="$2"
+      MEMORA_HOME_DIR="$2"
       shift 2
       ;;
     --bin-dir)
@@ -73,14 +79,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-INSTALL_DIR="$(expand_path "$INSTALL_DIR")"
+MEMORA_HOME_DIR="$(expand_path "$MEMORA_HOME_DIR")"
 BIN_DIR="$(expand_path "$BIN_DIR")"
 
 remove_path "$BIN_DIR/memora"
 
 if [ "$REMOVE_VENV" = "1" ]; then
-  remove_path "$INSTALL_DIR/venv"
+  remove_path "$MEMORA_HOME_DIR/venv"
 fi
 
 log "uninstall complete"
-log "vault Markdown was not removed"
+log "managed vault, config, state, and engine were not removed"

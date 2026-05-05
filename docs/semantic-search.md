@@ -129,4 +129,4 @@ export MEMORA_SEMANTIC_MIN_SIMILARITY=0.15
 ```
 
 These overrides are applied when config is loaded. They do not rewrite
-`.memora/config.yaml`.
+`config.yaml`.

@@ -26,4 +26,4 @@ observations:
 tags: [memory, project]
 ---
 
-Memora stores durable context in Obsidian-compatible Markdown and builds compact recall artifacts for coding agents.
+Memora stores durable context in managed Markdown and builds compact recall artifacts for coding agents.

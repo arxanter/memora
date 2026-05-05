@@ -3,7 +3,7 @@
 ## Summary
 
 Stage 0 planning material defines Memora as a CLI-first, local-first memory
-vault where durable context is stored in Obsidian-compatible Markdown.
+vault where durable context is stored in managed Markdown.
 
 ## Key Ideas
 
@@ -13,7 +13,7 @@ vault where durable context is stored in Obsidian-compatible Markdown.
 
 ## Durable Facts
 
-- Obsidian Markdown is the durable source of truth.
+- Managed Markdown is the durable source of truth.
 - SQLite indexes, embeddings, locks, and cache files are rebuildable local data.
 
 ## Decisions

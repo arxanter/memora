@@ -27,15 +27,15 @@ dist/
 .env
 .env.*
 
-# Disposable Memora vault state
-.memora/index.sqlite
-.memora/cache/
-.memora/embeddings/
-.memora/locks/
-**/.memora/index.sqlite
-**/.memora/cache/
-**/.memora/embeddings/
-**/.memora/locks/
+# Disposable Memora state
+state/index.sqlite
+state/cache/
+state/embeddings/
+state/locks/
+**/state/index.sqlite
+**/state/cache/
+**/state/embeddings/
+**/state/locks/
 
 
 .cursor/** 

@@ -874,7 +874,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`.",
         "",
-        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Wiki/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
+        "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `vault/Memories/`, `vault/Sources/`, `vault/Wiki/`, `vault/raw/`, `state/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
         "If the CLI lacks an operation, stop and report the missing command or product gap. Do not bypass the CLI with direct file edits, SQL, migrations, cache manipulation, or ad hoc scripts.",
         "",
@@ -960,7 +960,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Do not store secrets, raw dumps, temporary logs, or unreviewed summaries as canonical memory. Canonical memories should be small, durable, cited when possible, and reviewable. `memora brief` is ephemeral agent output; durable briefs and analyses should be saved as `Wiki/syntheses/` through the CLI.",
         "",
-        "Review and lifecycle workflow: agent-created or inferred memories should stay reviewable according to `.memora/config.yaml` policy. Review pending items with:",
+        "Review and lifecycle workflow: agent-created or inferred memories should stay reviewable according to `config.yaml` policy. Review pending items with:",
         "",
         "```bash",
         review,
@@ -1112,7 +1112,7 @@ def _project_target(client: AgentClient, project_path: Path) -> IntegrationTarge
 
 def _user_target(client: AgentClient, *, home: Optional[Path]) -> IntegrationTarget:
     home_path = (home or Path.home()).expanduser().resolve()
-    integration_root = home_path / ".memora" / "integrations"
+    integration_root = home_path / ".memora"
     if client == AgentClient.CURSOR:
         path = integration_root / "cursor-memora.mdc"
         reason = "safe fallback file for manual Cursor user-level installation"

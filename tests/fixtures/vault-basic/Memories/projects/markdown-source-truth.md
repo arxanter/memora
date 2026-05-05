@@ -15,10 +15,10 @@ contradicts: []
 relations: []
 observations:
   - category: architecture
-    text: Markdown in the Obsidian vault is the durable source of truth.
+    text: Markdown in the managed vault is the durable source of truth.
     confidence: 0.95
-tags: [architecture, obsidian]
+tags: [architecture, markdown]
 ---
 
-Markdown in the Obsidian vault is the durable source of truth for Memora.
+Markdown in the managed vault is the durable source of truth for Memora.
 The local database and embedding files are disposable generated state.

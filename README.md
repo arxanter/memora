@@ -13,14 +13,22 @@ decisions without editing memory files directly.
 Requirements: macOS or Linux, Python 3.10 or newer, and `git`.
 
 ```bash
-git clone https://github.com/arxanter/memora.git ~/.local/src/memora
-cd ~/.local/src/memora
+git clone https://github.com/arxanter/memora.git /tmp/memora-installer
+cd /tmp/memora-installer
 ./scripts/install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer asks where to create/use the default vault. Press Enter to use
-`~/MemoryVault`, enter another path, or type `skip` to configure it later.
+The installer creates a managed `~/memora` directory:
+
+```text
+~/memora/
+  engine/      Memora git checkout used by self update
+  vault/       durable Markdown data
+  config.yaml  user configuration
+  state/       rebuildable indexes, caches, embeddings, and locks
+  venv/        managed Python environment
+```
 
 Check that it works:
 
@@ -28,16 +36,7 @@ Check that it works:
 memora status
 ```
 
-The installer stores your selected default vault in the `memora` wrapper, so
-normal commands do not need `--vault`.
-
-To move the default later, initialize the new vault and point the wrapper at it:
-
-```bash
-memora init ~/NewMemoryVault --set-default
-# or, for an existing initialized vault:
-memora vault set ~/ExistingMemoryVault
-```
+The wrapper stores `MEMORA_HOME`, so normal commands do not need `--vault`.
 
 To softly update the Memora source checkout without deleting local files:
 
@@ -45,30 +44,24 @@ To softly update the Memora source checkout without deleting local files:
 memora self update --remote-url https://github.com/arxanter/memora.git
 ```
 
-This stashes local checkout changes, pulls fast-forward updates, and reapplies
-the saved stash. By default it also reruns the installer with `--force`, so the
-managed virtual environment and wrapper pick up new runtime dependencies such as
-the local semantic search provider. The installer verifies the default semantic
-provider with a tiny embedding request, warming the local model cache during
-install/update. It uses `uv` when available and falls back to Python `venv` plus
-`pip`, so users do not need `uv` for semantic search to work. The `--remote-url`
-value is only used when the checkout is
-missing an `origin` remote. It does not remove or modify your vault.
+This stashes local changes in `~/memora/engine`, pulls fast-forward updates, and
+reapplies the saved stash. By default it also reruns the installer with
+`--force`, so `venv/` and the wrapper pick up new runtime dependencies. It never
+removes or rewrites `vault/`.
 
 Advanced install options
 
 ```bash
 ./scripts/install.sh --help
-./scripts/install.sh --vault ~/MemoryVault --with-test
-./scripts/install.sh --no-vault
+./scripts/install.sh --home ~/memora --with-test
 ```
 
 Common options to add when needed: `--install-dir <path>`, `--bin-dir <path>`,
-`--python <path>`, `--no-vault`, `--dry-run`, `--force`.
+`--python <path>`, `--dry-run`, `--force`.
 
-The installer creates a managed virtual environment, installs Memora from the
-cloned repository, writes the `memora` wrapper, and initializes the vault when
-`--vault` is provided. When `uv` is available, the installer uses it for faster
+The installer creates a managed virtual environment, ensures `engine/` exists,
+installs Memora from that checkout, writes the `memora` wrapper, and initializes
+the managed home. When `uv` is available, the installer uses it for faster
 environment creation and package installation; otherwise it falls back to Python
 `venv` and `pip`.
 
@@ -139,7 +132,7 @@ canonical memory.
 From the cloned repository:
 
 ```bash
-cd ~/.local/src/memora
+cd ~/memora/engine
 ./scripts/uninstall.sh --remove-venv
 ```
 
@@ -149,9 +142,9 @@ Markdown vault is not deleted.
 Remove everything except the vault
 
 ```bash
-cd ~/.local/src/memora
+cd ~/memora/engine
 ./scripts/uninstall.sh --remove-venv
-rm -rf ~/.local/src/memora
+rm -rf ~/memora/engine
 ```
 
 To preview removal:

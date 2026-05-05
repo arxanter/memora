@@ -1,11 +1,11 @@
 # Memora CLI Agent Reference
 
 Purpose: compact command map for agents. Commands default to compact
-agent-readable text. Omit `--vault` unless the default vault is not configured.
+agent-readable text. Normal installs resolve storage from `MEMORA_HOME`.
 
 Common options:
 
-- `--vault PATH`, `-v PATH`: override vault resolution.
+- `--vault PATH`, `-v PATH`: legacy/advanced override for non-standard vaults.
 - `--project NAME`: project filter/metadata where supported.
 - `--dry-run`: validate or preview without writing where supported.
 
@@ -42,33 +42,21 @@ Use these most often:
 Do not edit vault files directly. If the needed operation is not listed, stop
 and report the CLI gap.
 
-## Vault And Health
+## Home And Health
 
-`memora init <vault> [--set-default] [--wrapper PATH]`
+`memora setup [home] [--dry-run]`
 
-- Create vault layout and `.memora/config.yaml`.
-- With `--set-default`, also update the installed `memora` wrapper default.
-
-`memora setup [vault] [--dry-run]`
-
-- Preview or create default vault layout. Without `<vault>`, uses the configured
-  default vault (`MEMORA_VAULT`) before falling back to the current directory.
-
-`memora vault show [--wrapper PATH]`
-
-- Show the default vault configured in the installed wrapper.
-
-`memora vault set <vault> [--wrapper PATH]`
-
-- Validate that `<vault>` is initialized, then set it as the installed wrapper default.
+- Preview or create the managed Memora home. Without `<home>`, uses
+  `MEMORA_HOME` before falling back to `~/memora`.
+- The managed layout is `engine/`, `vault/`, `config.yaml`, `state/`, and
+  `venv/`.
 
 `memora self update [--checkout PATH] [--remote NAME] [--remote-url URL] [--branch NAME] [--wrapper PATH] [--reinstall|--no-reinstall] [--dry-run]`
 
-- Soft-update the source checkout with stash/pull/pop.
-- By default, rerun the installer afterward to refresh the managed venv,
-  wrapper, runtime dependencies, and the default local semantic provider. This
-  keeps semantic search available even when `uv` is not installed because the
-  installer falls back to `pip`.
+- Soft-update the managed `engine/` checkout with stash/pull/pop.
+- By default, rerun the installer afterward to refresh `venv/`, wrapper, runtime
+  dependencies, and the default local semantic provider. This never removes or
+  rewrites `vault/`.
 
 `memora help`
 
@@ -99,8 +87,8 @@ and report the CLI gap.
   writes from its own source checkout.
 - User scope writes Claude to `~/.claude/CLAUDE.md` and Codex to
   `~/.codex/AGENTS.md`; Cursor user scope emits a fallback file under
-  `~/.memora/integrations/` for manual installation because Cursor user rules
-  are settings-managed.
+  `~/.memora/` for manual installation because Cursor user rules are
+  settings-managed.
 
 `memora agent update [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force]`
 
@@ -271,11 +259,7 @@ and report the CLI gap.
 
 `memora open <id> [--launch] [--vault PATH]`
 
-- Print memory path and Obsidian URI; optionally launch URI.
-
-`memora conflicts [--vault PATH]`
-
-- Detect Markdown sync conflicts that require manual resolution.
+- Print memory path; optionally open the Markdown file.
 
 ## Session Capture
 

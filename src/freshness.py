@@ -117,29 +117,25 @@ ReindexFn = Callable[[MemoryConfig], ReindexResult]
 def default_freshness_state_path(config: MemoryConfig) -> Path:
     """Return the generated cache file used to remember the last snapshot."""
 
-    return config.vault_path / config.memora_dir / "cache" / "freshness-state.json"
+    return config.state_root / "cache" / "freshness-state.json"
 
 
 def iter_freshness_files(config: MemoryConfig) -> tuple[Path, ...]:
     """Return durable files that should trigger an index refresh when changed."""
 
     root = config.vault_path
-    local_state_root = root / config.memora_dir
-    schema_root = local_state_root / "schemas"
+    state_root = config.state_root
     candidates: list[Path] = []
 
     candidates.extend(
         path
         for path in root.rglob("*.md")
-        if path.is_file() and not _is_relative_to(path, local_state_root)
+        if path.is_file() and not _is_relative_to(path, state_root)
     )
 
     config_path = config.config_path
     if config_path.is_file():
         candidates.append(config_path)
-
-    if schema_root.exists():
-        candidates.extend(path for path in schema_root.rglob("*") if path.is_file())
 
     return tuple(sorted(set(candidates)))
 
@@ -155,7 +151,7 @@ def scan_freshness_snapshot(config: MemoryConfig) -> FreshnessSnapshot:
             continue
         tracked.append(
             TrackedFile(
-                path=path.relative_to(config.vault_path).as_posix(),
+                path=_tracked_path(config, path),
                 mtime_ns=stat.st_mtime_ns,
                 size=stat.st_size,
             )
@@ -318,6 +314,15 @@ def wait_for_quiet_snapshot(
         if next_snapshot == snapshot:
             return next_snapshot
         snapshot = next_snapshot
+
+
+def _tracked_path(config: MemoryConfig, path: Path) -> str:
+    for root, prefix in ((config.vault_path, "vault"), (config.home_path, "home")):
+        try:
+            return f"{prefix}/{path.relative_to(root).as_posix()}"
+        except ValueError:
+            continue
+    return str(path)
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

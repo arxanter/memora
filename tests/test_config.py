@@ -37,7 +37,9 @@ def test_load_config_from_explicit_vault(tmp_path):
     assert config.vault_path == vault.resolve()
     assert config.raw_root == vault.resolve() / "raw"
     assert config.memory_root == vault.resolve() / "Memories"
-    assert config.config_path == vault.resolve() / ".memora" / "config.yaml"
+    assert config.home_path == vault.resolve()
+    assert config.config_path == vault.resolve() / "config.yaml"
+    assert config.index_file == vault.resolve() / "state" / "index.sqlite"
     assert config.semantic.provider == "fastembed"
     assert config.semantic.model == "BAAI/bge-small-en-v1.5"
 
@@ -118,7 +120,7 @@ def test_set_agent_aliases_updates_config_yaml(tmp_path):
 def test_load_config_applies_recall_policy_include_profile_yaml_overrides(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    config_path = vault / ".memora" / "config.yaml"
+    config_path = vault / "config.yaml"
     config_path.write_text(
         """
 schema_version: 1
@@ -146,7 +148,7 @@ recall_policies:
 def test_load_config_preserves_review_include_profile_default_for_old_yaml(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
-    config_path = vault / ".memora" / "config.yaml"
+    config_path = vault / "config.yaml"
     config_path.write_text(
         """
 schema_version: 1
@@ -229,9 +231,8 @@ def test_load_config_applies_profile_environment_overrides(tmp_path, monkeypatch
 
 def test_invalid_config_schema_version_is_rejected(tmp_path):
     vault = tmp_path / "memory-vault"
-    config_dir = vault / ".memora"
-    config_dir.mkdir(parents=True)
-    (config_dir / "config.yaml").write_text("schema_version: 999\n", encoding="utf-8")
+    vault.mkdir(parents=True)
+    (vault / "config.yaml").write_text("schema_version: 999\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="schema_version must be 1"):
         load_config(vault)

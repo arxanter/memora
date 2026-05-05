@@ -1,7 +1,21 @@
 # Memora Architecture
 
-Memora is a CLI-first local memory core backed by an Obsidian-compatible vault.
-The durable data model has four persistent layers:
+Memora is a CLI-first local memory core backed by a managed Markdown vault.
+The default installation creates:
+
+```text
+memora/
+  engine/      git checkout used by `memora self update`
+  vault/       durable Markdown data
+  config.yaml  user configuration
+  state/       rebuildable indexes, caches, embeddings, and locks
+  venv/        managed Python environment
+```
+
+`memora self update` operates on `engine/` and refreshes `venv/` plus the
+wrapper. It never removes or rewrites `vault/`.
+
+The durable data model under `vault/` has four persistent layers:
 
 ```text
 raw/      staging for unprocessed input and sidecar metadata
@@ -10,14 +24,15 @@ Memories/ atomic durable facts, decisions, preferences, tasks, and context
 Wiki/     maintained overviews, entities, concepts, source notes, and syntheses
 ```
 
-`.memora/` stores config plus rebuildable local state such as SQLite indexes,
-embedding cache, locks, and schemas.
+`config.yaml` stores user configuration at the Memora home level. `state/`
+stores rebuildable local state such as SQLite indexes, embedding cache, locks,
+and schemas.
 
 ## Command Surface
 
 The public CLI is intentionally small:
 
-- Vault basics: `init`, `setup`, `status`, `doctor`, `conflicts`, `reindex`.
+- Home basics: `setup`, `status`, `doctor`, `reindex`, `self update`.
 - Raw staging: `raw add`, `raw list`, `raw inspect`.
 - Curated evidence: `source add`, `lookup-source`.
 - Wiki maintenance: `wiki status`, `wiki read`, `wiki search`, `wiki ingest`,

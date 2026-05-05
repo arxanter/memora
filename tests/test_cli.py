@@ -32,9 +32,9 @@ def _write_memora_wrapper(path):
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
-                "# memora default vault (managed)",
-                ":",
-                'export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-/tmp/memora}"',
+                "# memora managed home",
+                'export MEMORA_HOME="${MEMORA_HOME:-/tmp/memora}"',
+                'export MEMORA_INSTALL_DIR="${MEMORA_INSTALL_DIR:-$MEMORA_HOME}"',
                 'exec "/usr/bin/python3" -m cli "$@"',
                 "",
             ]
@@ -59,16 +59,20 @@ def _init_git_repo(path):
     _git(path, "config", "user.name", "Memora Test")
 
 
-def test_init_command_creates_vault_layout(tmp_path):
-    vault = tmp_path / "memory-vault"
+def test_setup_command_creates_managed_home_layout(tmp_path):
+    home = tmp_path / "memora"
+    vault = home / "vault"
 
-    result = runner.invoke(app, ["init", str(vault)])
+    result = runner.invoke(app, ["setup", str(home)])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["ok"] is True
+    assert payload["home_path"] == str(home.resolve())
+    assert payload["vault_path"] == str(vault.resolve())
     assert payload["config_created"] is True
-    assert (vault / ".memora" / "config.yaml").exists()
+    assert (home / "config.yaml").exists()
+    assert (home / "state" / "cache").is_dir()
     assert (vault / "raw" / "inbox" / "webclips").is_dir()
     assert (vault / "raw" / "processed").is_dir()
     assert (vault / "raw" / "quarantine").is_dir()
@@ -76,54 +80,6 @@ def test_init_command_creates_vault_layout(tmp_path):
     assert (vault / "Memories" / "context").is_dir()
     assert (vault / "Wiki" / "index.md").exists()
     assert not (vault / "Briefs").exists()
-
-
-def test_init_command_can_set_default_vault_in_wrapper(tmp_path):
-    vault = tmp_path / "memory-vault"
-    wrapper = tmp_path / "memora"
-    _write_memora_wrapper(wrapper)
-
-    result = runner.invoke(
-        app, ["init", str(vault), "--set-default", "--wrapper", str(wrapper)]
-    )
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["ok"] is True
-    assert payload["default_vault"]["vault_path"] == str(vault.resolve())
-    assert f'export MEMORA_DEFAULT_VAULT="{vault.resolve()}"' in wrapper.read_text(encoding="utf-8")
-
-
-def test_vault_set_updates_managed_wrapper_default(tmp_path):
-    vault = tmp_path / "memory-vault"
-    wrapper = tmp_path / "memora"
-    _write_memora_wrapper(wrapper)
-    runner.invoke(app, ["init", str(vault)])
-
-    result = runner.invoke(app, ["vault", "set", str(vault), "--wrapper", str(wrapper)])
-    show_result = runner.invoke(app, ["vault", "show", "--wrapper", str(wrapper)])
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["ok"] is True
-    assert payload["vault_path"] == str(vault.resolve())
-    assert show_result.exit_code == 0, show_result.output
-    show_payload = json.loads(show_result.output)
-    assert show_payload["configured"] is True
-    assert show_payload["vault_path"] == str(vault.resolve())
-
-
-def test_vault_set_requires_initialized_vault(tmp_path):
-    vault = tmp_path / "memory-vault"
-    wrapper = tmp_path / "memora"
-    _write_memora_wrapper(wrapper)
-
-    result = runner.invoke(app, ["vault", "set", str(vault), "--wrapper", str(wrapper)])
-
-    assert result.exit_code == 1
-    payload = json.loads(result.output)
-    assert payload["error"]["code"] == "config_error"
-    assert "config not found" in payload["error"]["message"]
 
 
 def test_self_update_stashes_pulls_and_restores_local_changes(tmp_path):
@@ -228,14 +184,14 @@ def test_self_update_dry_run_reinstalls_managed_runtime(tmp_path):
     assert reinstall_action["dry_run"] is True
     assert "scripts/install.sh" in reinstall_action["command"]
     assert "--force" in reinstall_action["command"]
-    assert "--install-dir /tmp/memora" in reinstall_action["command"]
+    assert "--home /tmp/memora" in reinstall_action["command"]
     assert f"--bin-dir {wrapper.parent}" in reinstall_action["command"]
 
 
 def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
-    vault = tmp_path / "memory-vault"
+    home = tmp_path / "memora"
 
-    result = runner.invoke(app, ["setup", str(vault), "--dry-run"])
+    result = runner.invoke(app, ["setup", str(home), "--dry-run"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -243,41 +199,48 @@ def test_setup_dry_run_reports_planned_actions_without_writes(tmp_path):
     assert payload["command"] == "setup"
     assert payload["dry_run"] is True
     assert payload["would_write"] is True
-    assert any(action["relative_path"] == ".memora/config.yaml" for action in payload["actions"])
-    assert not vault.exists()
+    assert any(action["relative_path"] == "config.yaml" for action in payload["actions"])
+    assert any(action["relative_path"] == "vault" for action in payload["actions"])
+    assert not home.exists()
 
 
-def test_setup_without_argument_uses_default_vault_env(tmp_path, monkeypatch):
-    vault = tmp_path / "memory-vault"
+def test_setup_without_argument_uses_memora_home_env(tmp_path, monkeypatch):
+    home = tmp_path / "memora"
     source_dir = tmp_path / "source-checkout"
     source_dir.mkdir()
     monkeypatch.chdir(source_dir)
 
-    result = runner.invoke(app, ["setup", "--dry-run"], env={"MEMORA_VAULT": str(vault)})
+    result = runner.invoke(app, ["setup", "--dry-run"], env={"MEMORA_HOME": str(home)})
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["vault_path"] == str(vault.resolve())
+    assert payload["home_path"] == str(home.resolve())
+    assert payload["vault_path"] == str((home / "vault").resolve())
     assert payload["would_write"] is True
 
 
-def test_setup_command_creates_vault_layout(tmp_path):
-    vault = tmp_path / "memory-vault"
+def test_setup_command_is_idempotent(tmp_path):
+    home = tmp_path / "memora"
+    vault = home / "vault"
 
-    result = runner.invoke(app, ["setup", str(vault)])
+    result = runner.invoke(app, ["setup", str(home)])
+    second = runner.invoke(app, ["setup", str(home), "--dry-run"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["dry_run"] is False
     assert payload["config_created"] is True
-    assert (vault / ".memora" / "config.yaml").exists()
+    assert (home / "config.yaml").exists()
+    assert (home / "state" / "locks").is_dir()
     assert (vault / "raw" / "inbox" / "files").is_dir()
     assert (vault / "Memories" / "context").is_dir()
     assert (vault / "Wiki" / "index.md").exists()
     assert (vault / "Wiki" / "log.md").exists()
     assert (vault / "Wiki" / "overview.md").exists()
     assert not (vault / "Briefs").exists()
+    assert second.exit_code == 0, second.output
+    assert json.loads(second.output)["would_write"] is False
 
 
 def test_remember_command_creates_valid_markdown(tmp_path):
@@ -520,7 +483,7 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_clients(
         assert '--project "memora"' in content
         assert "memora raw mark-processed" in content
         assert "Do not read, write, edit, delete, or migrate Memora vault files directly" in content
-        assert "`.memora/index.sqlite`" in content
+        assert "`state/index.sqlite`" in content
         assert "Remi intent routing examples" in content
         assert "Remi, review pending memory" in content
         assert "Рэми, актуализируй память" in content
@@ -2114,7 +2077,7 @@ def test_reindex_command_builds_sqlite_index(tmp_path):
     assert payload["documents_indexed"] == 1
     assert payload["documents_skipped"] == 0
     assert payload["graph_ok"] is True
-    assert (vault / ".memora" / "index.sqlite").exists()
+    assert (vault / "state" / "index.sqlite").exists()
 
 
 def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
@@ -2150,7 +2113,7 @@ def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
     assert inspect_payload["ok"] is True
     assert inspect_payload["implemented"] is True
     assert inspect_payload["relative_path"] == "Memories/decisions/new.md"
-    assert inspect_payload["obsidian_uri"].startswith("obsidian://open?path=")
+    assert inspect_payload["file_uri"].startswith("file://")
     assert "Stage thirteen graph new memory." in inspect_human.output
 
     assert open_result.exit_code == 0, open_result.output
@@ -2158,6 +2121,7 @@ def test_stage13_inspect_open_and_graph_cli_outputs(tmp_path):
     assert open_payload["opened"] is False
     assert open_payload["launch_requested"] is False
     assert open_payload["path"].endswith("Memories/decisions/new.md")
+    assert open_payload["file_uri"].startswith("file://")
 
     assert graph_json.exit_code == 0, graph_json.output
     graph_payload = json.loads(graph_json.output)
@@ -2471,7 +2435,7 @@ def _snapshot_source_files(*paths):
 
 
 def _disable_freshness_debounce(vault):
-    config_path = vault / ".memora" / "config.yaml"
+    config_path = vault / "config.yaml"
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace(
             "debounce_seconds: 2.0", "debounce_seconds: 0"

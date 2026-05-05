@@ -1,12 +1,13 @@
 # Ready sample vault config for CLI-first Memora workflows.
-# Generated cache files under .memora/ remain local and rebuildable.
+# Generated cache files under state/ remain local and rebuildable.
 schema_version: 1
 raw_dir: raw
 memories_dir: Memories
 sources_dir: Sources
 wiki_dir: Wiki
-memora_dir: .memora
-index_path: .memora/index.sqlite
+state_dir: state
+memora_dir: state
+index_path: state/index.sqlite
 default_scope: project
 default_project: memora
 user_default_status: active

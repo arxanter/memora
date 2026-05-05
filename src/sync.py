@@ -108,7 +108,7 @@ class VaultLock:
         self.name = _safe_lock_name(name)
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
-        self.path = config.vault_path / config.memora_dir / "locks" / f"{self.name}.lock"
+        self.path = config.state_root / "locks" / f"{self.name}.lock"
         self._acquired = False
 
     def __enter__(self) -> VaultLock:

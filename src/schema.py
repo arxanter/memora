@@ -288,7 +288,7 @@ class VaultValidationReport:
 def parse_markdown_document(
     markdown: str, path: Optional[Union[Path, str]] = None
 ) -> MemoryDocument:
-    """Parse one Obsidian-compatible Markdown memory and validate frontmatter."""
+    """Parse one portable Markdown memory and validate frontmatter."""
 
     match = _FRONTMATTER_RE.match(markdown)
     if not match:

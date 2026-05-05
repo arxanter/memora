@@ -138,9 +138,9 @@ cases:
     mode: search
     query: source extract relations
     expected_include: [mem_20260430_import_shape]
-  - id: search_obsidian_vault_source
+  - id: search_managed_vault_source
     mode: search
-    query: obsidian vault source
+    query: managed vault source
     expected_include: [mem_20260430_arch_markdown]
   - id: brief_sqlite_superseded_warning
     mode: brief

@@ -26,9 +26,8 @@ def test_local_install_scripts_pass_bash_syntax_check():
 
 
 def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
-    install_dir = tmp_path / "install"
+    home = tmp_path / "memora"
     bin_dir = tmp_path / "bin"
-    vault = tmp_path / "vault"
 
     result = subprocess.run(
         [
@@ -37,12 +36,10 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
             "--dry-run",
             "--skip-install",
             "--force",
-            "--install-dir",
-            str(install_dir),
+            "--home",
+            str(home),
             "--bin-dir",
             str(bin_dir),
-            "--vault",
-            str(vault),
         ],
         cwd=ROOT,
         capture_output=True,
@@ -55,10 +52,9 @@ def test_install_dry_run_prints_wrappers_without_creating_targets(tmp_path):
     assert (
         "memora agent integrate --client all --project /path/to/project --dry-run" in result.stdout
     )
-    assert "memora vault set /path/to/initialized-vault" in result.stdout
-    assert not install_dir.exists()
+    assert "self update changes engine and venv, never vault" in result.stdout
+    assert not home.exists()
     assert not bin_dir.exists()
-    assert not vault.exists()
 
 
 def test_install_help_documents_python_selection():
@@ -77,12 +73,12 @@ def test_install_help_documents_python_selection():
     assert "python3.12/3.11/3.10/python3" in result.stdout
     assert "Python interpreter to use" in result.stdout
     assert "Optional uv executable to prefer" in result.stdout
-    assert "--no-vault" in result.stdout
-    assert "wrapper default" in result.stdout
+    assert "--home" in result.stdout
+    assert "--engine-source" in result.stdout
 
 
 def test_install_dry_run_falls_back_when_uv_is_missing(tmp_path):
-    install_dir = tmp_path / "install"
+    home = tmp_path / "memora"
     bin_dir = tmp_path / "bin"
 
     result = subprocess.run(
@@ -91,11 +87,10 @@ def test_install_dry_run_falls_back_when_uv_is_missing(tmp_path):
             str(SCRIPTS / "install.sh"),
             "--dry-run",
             "--force",
-            "--install-dir",
-            str(install_dir),
+            "--home",
+            str(home),
             "--bin-dir",
             str(bin_dir),
-            "--no-vault",
         ],
         cwd=ROOT,
         env={**os.environ, "UV": str(tmp_path / "missing-uv")},
@@ -108,7 +103,7 @@ def test_install_dry_run_falls_back_when_uv_is_missing(tmp_path):
     assert "uv not found; falling back to Python venv and pip" in result.stderr
     assert "installer: pip fallback" in result.stdout
     assert " -m pip install -e " in result.stdout
-    assert not install_dir.exists()
+    assert not home.exists()
     assert not bin_dir.exists()
 
 
@@ -123,7 +118,7 @@ def test_cli_module_invocation_runs_typer_app():
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Local-first Obsidian-backed Memora CLI" in result.stdout
+    assert "Local-first Markdown memory engine for coding agents" in result.stdout
 
 
 def test_local_install_docs_reference_existing_scripts():
@@ -134,11 +129,11 @@ def test_local_install_docs_reference_existing_scripts():
     for script_name in ("install.sh", "uninstall.sh"):
         assert (SCRIPTS / script_name).exists()
 
-    assert "git clone https://github.com/arxanter/memora.git ~/.local/src/memora" in readme
+    assert "git clone https://github.com/arxanter/memora.git /tmp/memora-installer" in readme
     assert "./scripts/install.sh" in readme
-    assert "Press Enter to use" in readme
-    assert "memora init ~/NewMemoryVault --set-default" in readme
-    assert "memora vault set ~/ExistingMemoryVault" in readme
+    assert "engine/" in readme
+    assert "vault/" in readme
+    assert "config.yaml" in readme
     assert "memora self update --remote-url https://github.com/arxanter/memora.git" in readme
     assert "https://github.com/arxanter/memora.git" in readme
     assert "./scripts/uninstall.sh --remove-venv" in readme
@@ -153,7 +148,6 @@ def test_local_install_docs_reference_existing_scripts():
     assert "CLI command reference for agents" in readme
     assert "raw add" not in readme
     assert "source add" not in readme
-    assert "<details>" in readme
     assert "remember" in architecture
     assert "memora raw add <path>" in cli_reference
     assert "memora build-context <task>" in cli_reference
