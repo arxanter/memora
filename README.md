@@ -22,6 +22,28 @@ cargo test
 
 If Rust is not installed on the machine, install the stable toolchain first.
 
+## Local Install
+
+```bash
+memora setup
+memora self install
+eval "$(memora self shell-init zsh)"
+memora self completions zsh
+```
+
+`self install` copies the current binary into `$MEMORA_HOME/bin/memora`. `self update` overwrites that managed binary while preserving the vault.
+
+## Agent Integration
+
+```bash
+memora agent integrate --client all --scope project
+memora agent status --client all --scope project
+memora agent-aliases set Remi Рэми Реми
+memora agent update --client all --scope project
+```
+
+Agent rules are written only inside a Memora managed block. Cursor gets `.cursor/rules/memora.mdc`; Claude gets `CLAUDE.md`; Codex and generic agents get `AGENTS.md`.
+
 ## Semantic Search
 
 New homes default to the local `fastembed` provider:

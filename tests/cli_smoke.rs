@@ -61,6 +61,40 @@ fn aliases_can_be_reassigned() {
 }
 
 #[test]
+fn self_management_outputs_install_shell_init_and_completions() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["self", "install", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(contains("installed:"))
+        .stdout(contains("bin/memora"))
+        .stdout(contains("dry_run: true"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["self", "shell-init", "zsh"])
+        .assert()
+        .success()
+        .stdout(contains("MEMORA_HOME"))
+        .stdout(contains("bin"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .args(["self", "completions", "bash"])
+        .assert()
+        .success()
+        .stdout(contains("memora"));
+}
+
+#[test]
 fn doctor_reports_raw_source_and_wiki_schema_issues() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
@@ -527,6 +561,69 @@ fn agent_integrate_writes_managed_block() {
     let content = fs::read_to_string(target).expect("target");
     assert!(content.contains("BEGIN MEMORA MANAGED BLOCK"));
     assert!(content.contains("Auto recall enabled: true"));
+}
+
+#[test]
+fn agent_integrate_all_is_client_specific_and_idempotent() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    fs::write(project.join("AGENTS.md"), "Existing agent notes.\n").expect("agents");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["agent", "integrate", "--client", "all", "--project"])
+        .arg(&project)
+        .assert()
+        .success()
+        .stdout(contains("client=Cursor"))
+        .stdout(contains("client=Claude"))
+        .stdout(contains("client=Codex"));
+
+    let cursor_rules =
+        fs::read_to_string(project.join(".cursor/rules/memora.mdc")).expect("cursor");
+    let claude_rules = fs::read_to_string(project.join("CLAUDE.md")).expect("claude");
+    let codex_rules = fs::read_to_string(project.join("AGENTS.md")).expect("codex");
+    assert!(cursor_rules.contains("alwaysApply: true"));
+    assert!(cursor_rules.contains("Client: Cursor"));
+    assert!(claude_rules.contains("Client: Claude"));
+    assert!(codex_rules.contains("Existing agent notes."));
+    assert!(codex_rules.contains("Client: Codex"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["agent", "update", "--client", "all", "--project"])
+        .arg(&project)
+        .assert()
+        .success()
+        .stdout(contains("unchanged: client=Cursor"))
+        .stdout(contains("unchanged: client=Claude"))
+        .stdout(contains("unchanged: client=Codex"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["agent", "status", "--client", "all", "--project"])
+        .arg(&project)
+        .assert()
+        .success()
+        .stdout(contains("client=Cursor installed=true current=true"))
+        .stdout(contains("client=Claude installed=true current=true"))
+        .stdout(contains("client=Codex installed=true current=true"));
 }
 
 #[test]

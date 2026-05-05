@@ -1,15 +1,16 @@
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 use crate::{
     agent::{render_rules, AgentClient, AgentInstallOptions, AgentScope},
-    config::{load_runtime_config, set_aliases},
+    config::{load_runtime_config, set_aliases, RuntimeConfig},
     error::Result,
     memory::{MemoryUpdateOptions, RememberOptions},
     raw::RawAddOptions,
     sources::SourceAddOptions,
-    vault::{self, SetupOptions},
+    vault::{self, BinaryInstallOptions, SetupOptions},
 };
 
 #[derive(Debug, Parser)]
@@ -95,13 +96,41 @@ struct ReindexCommand {
 
 #[derive(Debug, Subcommand)]
 enum SelfCommands {
+    Install(SelfInstallCommand),
     Update(SelfUpdateCommand),
+    Completions(SelfCompletionsCommand),
+    #[command(name = "shell-init")]
+    ShellInit(SelfShellInitCommand),
+}
+
+#[derive(Debug, Args)]
+struct SelfInstallCommand {
+    #[arg(long)]
+    from: Option<PathBuf>,
+    #[arg(long)]
+    force: bool,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct SelfUpdateCommand {
     #[arg(long)]
+    from: Option<PathBuf>,
+    #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct SelfCompletionsCommand {
+    #[arg(value_enum)]
+    shell: Shell,
+}
+
+#[derive(Debug, Args)]
+struct SelfShellInitCommand {
+    #[arg(value_enum)]
+    shell: Shell,
 }
 
 #[derive(Debug, Args)]
@@ -488,16 +517,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("chunks_indexed: {}", stats.chunks_indexed);
             Ok(())
         }
-        Commands::SelfCommand { command } => match command {
-            SelfCommands::Update(command) => {
-                println!("self update: package-manager managed in this Rust build");
-                println!("vault_preserved: true");
-                if command.dry_run {
-                    println!("dry_run: true");
-                }
-                Ok(())
-            }
-        },
+        Commands::SelfCommand { command } => dispatch_self(cli.home, command),
         Commands::Uninstall(command) => {
             let config = load_runtime_config(cli.home)?;
             let targets = vault::uninstall(&config, command.remove_vault, command.dry_run)?;
@@ -713,12 +733,13 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
             )?;
             for result in results {
                 println!(
-                    "{}: {}{}",
+                    "{}: client={:?} path={}{}",
                     if result.changed {
                         "updated"
                     } else {
                         "unchanged"
                     },
+                    result.client,
                     result.path.display(),
                     if result.dry_run { " (dry-run)" } else { "" }
                 );
@@ -740,12 +761,13 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
             )?;
             for result in results {
                 println!(
-                    "{}: {}{}",
+                    "{}: client={:?} path={}{}",
                     if result.changed {
                         "updated"
                     } else {
                         "unchanged"
                     },
+                    result.client,
                     result.path.display(),
                     if result.dry_run { " (dry-run)" } else { "" }
                 );
@@ -762,18 +784,81 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
             println!("aliases: {}", config.file.agent_policy.aliases.join(", "));
             println!("enabled: {}", config.file.agent_policy.enabled);
             println!("auto_recall: {}", config.file.agent_policy.auto_recall);
-            for entry in crate::agent::status(command.client, command.scope, command.project, None)?
-            {
+            for entry in crate::agent::status(
+                &config,
+                command.client,
+                command.scope,
+                command.project,
+                None,
+            )? {
                 println!(
-                    "managed_block: {} {}",
-                    if entry.installed {
-                        "installed"
-                    } else {
-                        "missing"
-                    },
+                    "managed_block: client={:?} installed={} current={} path={}",
+                    entry.client,
+                    if entry.installed { "true" } else { "false" },
+                    if entry.current { "true" } else { "false" },
                     entry.path.display()
                 );
             }
+            Ok(())
+        }
+    }
+}
+
+fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
+    match command {
+        SelfCommands::Install(command) => {
+            let config = if command.dry_run {
+                load_runtime_config(home)?
+            } else {
+                vault::setup_home(SetupOptions {
+                    home,
+                    dry_run: false,
+                })?
+            };
+            let target = vault::install_binary(
+                &config,
+                BinaryInstallOptions {
+                    source: command.from,
+                    overwrite: command.force,
+                    dry_run: command.dry_run,
+                },
+            )?;
+            println!("installed: {}", target.display());
+            println!("vault_preserved: true");
+            if command.dry_run {
+                println!("dry_run: true");
+            }
+            println!(
+                "next: eval \"$(memora --home {} self shell-init zsh)\"",
+                config.home_path.display()
+            );
+            Ok(())
+        }
+        SelfCommands::Update(command) => {
+            let config = load_runtime_config(home)?;
+            let target = vault::install_binary(
+                &config,
+                BinaryInstallOptions {
+                    source: command.from,
+                    overwrite: true,
+                    dry_run: command.dry_run,
+                },
+            )?;
+            println!("updated: {}", target.display());
+            println!("vault_preserved: true");
+            if command.dry_run {
+                println!("dry_run: true");
+            }
+            Ok(())
+        }
+        SelfCommands::Completions(command) => {
+            let mut cli = Cli::command();
+            clap_complete::generate(command.shell, &mut cli, "memora", &mut io::stdout());
+            Ok(())
+        }
+        SelfCommands::ShellInit(command) => {
+            let config = load_runtime_config(home)?;
+            print_shell_init(&config, command.shell);
             Ok(())
         }
     }
@@ -1057,6 +1142,35 @@ fn print_search_results(results: Vec<crate::indexer::SearchResult>) {
             println!("  {}", result.snippet.replace('\n', " "));
         }
     }
+}
+
+fn print_shell_init(config: &RuntimeConfig, shell: Shell) {
+    let home = shell_quote(&config.home_path.display().to_string());
+    let bin = shell_quote(&config.home_path.join("bin").display().to_string());
+    match shell {
+        Shell::Fish => {
+            println!("set -gx MEMORA_HOME {home};");
+            println!("fish_add_path {bin};");
+        }
+        Shell::PowerShell => {
+            let home = ps_quote(&config.home_path.display().to_string());
+            let bin = ps_quote(&config.home_path.join("bin").display().to_string());
+            println!("$env:MEMORA_HOME = {home}");
+            println!("$env:PATH = {bin} + [IO.Path]::PathSeparator + $env:PATH");
+        }
+        _ => {
+            println!("export MEMORA_HOME={home}");
+            println!("export PATH={bin}:$PATH");
+        }
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn ps_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn print_freshness(outcome: &crate::freshness::RefreshOutcome) {

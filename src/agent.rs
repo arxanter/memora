@@ -35,6 +35,7 @@ pub struct AgentInstallOptions {
 
 #[derive(Debug, Clone)]
 pub struct AgentWriteResult {
+    pub client: AgentClient,
     pub path: PathBuf,
     pub changed: bool,
     pub dry_run: bool,
@@ -42,8 +43,10 @@ pub struct AgentWriteResult {
 
 #[derive(Debug, Clone)]
 pub struct AgentStatusEntry {
+    pub client: AgentClient,
     pub path: PathBuf,
     pub installed: bool,
+    pub current: bool,
 }
 
 pub fn render_rules(config: &RuntimeConfig, client: AgentClient, scope: AgentScope) -> String {
@@ -51,15 +54,16 @@ pub fn render_rules(config: &RuntimeConfig, client: AgentClient, scope: AgentSco
     let auto_recall = config.file.agent_policy.auto_recall;
     let enabled = config.file.agent_policy.enabled;
 
-    format!(
-        r#"{MANAGED_BLOCK_START}
-Memora is the local CLI-first memory vault for this agent.
+    let body = format!(
+        r#"Memora is the local CLI-first memory vault for this agent.
 
 Client: {client:?}
 Scope: {scope:?}
 Memory enabled: {enabled}
 Auto recall enabled: {auto_recall}
 Aliases: {aliases}
+Memora home: {}
+Command prefix: `memora --home "{}"`
 
 Rules:
 - Treat any configured alias as an explicit memory trigger.
@@ -71,25 +75,33 @@ Rules:
 - Use `memora raw add`, `memora source add`, `memora raw mark-processed`, `memora wiki ingest`, and `memora wiki synthesize --save` for source capture workflows.
 - Review pending agent-created memory with `memora review`; approve or reject only when policy or user confirmation allows it.
 - Do not read, edit, migrate, delete, or inspect Memora vault internals directly. If the CLI lacks an operation, report the CLI gap.
-{MANAGED_BLOCK_END}
-"#
-    )
+"#,
+        config.home_path.display(),
+        config.home_path.display()
+    );
+
+    format!("{MANAGED_BLOCK_START}\n{body}{MANAGED_BLOCK_END}\n")
 }
 
 pub fn integrate_or_update(
     config: &RuntimeConfig,
     options: AgentInstallOptions,
 ) -> Result<Vec<AgentWriteResult>> {
-    let rules = render_rules(config, options.client, options.scope);
-    let targets = target_paths(
+    let targets = target_specs(
         options.client,
         options.scope,
         options.project,
         options.target,
     )?;
     let mut results = Vec::new();
-    for target in targets {
-        let current = fs::read_to_string(&target).unwrap_or_default();
+    for (client, target) in targets {
+        let rules = render_rules(config, client, options.scope);
+        let mut current = fs::read_to_string(&target).unwrap_or_default();
+        if matches!(client, AgentClient::Cursor)
+            && target.extension().and_then(|value| value.to_str()) == Some("mdc")
+        {
+            current = ensure_cursor_mdc_header(&current);
+        }
         let next = upsert_managed_block(&current, &rules, options.force)?;
         let changed = current != next;
         if changed && !options.dry_run {
@@ -99,6 +111,7 @@ pub fn integrate_or_update(
             fs::write(&target, next)?;
         }
         results.push(AgentWriteResult {
+            client,
             path: target,
             changed,
             dry_run: options.dry_run,
@@ -108,21 +121,31 @@ pub fn integrate_or_update(
 }
 
 pub fn status(
+    config: &RuntimeConfig,
     client: AgentClient,
     scope: AgentScope,
     project: Option<PathBuf>,
     target: Option<PathBuf>,
 ) -> Result<Vec<AgentStatusEntry>> {
-    let targets = target_paths(client, scope, project, target)?;
+    let targets = target_specs(client, scope, project, target)?;
     Ok(targets
         .into_iter()
-        .map(|path| {
-            let installed = fs::read_to_string(&path)
-                .map(|content| {
-                    content.contains(MANAGED_BLOCK_START) && content.contains(MANAGED_BLOCK_END)
-                })
-                .unwrap_or(false);
-            AgentStatusEntry { path, installed }
+        .map(|(client, path)| {
+            let expected = render_rules(config, client, scope);
+            let expected_block = extract_managed_block(&expected).unwrap_or(&expected);
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            let installed =
+                content.contains(MANAGED_BLOCK_START) && content.contains(MANAGED_BLOCK_END);
+            let current = installed
+                && extract_managed_block(&content)
+                    .map(|block| normalize_block(block) == normalize_block(expected_block))
+                    .unwrap_or(false);
+            AgentStatusEntry {
+                client,
+                path,
+                installed,
+                current,
+            }
         })
         .collect())
 }
@@ -172,14 +195,19 @@ fn upsert_managed_block(current: &str, rules: &str, force: bool) -> Result<Strin
     }
 }
 
-fn target_paths(
+fn target_specs(
     client: AgentClient,
     scope: AgentScope,
     project: Option<PathBuf>,
     target: Option<PathBuf>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<(AgentClient, PathBuf)>> {
     if let Some(target) = target {
-        return Ok(vec![target]);
+        let client = if matches!(client, AgentClient::All) {
+            AgentClient::Agents
+        } else {
+            client
+        };
+        return Ok(vec![(client, target)]);
     }
 
     let clients: Vec<AgentClient> = match client {
@@ -189,7 +217,7 @@ fn target_paths(
     };
     clients
         .into_iter()
-        .map(|client| target_path(client, scope, project.clone()))
+        .map(|client| Ok((client, target_path(client, scope, project.clone())?)))
         .collect()
 }
 
@@ -212,11 +240,33 @@ fn target_path(
         AgentScope::User => {
             let home = PathBuf::from(env::var_os("HOME").ok_or(MemoraError::HomeNotFound)?);
             Ok(match client {
-                AgentClient::Cursor => home.join(".memora").join("cursor-user-rules.md"),
+                AgentClient::Cursor => home.join(".cursor").join("rules").join("memora.mdc"),
                 AgentClient::Claude => home.join(".claude").join("CLAUDE.md"),
                 AgentClient::Codex => home.join(".codex").join("AGENTS.md"),
                 AgentClient::Agents | AgentClient::All => home.join(".memora").join("AGENTS.md"),
             })
         }
     }
+}
+
+fn extract_managed_block(content: &str) -> Option<&str> {
+    let start = content.find(MANAGED_BLOCK_START)?;
+    let end = content.find(MANAGED_BLOCK_END)?;
+    if end < start {
+        return None;
+    }
+    Some(&content[start..end + MANAGED_BLOCK_END.len()])
+}
+
+fn normalize_block(block: &str) -> String {
+    block.trim().replace("\r\n", "\n")
+}
+
+fn ensure_cursor_mdc_header(current: &str) -> String {
+    if current.trim_start().starts_with("---") {
+        return current.to_string();
+    }
+    let mut next = "---\ndescription: Memora memory rules\nalwaysApply: true\n---\n\n".to_string();
+    next.push_str(current.trim_start());
+    next
 }

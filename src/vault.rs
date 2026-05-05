@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 
 use crate::{
     config::{load_runtime_config, save_config, RuntimeConfig},
@@ -8,6 +8,13 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct SetupOptions {
     pub home: Option<PathBuf>,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BinaryInstallOptions {
+    pub source: Option<PathBuf>,
+    pub overwrite: bool,
     pub dry_run: bool,
 }
 
@@ -47,11 +54,46 @@ pub fn managed_directories(config: &RuntimeConfig) -> Vec<PathBuf> {
         config.vault_path.join("Wiki").join("entities"),
         config.vault_path.join("Wiki").join("concepts"),
         config.vault_path.join("Wiki").join("syntheses"),
+        config.home_path.join("bin"),
         config.state_path(),
         config.state_path().join("cache"),
         config.state_path().join("embeddings"),
         config.state_path().join("locks"),
     ]
+}
+
+pub fn bin_path(config: &RuntimeConfig) -> PathBuf {
+    config.home_path.join("bin").join("memora")
+}
+
+pub fn install_binary(config: &RuntimeConfig, options: BinaryInstallOptions) -> Result<PathBuf> {
+    let source = options.source.unwrap_or(env::current_exe()?);
+    if !source.is_file() {
+        return Err(crate::error::MemoraError::NotFound(
+            source.display().to_string(),
+        ));
+    }
+    let target = bin_path(config);
+    if target.exists() && !options.overwrite {
+        return Err(crate::error::MemoraError::InvalidArgument(format!(
+            "{} already exists; pass --force to overwrite",
+            target.display()
+        )));
+    }
+    if !options.dry_run {
+        fs::create_dir_all(target.parent().ok_or_else(|| {
+            crate::error::MemoraError::Message("bin path has no parent".to_string())
+        })?)?;
+        fs::copy(&source, &target)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&target)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&target, permissions)?;
+        }
+    }
+    Ok(target)
 }
 
 pub fn status(config: &RuntimeConfig) -> Vec<(String, String)> {
