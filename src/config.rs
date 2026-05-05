@@ -132,7 +132,6 @@ pub fn load_runtime_config(home: Option<PathBuf>) -> Result<RuntimeConfig> {
     apply_env_overrides(&mut file);
 
     validate_config(&file)?;
-
     Ok(RuntimeConfig {
         vault_path: home_path.join(DEFAULT_VAULT_DIR_NAME),
         home_path,

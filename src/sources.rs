@@ -6,8 +6,8 @@ use walkdir::WalkDir;
 use crate::{
     config::RuntimeConfig,
     error::{MemoraError, Result},
-    markdown::{render_markdown, strip_frontmatter},
-    util::{content_hash, now_rfc3339, require_file, slugify, unique_path},
+    markdown::{parse_markdown, render_markdown, strip_frontmatter},
+    util::{content_hash, now_rfc3339, parse_rfc3339, require_file, slugify, unique_path},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +108,7 @@ pub fn add_source(config: &RuntimeConfig, options: SourceAddOptions) -> Result<S
         risk_flags: Vec::new(),
         origin,
     };
+    validate_frontmatter(&frontmatter)?;
     let source_path = source_dir.join("source.md");
     fs::write(
         &source_path,
@@ -117,6 +118,7 @@ pub fn add_source(config: &RuntimeConfig, options: SourceAddOptions) -> Result<S
     let extract_path = if let Some(extract) = extract {
         let mut extract_frontmatter = frontmatter.clone();
         extract_frontmatter.kind = "extract".to_string();
+        validate_frontmatter(&extract_frontmatter)?;
         let path = source_dir.join("extract.md");
         fs::write(
             &path,
@@ -133,6 +135,57 @@ pub fn add_source(config: &RuntimeConfig, options: SourceAddOptions) -> Result<S
         extract_path,
         title,
     })
+}
+
+pub fn validate_all(config: &RuntimeConfig) -> Result<Vec<String>> {
+    let root = config.vault_path.join("Sources");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut issues = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let relative_path = path
+            .strip_prefix(&config.vault_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        let raw = match fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                issues.push(format!("{relative_path}: {error}"));
+                continue;
+            }
+        };
+        let frontmatter = match parse_markdown::<SourceFrontmatter>(&raw) {
+            Ok(parsed) => parsed.frontmatter,
+            Err(error) => {
+                issues.push(format!("{relative_path}: {error}"));
+                continue;
+            }
+        };
+        if let Err(error) = validate_frontmatter(&frontmatter) {
+            issues.push(format!("{relative_path}: {error}"));
+        }
+        if let Some(source_id) = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+        {
+            if frontmatter.source_id != source_id {
+                issues.push(format!(
+                    "{relative_path}: source_id must match parent directory"
+                ));
+            }
+        }
+    }
+    Ok(issues)
 }
 
 pub fn lookup_source(config: &RuntimeConfig, source_id: &str, budget: usize) -> Result<String> {
@@ -216,6 +269,71 @@ pub fn search_sources(
 fn new_source_id(title: &str) -> String {
     let date = now_rfc3339().chars().take(10).collect::<String>();
     format!("{date}_{}", slugify(title))
+}
+
+fn validate_frontmatter(frontmatter: &SourceFrontmatter) -> Result<()> {
+    if frontmatter.schema_version != 1 {
+        return Err(MemoraError::InvalidArgument(
+            "source schema_version must be 1".to_string(),
+        ));
+    }
+    if frontmatter.source_id.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "source.source_id must not be empty".to_string(),
+        ));
+    }
+    if !matches!(frontmatter.kind.as_str(), "source" | "extract") {
+        return Err(MemoraError::InvalidArgument(format!(
+            "unsupported source kind: {}",
+            frontmatter.kind
+        )));
+    }
+    if frontmatter.title.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "source.title must not be empty".to_string(),
+        ));
+    }
+    parse_rfc3339("source.captured_at", &frontmatter.captured_at)?;
+    if frontmatter.channel.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "source.channel must not be empty".to_string(),
+        ));
+    }
+    if !matches!(
+        frontmatter.source_quality.as_str(),
+        "user_provided" | "agent_extracted" | "generated" | "imported" | "unknown"
+    ) {
+        return Err(MemoraError::InvalidArgument(format!(
+            "unsupported source_quality: {}",
+            frontmatter.source_quality
+        )));
+    }
+    if !matches!(
+        frontmatter.sensitivity.as_str(),
+        "normal" | "private" | "secret"
+    ) {
+        return Err(MemoraError::InvalidArgument(format!(
+            "unsupported source sensitivity: {}",
+            frontmatter.sensitivity
+        )));
+    }
+    if let Some(url) = &frontmatter.url {
+        if url.trim().is_empty() {
+            return Err(MemoraError::InvalidArgument(
+                "source.url must not be empty when present".to_string(),
+            ));
+        }
+    }
+    if frontmatter
+        .risk_flags
+        .iter()
+        .any(|flag| flag.trim().is_empty())
+    {
+        return Err(MemoraError::InvalidArgument(
+            "source.risk_flags must not contain empty values".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn tokens(query: &str) -> Vec<String> {

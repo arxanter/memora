@@ -10,7 +10,7 @@ use crate::{
     config::RuntimeConfig,
     error::{MemoraError, Result},
     markdown::{parse_markdown, render_markdown},
-    util::{now_rfc3339, slugify},
+    util::{now_rfc3339, parse_rfc3339, slugify},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -191,7 +191,35 @@ pub fn synthesize(
 
 pub fn lint(config: &RuntimeConfig) -> Result<Vec<String>> {
     let mut issues = Vec::new();
-    for page in list_pages(config)? {
+    let root = config.vault_path.join("Wiki");
+    if !root.exists() {
+        return Ok(issues);
+    }
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if !path.is_file()
+            || !matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("md" | "markdown")
+            )
+        {
+            continue;
+        }
+        let page = match read_page_at(config, path.to_path_buf()) {
+            Ok(page) => page,
+            Err(error) => {
+                let relative_path = path
+                    .strip_prefix(&config.vault_path)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .to_string();
+                issues.push(format!("{relative_path}: {error}"));
+                continue;
+            }
+        };
         let page_type = page.frontmatter.page_type.as_deref().unwrap_or("concept");
         if matches!(page_type, "source" | "entity" | "concept" | "synthesis")
             && page.frontmatter.sources.is_empty()
@@ -245,6 +273,7 @@ fn read_page_at(config: &RuntimeConfig, path: PathBuf) -> Result<WikiPage> {
         .unwrap_or(&path)
         .to_string_lossy()
         .to_string();
+    validate_frontmatter(&parsed.frontmatter)?;
     Ok(WikiPage {
         path,
         relative_path,
@@ -259,6 +288,7 @@ fn write_page(
     frontmatter: WikiFrontmatter,
     body: String,
 ) -> Result<WikiPage> {
+    validate_frontmatter(&frontmatter)?;
     fs::create_dir_all(
         path.parent()
             .ok_or_else(|| MemoraError::Message("wiki path has no parent".to_string()))?,
@@ -321,6 +351,59 @@ fn first_paragraph(text: &str) -> Option<&str> {
     text.split("\n\n")
         .map(str::trim)
         .find(|part| !part.is_empty())
+}
+
+fn validate_frontmatter(frontmatter: &WikiFrontmatter) -> Result<()> {
+    if let Some(title) = &frontmatter.title {
+        if title.trim().is_empty() {
+            return Err(MemoraError::InvalidArgument(
+                "wiki.title must not be empty when present".to_string(),
+            ));
+        }
+    }
+    if let Some(page_type) = &frontmatter.page_type {
+        if !matches!(
+            page_type.as_str(),
+            "source" | "entity" | "concept" | "synthesis"
+        ) {
+            return Err(MemoraError::InvalidArgument(format!(
+                "unsupported wiki type: {page_type}"
+            )));
+        }
+    }
+    if let Some(last_updated) = &frontmatter.last_updated {
+        parse_rfc3339("wiki.last_updated", last_updated)?;
+    }
+    if frontmatter
+        .sources
+        .iter()
+        .chain(frontmatter.entities.iter())
+        .chain(frontmatter.concepts.iter())
+        .any(|value| value.trim().is_empty())
+    {
+        return Err(MemoraError::InvalidArgument(
+            "wiki arrays must not contain empty values".to_string(),
+        ));
+    }
+    if matches!(frontmatter.page_type.as_deref(), Some("source")) {
+        if frontmatter
+            .source_id
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        {
+            return Err(MemoraError::InvalidArgument(
+                "wiki source pages require source_id".to_string(),
+            ));
+        }
+        if frontmatter.sources.is_empty() {
+            return Err(MemoraError::InvalidArgument(
+                "wiki source pages require sources".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn tokens(query: &str) -> Vec<String> {

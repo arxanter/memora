@@ -361,6 +361,8 @@ struct SearchCommand {
     limit: Option<usize>,
     #[arg(long, default_value = "auto")]
     mode: String,
+    #[arg(long)]
+    include_related: bool,
 }
 
 #[derive(Debug, Args)]
@@ -376,6 +378,8 @@ struct ProbeCommand {
     load: bool,
     #[arg(long, default_value = "auto")]
     mode: String,
+    #[arg(long)]
+    include_related: bool,
 }
 
 #[derive(Debug, Args)]
@@ -391,6 +395,8 @@ struct ContextCommand {
     load: bool,
     #[arg(long, default_value = "auto")]
     mode: String,
+    #[arg(long)]
+    include_related: bool,
 }
 
 #[derive(Debug, Args)]
@@ -457,7 +463,10 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::AgentAliases { command } => dispatch_agent_aliases(cli.home, command),
         Commands::Doctor => {
             let config = load_runtime_config(cli.home)?;
-            let issues = crate::memory::validate_all(&config)?;
+            let mut issues = crate::memory::validate_all(&config)?;
+            issues.extend(crate::raw::validate_all(&config)?);
+            issues.extend(crate::sources::validate_all(&config)?);
+            issues.extend(crate::wiki::lint(&config)?);
             if issues.is_empty() {
                 println!("doctor: ok");
             } else {
@@ -549,6 +558,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     scope: command.scope,
                     limit: command.limit.unwrap_or(10),
                     mode: crate::indexer::SearchMode::parse(&command.mode)?,
+                    include_related: command.include_related,
                 },
             )?;
             print_search_results(results);
@@ -574,6 +584,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                         scope: None,
                         limit: 5,
                         mode: crate::indexer::SearchMode::parse(&command.mode)?,
+                        include_related: command.include_related,
                     },
                 )
                 .unwrap_or_default();
@@ -605,6 +616,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     scope: None,
                     limit: 5,
                     mode: crate::indexer::SearchMode::parse(&command.mode)?,
+                    include_related: command.include_related,
                 },
             )
             .unwrap_or_default();
@@ -1033,9 +1045,13 @@ fn print_search_results(results: Vec<crate::indexer::SearchResult>) {
         return;
     }
     for result in results {
+        let related = match (&result.related_from, &result.relation) {
+            (Some(from), Some(relation)) => format!(" related_to={from} relation={relation}"),
+            _ => String::new(),
+        };
         println!(
-            "{} score={:.3} type={} status={} path={}",
-            result.id, result.score, result.memory_type, result.status, result.path
+            "{} score={:.3} type={} status={} path={}{}",
+            result.id, result.score, result.memory_type, result.status, result.path, related
         );
         if !result.snippet.trim().is_empty() {
             println!("  {}", result.snippet.replace('\n', " "));

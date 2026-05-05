@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -30,6 +30,7 @@ pub struct SearchFilters {
     pub scope: Option<String>,
     pub limit: usize,
     pub mode: SearchMode,
+    pub include_related: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,8 @@ pub struct SearchResult {
     pub status: String,
     pub score: f64,
     pub snippet: String,
+    pub related_from: Option<String>,
+    pub relation: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +134,8 @@ pub fn search(
     ensure_schema(&connection)?;
     let effective_mode = filters.mode;
     if effective_mode == SearchMode::Text {
-        return text_search(&connection, query, &filters);
+        let results = text_search(&connection, query, &filters)?;
+        return finalize_results(&connection, results, &filters);
     }
     let provider = match provider_from_config(&config.file.semantic) {
         Ok(provider) => provider,
@@ -142,7 +146,8 @@ pub fn search(
         Err(error) => return Err(error),
     };
     if effective_mode == SearchMode::Vector {
-        return vector_search(&connection, query, &filters, provider);
+        let results = vector_search(&connection, query, &filters, provider)?;
+        return finalize_results(&connection, results, &filters);
     }
 
     let mut merged: HashMap<String, SearchResult> = HashMap::new();
@@ -160,7 +165,17 @@ pub fn search(
             merged.insert(result.id.clone(), result);
         }
     }
-    let mut results: Vec<_> = merged.into_values().collect();
+    finalize_results(&connection, merged.into_values().collect(), &filters)
+}
+
+fn finalize_results(
+    connection: &Connection,
+    mut results: Vec<SearchResult>,
+    filters: &SearchFilters,
+) -> Result<Vec<SearchResult>> {
+    if filters.include_related {
+        expand_related(connection, &mut results, filters)?;
+    }
     results.sort_by(|left, right| {
         right
             .score
@@ -168,6 +183,8 @@ pub fn search(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| left.id.cmp(&right.id))
     });
+    let mut seen = HashSet::new();
+    results.retain(|result| seen.insert(result.id.clone()));
     results.truncate(filters.limit.max(1));
     Ok(results)
 }
@@ -181,7 +198,7 @@ fn text_search(
     let limit = filters.limit.max(1) as i64;
     let mut sql = String::from(
         r#"
-        SELECT d.id, d.path, m.type, m.status, bm25(chunk_fts) AS rank,
+        SELECT d.id, d.path, m.type, m.status, m.confidence, bm25(chunk_fts) AS rank,
                snippet(chunk_fts, 3, '[', ']', '...', 12) AS snippet
         FROM chunk_fts
         JOIN documents d ON d.id = chunk_fts.document_id
@@ -218,14 +235,20 @@ fn text_search(
 
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map(values.as_slice(), |row| {
-        let rank: f64 = row.get(4)?;
+        let memory_type: String = row.get(2)?;
+        let status: String = row.get(3)?;
+        let confidence: Option<f64> = row.get(4)?;
+        let rank: f64 = row.get(5)?;
+        let base_score = 10.0 / (1.0 + rank.abs());
         Ok(SearchResult {
             id: row.get(0)?,
             path: row.get(1)?,
-            memory_type: row.get(2)?,
-            status: row.get(3)?,
-            score: 10.0 / (1.0 + rank.abs()),
-            snippet: row.get(5)?,
+            memory_type: memory_type.clone(),
+            status: status.clone(),
+            score: ranked_score(base_score, &memory_type, &status, confidence),
+            snippet: row.get(6)?,
+            related_from: None,
+            relation: None,
         })
     })?;
 
@@ -445,7 +468,7 @@ fn vector_search(
     let query_vector = provider.embed(&[format!("query: {query}")])?.remove(0);
     let mut sql = String::from(
         r#"
-        SELECT c.id, c.text, c.content_hash, d.id, d.path, m.type, m.status
+        SELECT c.id, c.text, c.content_hash, d.id, d.path, m.type, m.status, m.confidence
         FROM chunks c
         JOIN documents d ON d.id = c.document_id
         JOIN memories m ON m.id = d.id
@@ -490,12 +513,13 @@ fn vector_search(
             row.get::<_, String>(4)?,
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
+            row.get::<_, Option<f64>>(7)?,
         ))
     })?;
 
     let mut results = Vec::new();
     for row in rows {
-        let (chunk_id, text, chunk_hash, id, path, memory_type, status) = row?;
+        let (chunk_id, text, chunk_hash, id, path, memory_type, status, confidence) = row?;
         let vector =
             embedding_for_chunk(connection, &mut *provider, &chunk_id, &text, &chunk_hash)?;
         let similarity = cosine_similarity(&query_vector, &vector);
@@ -505,10 +529,12 @@ fn vector_search(
         results.push(SearchResult {
             id,
             path,
-            memory_type,
-            status,
-            score: 10.0 * similarity,
+            memory_type: memory_type.clone(),
+            status: status.clone(),
+            score: ranked_score(10.0 * similarity, &memory_type, &status, confidence),
             snippet: vector_snippet(&text, query),
+            related_from: None,
+            relation: None,
         });
     }
     results.sort_by(|left, right| {
@@ -520,6 +546,182 @@ fn vector_search(
     });
     results.truncate(filters.limit.max(1));
     Ok(results)
+}
+
+fn expand_related(
+    connection: &Connection,
+    results: &mut Vec<SearchResult>,
+    filters: &SearchFilters,
+) -> Result<()> {
+    let mut seen: HashSet<String> = results.iter().map(|result| result.id.clone()).collect();
+    let primary_results = results.clone();
+    for primary in primary_results.iter().take(filters.limit.max(1)) {
+        let links = related_links(connection, &primary.id)?;
+        for (related_id, relation, relation_confidence) in links {
+            if seen.contains(&related_id) {
+                continue;
+            }
+            if let Some((id, path, memory_type, status, project, scope, confidence, text)) =
+                related_document(connection, &related_id)?
+            {
+                if !matches_filters(
+                    filters,
+                    &memory_type,
+                    &status,
+                    project.as_deref(),
+                    scope.as_str(),
+                ) {
+                    continue;
+                }
+                let base = primary.score * related_weight(&relation, relation_confidence);
+                results.push(SearchResult {
+                    id: id.clone(),
+                    path,
+                    memory_type: memory_type.clone(),
+                    status: status.clone(),
+                    score: ranked_score(base, &memory_type, &status, confidence),
+                    snippet: text.chars().take(180).collect(),
+                    related_from: Some(primary.id.clone()),
+                    relation: Some(relation),
+                });
+                seen.insert(id);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn related_links(connection: &Connection, id: &str) -> Result<Vec<(String, String, Option<f64>)>> {
+    let mut statement = connection.prepare(
+        r#"
+        SELECT to_id, relation, confidence FROM links WHERE from_id = ?1
+        UNION ALL
+        SELECT from_id, relation, confidence FROM links WHERE to_id = ?1
+        "#,
+    )?;
+    let rows = statement.query_map(params![id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+        ))
+    })?;
+
+    let mut links = Vec::new();
+    for row in rows {
+        links.push(row?);
+    }
+    Ok(links)
+}
+
+type RelatedDocument = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<f64>,
+    String,
+);
+
+fn related_document(connection: &Connection, id: &str) -> Result<Option<RelatedDocument>> {
+    connection
+        .query_row(
+            r#"
+            SELECT d.id, d.path, m.type, m.status, m.project, m.scope, m.confidence, c.text
+            FROM documents d
+            JOIN memories m ON m.id = d.id
+            LEFT JOIN chunks c ON c.document_id = d.id
+            WHERE d.id = ?1
+            ORDER BY c.id ASC
+            LIMIT 1
+            "#,
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                ))
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn matches_filters(
+    filters: &SearchFilters,
+    memory_type: &str,
+    status: &str,
+    project: Option<&str>,
+    scope: &str,
+) -> bool {
+    if let Some(expected) = &filters.memory_type {
+        if memory_type != expected {
+            return false;
+        }
+    }
+    if let Some(expected) = &filters.status {
+        if status != expected {
+            return false;
+        }
+    } else if !matches!(status, "active" | "pending" | "stale") {
+        return false;
+    }
+    if let Some(expected) = &filters.project {
+        if project != Some(expected.as_str()) {
+            return false;
+        }
+    }
+    if let Some(expected) = &filters.scope {
+        if scope != expected {
+            return false;
+        }
+    }
+    true
+}
+
+fn ranked_score(base_score: f64, memory_type: &str, status: &str, confidence: Option<f64>) -> f64 {
+    let type_boost = match memory_type {
+        "decision" => 1.20,
+        "preference" => 1.15,
+        "task" => 1.10,
+        "project_context" => 1.05,
+        "fact" => 1.0,
+        _ => 0.95,
+    };
+    let status_boost = match status {
+        "active" => 1.0,
+        "pending" => 0.90,
+        "stale" => 0.70,
+        "superseded" => 0.35,
+        "rejected" => 0.05,
+        _ => 0.80,
+    };
+    let confidence_boost = confidence
+        .map(|value| 0.75 + value.clamp(0.0, 1.0) * 0.5)
+        .unwrap_or(1.0);
+    base_score * type_boost * status_boost * confidence_boost
+}
+
+fn related_weight(relation: &str, confidence: Option<f64>) -> f64 {
+    let relation_weight = match relation {
+        "supports" => 0.55,
+        "related_to" => 0.45,
+        "supersedes" => 0.35,
+        "contradicts" => 0.30,
+        _ => 0.40,
+    };
+    let confidence_weight = confidence
+        .map(|value| 0.70 + value.clamp(0.0, 1.0) * 0.30)
+        .unwrap_or(0.85);
+    relation_weight * confidence_weight
 }
 
 fn embedding_for_chunk(

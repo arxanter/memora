@@ -34,6 +34,8 @@ semantic:
 
 `memora search|probe|context --mode auto` uses hybrid search when the provider is available and falls back to text search for automatic recall if semantic initialization fails. Explicit `--mode vector` and `--mode hybrid` require a working provider.
 
+Use `--include-related` with `search`, `probe`, or `context` to expand direct matches through indexed memory relations. Ranking combines text/vector score with boosts for memory type, review status, confidence, and relation strength.
+
 Environment overrides:
 
 ```bash

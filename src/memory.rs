@@ -7,7 +7,7 @@ use crate::{
     config::RuntimeConfig,
     error::{MemoraError, Result},
     markdown::{parse_markdown, render_markdown},
-    util::{now_rfc3339, short_unique_suffix, slugify},
+    util::{now_rfc3339, parse_rfc3339, short_unique_suffix, slugify},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,6 +328,34 @@ fn validate_frontmatter(frontmatter: &MemoryFrontmatter) -> Result<()> {
     validate_memory_type(&frontmatter.memory_type)?;
     validate_status(&frontmatter.status)?;
     validate_scope(&frontmatter.scope)?;
+    let created_at = parse_rfc3339("memory.created_at", &frontmatter.created_at)?;
+    let updated_at = parse_rfc3339("memory.updated_at", &frontmatter.updated_at)?;
+    if updated_at < created_at {
+        return Err(MemoraError::InvalidArgument(
+            "memory.updated_at must be greater than or equal to created_at".to_string(),
+        ));
+    }
+    if let Some(confidence) = frontmatter.confidence {
+        if !(0.0..=1.0).contains(&confidence) {
+            return Err(MemoraError::InvalidArgument(
+                "memory.confidence must be between 0 and 1".to_string(),
+            ));
+        }
+    }
+    for relation in &frontmatter.relations {
+        if relation.relation_type.trim().is_empty() || relation.target.trim().is_empty() {
+            return Err(MemoraError::InvalidArgument(
+                "memory relations require type and target".to_string(),
+            ));
+        }
+        if let Some(confidence) = relation.confidence {
+            if !(0.0..=1.0).contains(&confidence) {
+                return Err(MemoraError::InvalidArgument(
+                    "memory relation confidence must be between 0 and 1".to_string(),
+                ));
+            }
+        }
+    }
     if frontmatter.scope == "project" && frontmatter.project.as_deref().unwrap_or("").is_empty() {
         return Err(MemoraError::InvalidArgument(
             "project-scoped memory must include project".to_string(),

@@ -61,6 +61,91 @@ fn aliases_can_be_reassigned() {
 }
 
 #[test]
+fn doctor_reports_raw_source_and_wiki_schema_issues() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let raw_dir = home.join("vault/raw/inbox/text");
+    fs::create_dir_all(&raw_dir).expect("raw dir");
+    fs::write(raw_dir.join("bad.md"), "raw body").expect("raw body");
+    fs::write(
+        raw_dir.join("bad.md.meta.yaml"),
+        r#"raw_id: raw_bad
+kind: text
+format: markdown
+title: Bad Raw
+tags: []
+sensitivity: public
+captured_at: 2026-05-05T10:00:00Z
+original_path: /tmp/bad.md
+file_name: bad.md
+size_bytes: 8
+content_hash: abc123
+"#,
+    )
+    .expect("raw metadata");
+
+    let source_dir = home.join("vault/Sources/src_bad");
+    fs::create_dir_all(&source_dir).expect("source dir");
+    fs::write(
+        source_dir.join("source.md"),
+        r#"---
+schema_version: 1
+source_id: src_bad
+kind: source
+title: Bad Source
+captured_at: 2026-05-05T10:00:00Z
+channel: file
+source_quality: guessed
+sensitivity: normal
+tags: []
+risk_flags: []
+origin: {}
+---
+
+source body
+"#,
+    )
+    .expect("source file");
+
+    let wiki_dir = home.join("vault/Wiki/concepts");
+    fs::create_dir_all(&wiki_dir).expect("wiki dir");
+    fs::write(
+        wiki_dir.join("bad.md"),
+        r#"---
+title: Bad Wiki
+type: note
+sources:
+  - Sources/src_bad/source.md
+last_updated: 2026-05-05T10:00:00Z
+---
+
+wiki body
+"#,
+    )
+    .expect("wiki file");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(contains("unsupported raw sensitivity: public"))
+        .stdout(contains("unsupported source_quality: guessed"))
+        .stdout(contains("unsupported wiki type: note"));
+}
+
+#[test]
 fn remember_reindex_and_search_memory() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
@@ -108,6 +193,90 @@ fn remember_reindex_and_search_memory() {
         .success()
         .stdout(contains("decision"))
         .stdout(contains("SQLite"));
+}
+
+#[test]
+fn search_can_include_related_memories() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let decisions = home.join("vault/Memories/decisions");
+    fs::create_dir_all(&decisions).expect("decisions dir");
+    fs::write(
+        decisions.join("primary.md"),
+        r#"---
+schema_version: 1
+id: mem_primary
+type: decision
+scope: project
+project: memory-project
+status: active
+confidence: 0.90
+created_at: 2026-05-05T10:00:00Z
+updated_at: 2026-05-05T10:00:00Z
+relations:
+  - type: supports
+    target: mem_related
+tags: []
+---
+
+Blue hummingbird is the direct recall anchor.
+"#,
+    )
+    .expect("primary memory");
+    fs::write(
+        decisions.join("related.md"),
+        r#"---
+schema_version: 1
+id: mem_related
+type: decision
+scope: project
+project: memory-project
+status: active
+confidence: 0.80
+created_at: 2026-05-05T10:01:00Z
+updated_at: 2026-05-05T10:01:00Z
+tags: []
+---
+
+Related graph evidence should be returned even without direct keyword overlap.
+"#,
+    )
+    .expect("related memory");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(contains("documents_seen: 2"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "search",
+            "hummingbird",
+            "--mode",
+            "text",
+            "--include-related",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("mem_primary"))
+        .stdout(contains("mem_related"))
+        .stdout(contains("relation=supports"));
 }
 
 #[test]

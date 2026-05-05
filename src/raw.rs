@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::RuntimeConfig,
     error::{MemoraError, Result},
-    util::{file_hash, now_rfc3339, slugify, unique_path},
+    util::{file_hash, now_rfc3339, parse_rfc3339, slugify, unique_path},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +56,9 @@ pub struct RawEntry {
 pub fn add_raw(config: &RuntimeConfig, options: RawAddOptions) -> Result<RawEntry> {
     validate_kind(&options.kind)?;
     validate_format(&options.format)?;
+    if let Some(sensitivity) = &options.sensitivity {
+        validate_sensitivity(sensitivity)?;
+    }
     if !options.path.is_file() {
         return Err(MemoraError::NotFound(options.path.display().to_string()));
     }
@@ -88,6 +91,7 @@ pub fn add_raw(config: &RuntimeConfig, options: RawAddOptions) -> Result<RawEntr
         previous_relative_path: None,
         source_id: None,
     };
+    validate_metadata(&metadata)?;
 
     if !options.dry_run {
         fs::create_dir_all(
@@ -104,6 +108,34 @@ pub fn add_raw(config: &RuntimeConfig, options: RawAddOptions) -> Result<RawEntr
         path: target_path,
         metadata: Some(metadata),
     })
+}
+
+pub fn validate_all(config: &RuntimeConfig) -> Result<Vec<String>> {
+    let root = config.vault_path.join("raw");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut issues = Vec::new();
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if !path.is_file() || is_metadata_path(path) {
+            continue;
+        }
+        let relative_path = relative(config, path);
+        match read_metadata(path) {
+            Ok(Some(metadata)) => {
+                if let Err(error) = validate_metadata(&metadata) {
+                    issues.push(format!("{relative_path}: {error}"));
+                }
+            }
+            Ok(None) => issues.push(format!("{relative_path}: missing raw metadata")),
+            Err(error) => issues.push(format!("{relative_path}: {error}")),
+        }
+    }
+    Ok(issues)
 }
 
 pub fn list_raw(config: &RuntimeConfig, path: Option<PathBuf>) -> Result<Vec<RawEntry>> {
@@ -196,6 +228,7 @@ pub fn mark_processed(
     metadata.previous_relative_path = Some(previous_relative);
     metadata.source_id = source_id;
     metadata.content_hash = file_hash(&raw_path)?;
+    validate_metadata(&metadata)?;
 
     if !dry_run {
         fs::create_dir_all(processed_path.parent().ok_or_else(|| {
@@ -239,6 +272,70 @@ fn validate_format(format: &str) -> Result<()> {
     }
 }
 
+fn validate_sensitivity(sensitivity: &str) -> Result<()> {
+    if matches!(sensitivity, "normal" | "private" | "secret") {
+        Ok(())
+    } else {
+        Err(MemoraError::InvalidArgument(format!(
+            "unsupported raw sensitivity: {sensitivity}"
+        )))
+    }
+}
+
+fn validate_raw_status(status: &str) -> Result<()> {
+    if matches!(status, "processed") {
+        Ok(())
+    } else {
+        Err(MemoraError::InvalidArgument(format!(
+            "unsupported raw status: {status}"
+        )))
+    }
+}
+
+fn validate_metadata(metadata: &RawMetadata) -> Result<()> {
+    if metadata.raw_id.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "raw.raw_id must not be empty".to_string(),
+        ));
+    }
+    validate_kind(&metadata.kind)?;
+    validate_format(&metadata.format)?;
+    validate_sensitivity(&metadata.sensitivity)?;
+    if metadata.title.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "raw.title must not be empty".to_string(),
+        ));
+    }
+    if metadata.file_name.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "raw.file_name must not be empty".to_string(),
+        ));
+    }
+    if metadata.content_hash.trim().is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "raw.content_hash must not be empty".to_string(),
+        ));
+    }
+    let captured_at = parse_rfc3339("raw.captured_at", &metadata.captured_at)?;
+    if let Some(status) = &metadata.status {
+        validate_raw_status(status)?;
+        if metadata.processed_at.is_none() {
+            return Err(MemoraError::InvalidArgument(
+                "raw.processed_at is required when status is processed".to_string(),
+            ));
+        }
+    }
+    if let Some(processed_at) = &metadata.processed_at {
+        let processed_at = parse_rfc3339("raw.processed_at", processed_at)?;
+        if processed_at < captured_at {
+            return Err(MemoraError::InvalidArgument(
+                "raw.processed_at must be greater than or equal to captured_at".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn resolve_raw_path(config: &RuntimeConfig, path: PathBuf) -> Result<PathBuf> {
     let candidate = if path.is_absolute() {
         path
@@ -253,6 +350,7 @@ fn resolve_raw_path(config: &RuntimeConfig, path: PathBuf) -> Result<PathBuf> {
 }
 
 fn write_metadata(path: &Path, metadata: &RawMetadata) -> Result<()> {
+    validate_metadata(metadata)?;
     let raw = serde_yaml::to_string(metadata)?;
     fs::write(metadata_path(path), raw)?;
     Ok(())
@@ -261,16 +359,9 @@ fn write_metadata(path: &Path, metadata: &RawMetadata) -> Result<()> {
 fn read_metadata(path: &Path) -> Result<Option<RawMetadata>> {
     let yaml_path = metadata_path(path);
     if yaml_path.is_file() {
-        return Ok(Some(serde_yaml::from_str(&fs::read_to_string(yaml_path)?)?));
-    }
-    let json_path = path.with_file_name(format!(
-        "{}.meta.json",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("raw")
-    ));
-    if json_path.is_file() {
-        return Ok(Some(serde_json::from_str(&fs::read_to_string(json_path)?)?));
+        let metadata = serde_yaml::from_str(&fs::read_to_string(yaml_path)?)?;
+        validate_metadata(&metadata)?;
+        return Ok(Some(metadata));
     }
     Ok(None)
 }
@@ -287,7 +378,7 @@ fn metadata_path(path: &Path) -> PathBuf {
 fn is_metadata_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
-        .map(|name| name.ends_with(".meta.yaml") || name.ends_with(".meta.json"))
+        .map(|name| name.ends_with(".meta.yaml"))
         .unwrap_or(false)
 }
 

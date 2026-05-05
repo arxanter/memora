@@ -15,6 +15,11 @@ pub fn now_rfc3339() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
+pub fn parse_rfc3339(field: &str, value: &str) -> Result<OffsetDateTime> {
+    OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|_| MemoraError::InvalidArgument(format!("{field} must be an RFC3339 timestamp")))
+}
+
 pub fn content_hash(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
