@@ -158,6 +158,7 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Retrieval and context",
         (
+            ("probe <query>", "Check all relevant memory surfaces in one agent call."),
             ("build-context <task>", "Apply recall policy for agents."),
             ("context <query>", "Route query across Memories, Wiki, and Sources."),
             ("search <query>", "Search ranked memories with snippets."),
@@ -1430,6 +1431,84 @@ def context_command(
         )
 
     _print_agent_context(payload)
+
+
+@app.command("probe")
+def probe_command(
+    query: str = typer.Argument(..., help="Agent query to check against memory surfaces."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    project: Optional[str] = typer.Option(None, "--project", help="Project filter."),
+    intent: str = typer.Option(
+        "auto", "--intent", help="Probe intent: auto, memory, wiki, evidence, or mixed."
+    ),
+    variant: list[str] = typer.Option(
+        [],
+        "--variant",
+        help="Additional query construction to check; may be repeated or comma-separated.",
+    ),
+    task_class: str = typer.Option(
+        "planning", "--task-class", help="Recall policy class: default, coding, planning, or review."
+    ),
+    budget: int = typer.Option(1200, "--budget", min=1, help="Approximate output budget."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Maximum candidates per surface."),
+    load: bool = typer.Option(False, "--load", help="Load selected snippets within budget."),
+    semantic: Optional[bool] = typer.Option(
+        None,
+        "--semantic/--no-semantic",
+        help="Override semantic search config for memory probes.",
+    ),
+    mode: str = typer.Option("auto", "--mode", help="Search mode: auto, text, vector, or hybrid."),
+    refresh: Optional[bool] = typer.Option(
+        None,
+        "--refresh/--no-refresh",
+        help="Refresh the memory index before probing.",
+    ),
+) -> None:
+    """Probe whether a query has relevant Memora context in one agent-facing call."""
+
+    try:
+        config = load_config(vault)
+        selected_task_class, task_policy = _resolve_task_policy(config, task_class)
+        selected_intent, route_reason = _context_intent(query, intent)
+        freshness = _maybe_refresh_index(config, before="search", refresh=refresh)
+        if not config.agent_policy.enabled or not config.agent_policy.auto_recall:
+            policy = {
+                "should_recall": False,
+                "query": query,
+                "confidence": 0.0,
+                "trigger_count": 0,
+                "triggers": [],
+                "reason": "agent memory is disabled"
+                if not config.agent_policy.enabled
+                else "agent auto recall is disabled",
+            }
+        else:
+            policy = should_recall(query, aliases=config.agent_policy.aliases).to_dict()
+        payload = _probe_payload(
+            config,
+            query,
+            project=project,
+            intent=selected_intent,
+            requested_intent=intent,
+            route_reason=route_reason,
+            variants=variant,
+            task_class=selected_task_class,
+            recall_policy=task_policy.model_dump(mode="json"),
+            policy=policy,
+            budget=budget,
+            limit=limit,
+            load=load,
+            semantic=semantic,
+            mode=mode,
+        )
+        payload["freshness"] = freshness
+    except Exception as exc:
+        _handle_error(
+            exc,
+            code="index_missing" if isinstance(exc, RetrievalIndexError) else "probe_failed",
+        )
+
+    _print_agent_probe(payload)
 
 
 @app.command()
@@ -2956,6 +3035,225 @@ def _context_payload(
     return payload
 
 
+def _probe_payload(
+    config: Any,
+    query: str,
+    *,
+    project: Optional[str],
+    intent: str,
+    requested_intent: str,
+    route_reason: str,
+    variants: list[str],
+    task_class: str,
+    recall_policy: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    budget: int,
+    limit: int,
+    load: bool,
+    semantic: Optional[bool],
+    mode: str,
+) -> dict[str, Any]:
+    selected_variants = _probe_variants(query, variants)
+    budgets = _context_budgets(intent, budget)
+    surfaces = _context_surfaces(intent)
+    results: dict[str, list[dict[str, Any]]] = {surface: [] for surface in surfaces}
+    seen: dict[str, set[str]] = {surface: set() for surface in surfaces}
+    variant_reports: list[dict[str, Any]] = []
+    semantic_status = _probe_semantic_not_used_status(config, semantic=semantic, mode=mode)
+
+    for selected_query in selected_variants:
+        report: dict[str, Any] = {"query": selected_query, "surfaces": {}}
+        if "memory" in surfaces:
+            filters = SearchFilters(project=project)
+            memory = search_memory(
+                config,
+                selected_query,
+                filters=SearchFilters.from_mapping(filters.to_dict()),
+                limit=limit,
+                semantic=semantic,
+                mode=mode,
+            ).to_dict()
+            semantic_status = _probe_semantic_status_from_search(memory)
+            candidates = _budget_results(
+                memory.get("results", ()),
+                budget=budgets.get("memory", 0),
+                load=load,
+                surface="memory",
+            )
+            added = _merge_probe_candidates(
+                results["memory"],
+                candidates,
+                seen=seen["memory"],
+                surface="memory",
+                limit=limit,
+                matched_variant=selected_query,
+            )
+            report["surfaces"]["memory"] = {
+                "result_count": int(memory.get("result_count") or 0),
+                "added_count": added,
+                "mode": memory.get("mode"),
+                "semantic": memory.get("semantic"),
+            }
+        if "wiki" in surfaces:
+            wiki = wiki_search(config, selected_query, limit=limit)
+            candidates = _budget_results(
+                wiki.get("results", ()),
+                budget=budgets.get("wiki", 0),
+                load=load,
+                surface="wiki",
+            )
+            added = _merge_probe_candidates(
+                results["wiki"],
+                candidates,
+                seen=seen["wiki"],
+                surface="wiki",
+                limit=limit,
+                matched_variant=selected_query,
+            )
+            report["surfaces"]["wiki"] = {
+                "result_count": int(wiki.get("result_count") or len(wiki.get("results", ()))),
+                "added_count": added,
+            }
+        if "sources" in surfaces:
+            source_results = search_source_evidence(config, selected_query, limit=limit)
+            candidates = _budget_results(
+                source_results,
+                budget=budgets.get("sources", 0),
+                load=load,
+                surface="sources",
+            )
+            added = _merge_probe_candidates(
+                results["sources"],
+                candidates,
+                seen=seen["sources"],
+                surface="sources",
+                limit=limit,
+                matched_variant=selected_query,
+            )
+            report["surfaces"]["sources"] = {
+                "result_count": len(source_results),
+                "added_count": added,
+            }
+        variant_reports.append(report)
+
+    result_count = sum(len(items) for items in results.values())
+    memory_count = len(results.get("memory", ()))
+    memory_needed = memory_count > 0
+    return {
+        "ok": True,
+        "implemented": True,
+        "command": "probe",
+        "query": query,
+        "variants": selected_variants,
+        "requested_intent": requested_intent,
+        "route": intent,
+        "route_reason": route_reason,
+        "task_class": task_class,
+        "recall_policy": dict(recall_policy),
+        "policy": dict(policy),
+        "budget": budget,
+        "budgets": budgets,
+        "load": load,
+        "semantic": semantic_status,
+        "results": results,
+        "variant_reports": variant_reports,
+        "result_count": result_count,
+        "memory_result_count": memory_count,
+        "has_context": result_count > 0,
+        "memory_needed": memory_needed,
+        "reason": _probe_decision_reason(policy, memory_count=memory_count, result_count=result_count),
+    }
+
+
+def _probe_variants(query: str, variants: list[str]) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for raw in (query, *variants):
+        for part in str(raw).split(","):
+            candidate = " ".join(part.split())
+            key = candidate.casefold()
+            if not candidate or key in seen:
+                continue
+            seen.add(key)
+            selected.append(candidate)
+    return selected
+
+
+def _merge_probe_candidates(
+    target: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    *,
+    seen: set[str],
+    surface: str,
+    limit: int,
+    matched_variant: str,
+) -> int:
+    added = 0
+    for candidate in candidates:
+        if len(target) >= limit:
+            break
+        key = _probe_candidate_key(surface, candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        enriched = dict(candidate)
+        enriched["matched_variant"] = matched_variant
+        target.append(enriched)
+        added += 1
+    return added
+
+
+def _probe_candidate_key(surface: str, item: Mapping[str, Any]) -> str:
+    if surface == "memory":
+        return str(item.get("id") or item.get("path") or item.get("snippet") or "")
+    if surface == "wiki":
+        return str(item.get("path") or item.get("id") or item.get("title") or "")
+    return str(item.get("id") or item.get("path") or item.get("title") or "")
+
+
+def _probe_semantic_status_from_search(payload: Mapping[str, Any]) -> dict[str, Any]:
+    trace = payload.get("trace") if isinstance(payload.get("trace"), Mapping) else {}
+    trace_semantic = trace.get("semantic") if isinstance(trace.get("semantic"), Mapping) else {}
+    semantic_payload = payload.get("semantic") if isinstance(payload.get("semantic"), Mapping) else {}
+    return {
+        "status": trace_semantic.get("status") or "not_used",
+        "requested_mode": payload.get("requested_mode") or "auto",
+        "mode": payload.get("mode") or "text",
+        "enabled": bool(semantic_payload.get("enabled")),
+        "provider": semantic_payload.get("provider"),
+        "model": semantic_payload.get("model"),
+    }
+
+
+def _probe_semantic_not_used_status(
+    config: Any, *, semantic: Optional[bool], mode: str
+) -> dict[str, Any]:
+    if semantic is True:
+        requested_mode = "semantic:true"
+    elif semantic is False:
+        requested_mode = "semantic:false"
+    else:
+        requested_mode = mode
+    return {
+        "status": "not_used",
+        "requested_mode": requested_mode,
+        "mode": "not_used",
+        "enabled": False,
+        "provider": getattr(config.semantic, "provider", None),
+        "model": getattr(config.semantic, "model", None),
+    }
+
+
+def _probe_decision_reason(
+    policy: Mapping[str, Any], *, memory_count: int, result_count: int
+) -> str:
+    if memory_count:
+        return "policy_and_memory_candidates" if policy.get("should_recall") else "memory_candidates"
+    if result_count:
+        return "context_candidates"
+    return "no_candidates"
+
+
 def _context_surfaces(intent: str) -> tuple[str, ...]:
     if intent == "memory":
         return ("memory",)
@@ -3083,6 +3381,44 @@ def _print_agent_context(payload: Mapping[str, Any]) -> None:
             label = str(item.get("id") or item.get("path") or item.get("title") or "-")
             console.print(f"[{marker}] {label}", markup=False)
             console.print(f"Summary: {_agent_one_line(item.get('snippet'))}", markup=False)
+            if item.get("expand_command"):
+                console.print(f"Expand: {item['expand_command']}", markup=False)
+
+
+def _print_agent_probe(payload: Mapping[str, Any]) -> None:
+    console.print(f"has_context: {str(bool(payload.get('has_context'))).lower()}", markup=False)
+    console.print(f"memory_needed: {str(bool(payload.get('memory_needed'))).lower()}", markup=False)
+    console.print(f"reason: {payload.get('reason')}", markup=False)
+    console.print(f"route: {payload.get('route')}", markup=False)
+    console.print(f"query: {payload.get('query')}", markup=False)
+    variants = [str(item) for item in payload.get("variants", ()) if str(item)]
+    if variants:
+        console.print(f"variants: {' | '.join(variants)}", markup=False)
+    semantic = payload.get("semantic") if isinstance(payload.get("semantic"), Mapping) else {}
+    console.print(
+        "semantic: "
+        f"status={semantic.get('status') or 'not_used'} "
+        f"mode={semantic.get('mode') or '-'} "
+        f"provider={semantic.get('provider') or '-'} "
+        f"model={semantic.get('model') or '-'}",
+        markup=False,
+    )
+
+    results = payload.get("results") if isinstance(payload.get("results"), Mapping) else {}
+    if not results or not payload.get("has_context"):
+        console.print("Context: no candidates found", markup=False)
+        return
+    for surface, items in results.items():
+        selected = [item for item in items if isinstance(item, Mapping)]
+        console.print("", markup=False)
+        console.print(f"{str(surface).title()}: {len(selected)} candidate(s)", markup=False)
+        for position, item in enumerate(selected, start=1):
+            marker = f"{str(surface)[:1].upper()}{position}"
+            label = str(item.get("id") or item.get("path") or item.get("title") or "-")
+            console.print(f"[{marker}] {label}", markup=False)
+            console.print(f"Summary: {_agent_one_line(item.get('snippet'))}", markup=False)
+            if item.get("matched_variant"):
+                console.print(f"Matched: {item['matched_variant']}", markup=False)
             if item.get("expand_command"):
                 console.print(f"Expand: {item['expand_command']}", markup=False)
 

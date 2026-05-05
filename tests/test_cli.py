@@ -1843,6 +1843,80 @@ def test_search_command_defaults_to_compact_agent_candidates(tmp_path):
     assert "vault_path" not in result.output
 
 
+def test_probe_command_checks_variants_in_one_agent_call(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+    _write_memory(
+        vault,
+        "Memories/preferences/pytest-fixtures.md",
+        memory_id="mem_20260505_pytest_fixtures",
+        memory_type="preference",
+        scope="project",
+        project="memora",
+        body="Prefer pytest fixture tests for memory behavior and regression coverage.",
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault)])
+
+    result = runner.invoke(
+        app,
+        [
+            "probe",
+            "написание тестов",
+            "--vault",
+            str(vault),
+            "--project",
+            "memora",
+            "--intent",
+            "mixed",
+            "--variant",
+            "pytest fixture tests",
+            "--variant",
+            "testing strategy, regression coverage",
+            "--no-semantic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "has_context: true" in result.output
+    assert "memory_needed: true" in result.output
+    assert "reason: memory_candidates" in result.output
+    assert "variants: написание тестов | pytest fixture tests | testing strategy" in result.output
+    assert "semantic: status=not_used" in result.output
+    assert "Memory: 1 candidate(s)" in result.output
+    assert "[M1] mem_20260505_pytest_fixtures" in result.output
+    assert "Matched: pytest fixture tests" in result.output
+    assert "Expand: memora inspect mem_20260505_pytest_fixtures" in result.output
+
+
+def test_probe_command_reports_no_candidates_compactly(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+    runner.invoke(app, ["reindex", "--vault", str(vault)])
+
+    result = runner.invoke(
+        app,
+        [
+            "probe",
+            "missing memory topic",
+            "--vault",
+            str(vault),
+            "--intent",
+            "memory",
+            "--variant",
+            "absent alternate",
+            "--no-semantic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "has_context: false" in result.output
+    assert "memory_needed: false" in result.output
+    assert "reason: no_candidates" in result.output
+    assert "variants: missing memory topic | absent alternate" in result.output
+    assert "semantic: status=not_used" in result.output
+    assert "Context: no candidates found" in result.output
+
+
 def test_search_command_refreshes_index_before_query(tmp_path):
     vault = tmp_path / "memory-vault"
     runner.invoke(app, ["init", str(vault)])

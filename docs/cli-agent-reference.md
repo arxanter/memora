@@ -24,6 +24,7 @@ Value sets:
 
 Use these most often:
 
+- `memora probe "<query>" --project <project> --variant "<alternate wording>"`
 - `memora build-context "<task>" --project <project> --task-class planning`
 - `memora search "<query>" --project <project>`
 - `memora inspect <id>`
@@ -198,6 +199,14 @@ and report the CLI gap.
 - Reject pending memories.
 
 ## Retrieval And Context
+
+`memora probe <query> [--variant TEXT ...] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--task-class <class>] [--budget N] [--limit N] [--load] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--vault PATH]`
+
+- Single-call agent probe for "is there anything relevant in memory?" checks.
+- Agents should pass likely alternate constructions with repeated `--variant`
+  instead of issuing separate `build-context`, `context`, and `search` calls.
+- Returns `has_context`, `memory_needed`, route, checked variants, semantic
+  status, compact candidates, and expansion commands.
 
 `memora context <query> [--budget N] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--limit N] [--load] [--refresh|--no-refresh] [--vault PATH]`
 
