@@ -41,7 +41,7 @@ Use these most often:
 Do not edit vault files directly. If the needed operation is not listed, stop
 and report the CLI gap.
 
-## Setup And Health
+## Vault And Health
 
 `memora init <vault> [--set-default] [--wrapper PATH]`
 
@@ -77,7 +77,7 @@ and report the CLI gap.
 
 - Rebuild local SQLite index from Markdown.
 
-## Agent Integration
+## Agent Setup
 
 `memora agent rules [--client <client>] [--scope project|user] [--vault PATH] [--project NAME] [--alias NAME ...]`
 
@@ -109,7 +109,7 @@ and report the CLI gap.
 
 - Persist assistant aliases.
 
-## Raw And Sources
+## Capture And Sources
 
 `memora raw add <path> --kind <kind> --format <format> [--title TEXT] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--dry-run] [--vault PATH]`
 
@@ -197,7 +197,7 @@ and report the CLI gap.
 
 - Reject pending memories.
 
-## Retrieval
+## Retrieval And Context
 
 `memora context <query> [--budget N] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--limit N] [--load] [--refresh|--no-refresh] [--vault PATH]`
 

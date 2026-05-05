@@ -445,9 +445,11 @@ def test_help_command_lists_grouped_commands():
 
     assert result.exit_code == 0, result.output
     assert "Memora commands" in result.output
-    assert "Setup and health" in result.output
+    assert "Vault and health" in result.output
+    assert "Agent setup" in result.output
     assert "agent rules" in result.output
     assert "source add" in result.output
+    assert "wiki lint" in result.output
     assert "memora <command> --help" in result.output
     assert "raw mark-processed <path>" in result.output
 

@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 import typer
 from rich.console import Console
+from rich.text import Text
 
 from agent_integration import (
     agent_doctor_payload as _agent_doctor_payload,
@@ -104,65 +105,81 @@ AGENT_CAPTURE_ALLOWED_MEMORY_TYPES = {
 AGENT_SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
 HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
-        "Setup and health",
+        "Vault and health",
         (
             ("init <vault>", "Create the vault layout and config."),
-            ("setup [vault]", "Preview or create the vault layout and next setup steps."),
+            ("setup [vault]", "Preview or create the default vault layout."),
             ("status", "Show vault health and local index state."),
-            ("doctor", "Validate Markdown schema, graph links, and conflicts."),
-            ("conflicts", "Detect Markdown sync conflicts that require manual resolution."),
-            ("reindex", "Rebuild the disposable SQLite index from Markdown."),
-            ("vault show", "Show the default vault configured in the installed wrapper."),
+            ("doctor", "Validate schema, graph links, and conflicts."),
+            ("conflicts", "Detect Markdown sync conflicts."),
+            ("reindex", "Rebuild the local SQLite index."),
+            ("vault show", "Show the wrapper default vault."),
             ("vault set <vault>", "Set the installed wrapper's default vault."),
-            ("self update", "Soft-update the Memora source checkout with git stash/pull/pop."),
-            ("agent rules", "Generate CLI-first instructions for coding agents."),
-            ("agent integrate", "Install generated agent instructions into a project."),
+            ("self update", "Update the checkout with stash/pull/pop."),
+        ),
+    ),
+    (
+        "Agent setup",
+        (
+            ("agent rules", "Generate CLI-first agent instructions."),
+            ("agent integrate", "Install generated agent instructions."),
             ("agent update", "Update managed agent instructions."),
             ("agent status", "Show installed agent instruction status."),
-            ("agent-aliases list", "Show assistant names used for recall routing and agent rules."),
-            ("agent-aliases set …", "Save assistant names to the vault config."),
-            ("session finalize", "Save an agent transcript, summary, and proposed memories."),
-            ("raw add <path>", "Copy one raw file into raw staging with sidecar metadata."),
-            ("raw list", "List raw inbox files by default."),
-            ("raw inspect <path>", "Inspect one raw file before processing."),
-            ("raw mark-processed <path>", "Move a processed raw file out of the inbox."),
+            ("agent-aliases list", "Show assistant aliases for recall routing."),
+            ("agent-aliases set <name...>", "Save assistant names to the vault config."),
+        ),
+    ),
+    (
+        "Capture and sources",
+        (
+            ("raw add <path>", "Stage one raw file with sidecar metadata."),
+            ("raw list", "List raw inbox files."),
+            ("raw inspect <path>", "Preview raw content and metadata."),
+            ("raw mark-processed <path>", "Move processed raw input out of the inbox."),
             (
                 "source add <source.md>",
-                "Save curated source text and optional extract under Sources/.",
+                "Save curated source text and optional extract.",
             ),
-            ("wiki status", "Show Wiki page counts, recent log entries, and lint state."),
-            ("wiki ingest <source_id>", "Create or update Wiki pages from a saved source."),
-            ("wiki synthesize <question>", "Draft or save a Wiki synthesis page."),
+            ("session finalize", "Save session transcript and memory proposals."),
         ),
     ),
     (
-        "Write and review",
+        "Memory writes and review",
         (
-            ("remember", "Create a validated Markdown memory."),
-            ("memory update <id>", "Update safe editable fields on an existing memory."),
-            ("review", "List pending agent-generated memories with a diff-style preview."),
-            ("review approve <id...>", "Approve pending agent memories in an explicit batch."),
-            ("review reject <id...>", "Reject pending agent memories in an explicit batch."),
+            ("remember", "Create one validated Markdown memory."),
+            ("memory update <id>", "Update editable memory fields."),
+            ("review", "List pending agent-generated memories."),
+            ("review approve <id...>", "Approve pending agent memories."),
+            ("review reject <id...>", "Reject pending agent memories."),
         ),
     ),
     (
-        "Retrieval and agent context",
+        "Retrieval and context",
         (
-            ("search", "Return ranked memory results with snippets and citations."),
-            ("recall", "Pack ranked chunks under a strict token budget."),
-            ("lookup-source <source_id>", "Return compact evidence from a saved source."),
-            ("brief", "Render a citation-preserving Memora Brief."),
-            ("build-context", "Apply recall policy and return agent-ready context."),
-            ("context", "Route a bounded query across Memories, Wiki, and Sources."),
+            ("build-context <task>", "Apply recall policy for agents."),
+            ("context <query>", "Route query across Memories, Wiki, and Sources."),
+            ("search <query>", "Search ranked memories with snippets."),
+            ("recall <query>", "Pack ranked chunks under token budget."),
+            ("brief <query>", "Render a cited Memora Brief."),
+            ("lookup-source <source_id>", "Return compact saved-source evidence."),
+        ),
+    ),
+    (
+        "Wiki",
+        (
+            ("wiki status", "Show Wiki counts, log, and lint state."),
             ("wiki search <query>", "Search only Wiki pages."),
             ("wiki read <path>", "Read one Wiki page preview or full content."),
+            ("wiki ingest <source_id>", "Create/update Wiki pages from a saved source."),
+            ("wiki synthesize <question>", "Draft or save a Wiki synthesis."),
+            ("wiki lint", "Validate Wiki links, citations, and orphans."),
         ),
     ),
     (
-        "Inspect",
+        "Inspect and open",
         (
             ("inspect <id>", "Show one memory by ID."),
-            ("open <id>", "Print a memory Markdown path and Obsidian URI."),
+            ("open <id>", "Print memory path and Obsidian URI."),
         ),
     ),
 )
@@ -350,7 +367,10 @@ def help_command(
     for group in payload["groups"]:
         console.print(f"[bold]{group['name']}[/bold]")
         for command in group["commands"]:
-            console.print(f"  [cyan]{command['usage']:<24}[/cyan] {command['description']}")
+            line = Text("  ")
+            line.append(f"{command['usage']:<30}", style="cyan")
+            line.append(f" {command['description']}")
+            console.print(line)
         console.print("")
     console.print("Agent setup: [cyan]memora agent rules --client cursor[/cyan]")
 
