@@ -80,3 +80,27 @@ pub fn status(config: &RuntimeConfig) -> Vec<(String, String)> {
         ),
     ]
 }
+
+pub fn uninstall(
+    config: &RuntimeConfig,
+    remove_vault: bool,
+    dry_run: bool,
+) -> Result<Vec<PathBuf>> {
+    let mut targets = vec![config.state_path()];
+    if remove_vault {
+        targets.push(config.vault_path.clone());
+        targets.push(config.config_path());
+    }
+
+    if !dry_run {
+        for target in &targets {
+            if target.is_dir() {
+                fs::remove_dir_all(target)?;
+            } else if target.is_file() {
+                fs::remove_file(target)?;
+            }
+        }
+    }
+
+    Ok(targets)
+}

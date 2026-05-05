@@ -79,6 +79,9 @@ pub struct RememberOptions {
     pub project: Option<String>,
     pub status: Option<String>,
     pub tags: Vec<String>,
+    pub source: Option<SourceRef>,
+    pub author: Option<Author>,
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,11 +125,11 @@ pub fn remember(config: &RuntimeConfig, options: RememberOptions) -> Result<Memo
         scope,
         project: options.project,
         status: options.status.unwrap_or_else(|| "pending".to_string()),
-        confidence: None,
+        confidence: options.confidence,
         created_at: now.clone(),
         updated_at: now,
-        source: None,
-        author: None,
+        source: options.source,
+        author: options.author,
         relations: Vec::new(),
         tags: options.tags,
         extra: serde_yaml::Mapping::new(),
@@ -329,6 +332,24 @@ fn validate_frontmatter(frontmatter: &MemoryFrontmatter) -> Result<()> {
         return Err(MemoraError::InvalidArgument(
             "project-scoped memory must include project".to_string(),
         ));
+    }
+    if matches!(
+        frontmatter
+            .author
+            .as_ref()
+            .map(|author| author.kind.as_str()),
+        Some("agent")
+    ) {
+        if frontmatter.source.is_none() {
+            return Err(MemoraError::InvalidArgument(
+                "agent-generated memory must include source".to_string(),
+            ));
+        }
+        if frontmatter.confidence.is_none() {
+            return Err(MemoraError::InvalidArgument(
+                "agent-generated memory must include confidence".to_string(),
+            ));
+        }
     }
     Ok(())
 }

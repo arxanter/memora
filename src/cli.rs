@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::{
     agent::{render_rules, AgentClient, AgentInstallOptions, AgentScope},
     config::{load_runtime_config, set_aliases},
-    error::{MemoraError, Result},
+    error::Result,
     memory::{MemoryUpdateOptions, RememberOptions},
     raw::RawAddOptions,
     sources::SourceAddOptions,
@@ -475,13 +475,25 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::SelfCommand { command } => match command {
             SelfCommands::Update(command) => {
-                let _ = command.dry_run;
-                not_implemented("self update")
+                println!("self update: package-manager managed in this Rust build");
+                println!("vault_preserved: true");
+                if command.dry_run {
+                    println!("dry_run: true");
+                }
+                Ok(())
             }
         },
         Commands::Uninstall(command) => {
-            let _ = (command.remove_vault, command.dry_run);
-            not_implemented("uninstall")
+            let config = load_runtime_config(cli.home)?;
+            let targets = vault::uninstall(&config, command.remove_vault, command.dry_run)?;
+            println!("vault_preserved: {}", !command.remove_vault);
+            if command.dry_run {
+                println!("dry_run: true");
+            }
+            for target in targets {
+                println!("removed_target: {}", target.display());
+            }
+            Ok(())
         }
         Commands::Raw { command } => dispatch_raw(cli.home, command),
         Commands::Source { command } => dispatch_source(cli.home, command),
@@ -506,6 +518,9 @@ fn dispatch(cli: Cli) -> Result<()> {
                     project: command.project,
                     status: command.status,
                     tags: command.tags,
+                    source: None,
+                    author: None,
+                    confidence: None,
                 },
             )?;
             println!("created: {}", memory.frontmatter.id);
@@ -516,6 +531,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::Review { command } => dispatch_review(cli.home, command),
         Commands::Search(command) => {
             let config = load_runtime_config(cli.home)?;
+            let freshness = crate::freshness::refresh_if_needed(&config)?;
+            print_freshness(&freshness);
             let results = crate::indexer::search(
                 &config,
                 &command.query,
@@ -532,6 +549,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Probe(command) => {
             let config = load_runtime_config(cli.home)?;
+            let freshness = crate::freshness::refresh_if_needed(&config)?;
+            print_freshness(&freshness);
             let mut queries = vec![command.query];
             queries.extend(command.variants);
             let mut found_any = false;
@@ -563,6 +582,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Context(command) => {
             let config = load_runtime_config(cli.home)?;
+            let freshness = crate::freshness::refresh_if_needed(&config)?;
+            print_freshness(&freshness);
             println!("intent: {}", command.intent);
             println!("budget: {}", command.budget);
             println!("load: {}", command.load);
@@ -607,8 +628,34 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Session { command } => {
-            let _ = command;
-            not_implemented("session")
+            let config = load_runtime_config(cli.home)?;
+            match command {
+                SessionCommands::Finalize(command) => {
+                    let result = crate::session::finalize(
+                        &config,
+                        crate::session::SessionFinalizeOptions {
+                            transcript: command.transcript,
+                            summary_file: command.summary_file,
+                            memories_file: command.memories_file,
+                            project: command.project,
+                            tags: command.tags,
+                            dry_run: command.dry_run,
+                        },
+                    )?;
+                    if result.dry_run {
+                        println!("dry_run: true");
+                        return Ok(());
+                    }
+                    if let Some(source) = result.source {
+                        println!("source_id: {}", source.source_id);
+                    }
+                    println!("pending_memories: {}", result.proposed_memory_ids.len());
+                    for id in result.proposed_memory_ids {
+                        println!("memory: {id}");
+                    }
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -977,6 +1024,19 @@ fn print_search_results(results: Vec<crate::indexer::SearchResult>) {
     }
 }
 
+fn print_freshness(outcome: &crate::freshness::RefreshOutcome) {
+    println!(
+        "freshness: reason={} checked_files={} reindexed={}",
+        outcome.reason, outcome.checked_files, outcome.reindexed
+    );
+    if let Some(stats) = &outcome.stats {
+        println!(
+            "freshness_reindex: documents_seen={} documents_indexed={} documents_skipped={}",
+            stats.documents_seen, stats.documents_indexed, stats.documents_skipped
+        );
+    }
+}
+
 fn open_path(path: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "macos")]
     let program = "open";
@@ -992,8 +1052,4 @@ fn open_path(path: &std::path::Path) -> Result<()> {
     command.arg(path);
     command.status()?;
     Ok(())
-}
-
-fn not_implemented(command: &'static str) -> Result<()> {
-    Err(MemoraError::NotImplemented(command))
 }

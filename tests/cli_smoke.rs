@@ -111,6 +111,44 @@ fn remember_reindex_and_search_memory() {
 }
 
 #[test]
+fn search_auto_refreshes_missing_index() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "remember",
+            "--type",
+            "fact",
+            "--text",
+            "Freshness refresh rebuilds the index automatically.",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["search", "Freshness"])
+        .assert()
+        .success()
+        .stdout(contains("freshness: reason=index_missing"))
+        .stdout(contains("Freshness"));
+}
+
+#[test]
 fn raw_source_and_wiki_capture_flow() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
@@ -206,4 +244,81 @@ fn agent_integrate_writes_managed_block() {
     let content = fs::read_to_string(target).expect("target");
     assert!(content.contains("BEGIN MEMORA MANAGED BLOCK"));
     assert!(content.contains("Auto recall enabled: true"));
+}
+
+#[test]
+fn session_finalize_saves_source_and_pending_memory() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let transcript = temp.path().join("transcript.md");
+    let summary = temp.path().join("summary.md");
+    let memories = temp.path().join("memories.json");
+    fs::write(&transcript, "# Transcript\n\nWe decided to keep CLI first.").expect("transcript");
+    fs::write(&summary, "Session summary: CLI first.").expect("summary");
+    fs::write(
+        &memories,
+        r#"[{"type":"decision","text":"Keep the Rust rewrite CLI-first.","tags":["session"]}]"#,
+    )
+    .expect("memories");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("session")
+        .arg("finalize")
+        .arg(&transcript)
+        .arg("--summary-file")
+        .arg(&summary)
+        .arg("--memories-file")
+        .arg(&memories)
+        .args(["--project", "memory-project"])
+        .assert()
+        .success()
+        .stdout(contains("source_id:"))
+        .stdout(contains("pending_memories: 1"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("review")
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(contains("decision"));
+}
+
+#[test]
+fn uninstall_preserves_vault_by_default() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("uninstall")
+        .assert()
+        .success()
+        .stdout(contains("vault_preserved: true"));
+
+    assert!(home.join("vault").is_dir());
+    assert!(!home.join("state").exists());
 }

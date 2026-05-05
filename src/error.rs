@@ -11,9 +11,6 @@ pub enum MemoraError {
     #[error("not found: {0}")]
     NotFound(String),
 
-    #[error("command is not implemented yet: {0}")]
-    NotImplemented(&'static str),
-
     #[error("{0}")]
     Message(String),
 
