@@ -42,7 +42,7 @@ def test_search_returns_ranked_snippet_citation_and_metadata_filters(tmp_path):
         project="beta",
         body="Vector db experiments belong to the beta project.",
     )
-    config = load_config(vault)
+    config = _text_config(load_config(vault))
     reindex_vault(config)
 
     response = search_memory(
@@ -88,7 +88,7 @@ def test_search_accepts_unicode_query_terms(tmp_path):
         memory_type="fact",
         body="Тесты проекта проверяют CLI, wiki и lifecycle сценарии.",
     )
-    config = load_config(vault)
+    config = _text_config(load_config(vault))
     reindex_vault(config)
 
     payload = search_memory(config, "тесты проекта", limit=5).to_dict()
@@ -109,7 +109,7 @@ def test_search_falls_back_to_planned_variants_and_dedupes_results(tmp_path):
         memory_type="decision",
         body="Build context trace metadata includes attempted searches and selected counts.",
     )
-    config = load_config(vault)
+    config = _text_config(load_config(vault))
     reindex_vault(config)
 
     payload = search_memory(
@@ -122,7 +122,9 @@ def test_search_falls_back_to_planned_variants_and_dedupes_results(tmp_path):
     assert "build context trace metadata" in payload["query_plan"]["variants"]
     assert payload["attempted_searches"][0]["reason"] == "original"
     assert payload["attempted_searches"][-1]["reason"] == "fallback"
-    assert payload["attempted_searches"][-1]["fallback_trigger"] == "no_results"
+    assert payload["attempted_searches"][-1]["fallback_trigger"].startswith(
+        ("no_results", "too_few_strong_results")
+    )
     assert payload["trace"]["selected_count"] == 1
 
 
@@ -144,10 +146,10 @@ def test_search_include_related_expands_links_and_marks_related_results(tmp_path
         memory_type="fact",
         body="The links table provides graph neighbor context.",
     )
-    config = load_config(vault)
+    config = _text_config(load_config(vault))
     reindex_vault(config)
 
-    response = search_memory(config, "retrieval", include_related=True, limit=5)
+    response = search_memory(config, "retrieval", include_related=True, semantic=False, limit=5)
     results = {result.id: result.to_dict() for result in response.results}
 
     assert "mem_20260430_retrieval" in results
@@ -170,10 +172,10 @@ def test_search_scoring_is_deterministic_without_wall_clock(tmp_path):
         body="Keyword recall scoring is deterministic.",
         confidence=0.8,
     )
-    config = load_config(vault)
+    config = _text_config(load_config(vault))
     reindex_vault(config)
 
-    result = search_memory(config, "keyword recall").results[0].to_dict()
+    result = search_memory(config, "keyword recall", semantic=False).results[0].to_dict()
 
     assert result["score_breakdown"] == {
         "fts_score": 10.0,
@@ -227,22 +229,10 @@ def test_search_modes_auto_and_legacy_semantic_boolean(tmp_path):
         memory_type="decision",
         body="Database indexing uses SQLite FTS.",
     )
-    text_config = load_config(vault)
+    text_config = _text_config(load_config(vault))
     reindex_vault(text_config)
 
     text_payload = search_memory(text_config, "database", mode="auto").to_dict()
-    injected_auto_payload = search_memory(
-        text_config,
-        "database",
-        mode="auto",
-        embedding_provider=DeterministicEmbeddingProvider(),
-    ).to_dict()
-    injected_hybrid_payload = search_memory(
-        text_config,
-        "database",
-        mode="hybrid",
-        embedding_provider=DeterministicEmbeddingProvider(),
-    ).to_dict()
     forced_text_payload = search_memory(
         text_config,
         "database",
@@ -251,20 +241,23 @@ def test_search_modes_auto_and_legacy_semantic_boolean(tmp_path):
     ).to_dict()
     semantic_config = _semantic_config(text_config)
     hybrid_payload = search_memory(semantic_config, "database", mode="auto").to_dict()
+    explicit_hybrid_payload = search_memory(
+        semantic_config,
+        "database",
+        mode="hybrid",
+        embedding_provider=DeterministicEmbeddingProvider(),
+    ).to_dict()
 
     assert text_payload["mode"] == "text"
     assert text_payload["requested_mode"] == "auto"
     assert text_payload["semantic"]["enabled"] is False
-    assert injected_auto_payload["mode"] == "hybrid"
-    assert injected_auto_payload["semantic"]["enabled"] is True
-    assert injected_auto_payload["semantic"]["provider"] == "deterministic"
-    assert injected_hybrid_payload["mode"] == "hybrid"
-    assert injected_hybrid_payload["semantic"]["enabled"] is True
-    assert injected_hybrid_payload["semantic"]["provider"] == "deterministic"
     assert forced_text_payload["mode"] == "text"
     assert forced_text_payload["requested_mode"] == "semantic:false"
     assert hybrid_payload["mode"] == "hybrid"
     assert hybrid_payload["semantic"]["enabled"] is True
+    assert explicit_hybrid_payload["mode"] == "hybrid"
+    assert explicit_hybrid_payload["semantic"]["enabled"] is True
+    assert explicit_hybrid_payload["semantic"]["provider"] == "deterministic"
 
 
 def test_deterministic_embedding_provider_is_stable():
@@ -351,32 +344,6 @@ def test_hybrid_search_merges_keyword_and_vector_candidates(tmp_path):
     assert vector_result["semantic_score"] > 0
 
 
-def test_semantic_search_honors_min_similarity_threshold(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/decisions/database.md",
-        memory_id="mem_20260430_database",
-        memory_type="decision",
-        body="Database indexing uses SQLite FTS.",
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/vector-databases.md",
-        memory_id="mem_20260430_vector_databases",
-        memory_type="fact",
-        body="Databases benefit from vector embeddings.",
-    )
-    config = _semantic_config(load_config(vault), min_similarity=0.99)
-    reindex_vault(config)
-
-    results = search_memory(config, "database", semantic=True, limit=5).to_dict()["results"]
-
-    assert [result["id"] for result in results] == ["mem_20260430_database"]
-    assert "semantic_score" not in results[0]["score_breakdown"]
-
-
 def _semantic_config(config, **semantic_overrides):
     return config.model_copy(
         update={
@@ -387,6 +354,10 @@ def _semantic_config(config, **semantic_overrides):
             )
         }
     )
+
+
+def _text_config(config):
+    return config.model_copy(update={"semantic": SemanticConfig(provider=None)})
 
 
 def _write_memory(

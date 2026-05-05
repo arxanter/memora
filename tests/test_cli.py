@@ -198,6 +198,7 @@ def _write_memory(
 ):
     path = vault / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
+    source_block = f"source:\n  path: {source_path}" if source_path else "source:"
     path.write_text(
         """---
 schema_version: 1
@@ -211,8 +212,7 @@ created_at: 2026-05-05T12:00:00+00:00
 updated_at: 2026-05-05T12:00:00+00:00
 valid_from: 2026-05-05
 valid_to:
-source:
-  path: {source_path}
+{source_block}
 author:
   kind: {author_kind}
   name: test
@@ -231,7 +231,7 @@ observations:
             memory_type=memory_type,
             status=status,
             confidence="" if confidence is None else confidence,
-            source_path=source_path or "",
+            source_block=source_block,
             author_kind=author_kind,
             body=body,
         ),

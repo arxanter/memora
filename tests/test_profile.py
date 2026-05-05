@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import yaml
 
-from config import ProfileConfig, load_config
+from config import load_config
 from indexer import estimate_tokens
 from memora_profile import build_context_profile_payload, generate_profile_context
 from vault import init_vault
