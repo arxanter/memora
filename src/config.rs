@@ -11,6 +11,9 @@ pub const CONFIG_FILE_NAME: &str = "config.yaml";
 pub const DEFAULT_HOME_DIR_NAME: &str = "memora";
 pub const DEFAULT_VAULT_DIR_NAME: &str = "vault";
 pub const DEFAULT_SCHEMA_VERSION: u16 = 1;
+const ENV_SEMANTIC_PROVIDER: &str = "MEMORA_SEMANTIC_PROVIDER";
+const ENV_SEMANTIC_MODEL: &str = "MEMORA_SEMANTIC_MODEL";
+const ENV_SEMANTIC_COMMAND: &str = "MEMORA_SEMANTIC_COMMAND";
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -120,12 +123,13 @@ pub fn resolve_home(home: Option<PathBuf>) -> Result<PathBuf> {
 pub fn load_runtime_config(home: Option<PathBuf>) -> Result<RuntimeConfig> {
     let home_path = resolve_home(home)?;
     let config_path = home_path.join(CONFIG_FILE_NAME);
-    let file = if config_path.is_file() {
+    let mut file = if config_path.is_file() {
         let raw = fs::read_to_string(&config_path)?;
         serde_yaml::from_str::<ConfigFile>(&raw)?
     } else {
         ConfigFile::default()
     };
+    apply_env_overrides(&mut file);
 
     validate_config(&file)?;
 
@@ -170,6 +174,35 @@ fn validate_config(file: &ConfigFile) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn apply_env_overrides(file: &mut ConfigFile) {
+    if let Ok(provider) = env::var(ENV_SEMANTIC_PROVIDER) {
+        let provider = provider.trim();
+        file.semantic.provider = if provider.eq_ignore_ascii_case("none") || provider.is_empty() {
+            None
+        } else {
+            Some(provider.to_string())
+        };
+    }
+    if let Ok(model) = env::var(ENV_SEMANTIC_MODEL) {
+        if !model.trim().is_empty() {
+            file.semantic.model = model.trim().to_string();
+        }
+    }
+    if let Ok(command) = env::var(ENV_SEMANTIC_COMMAND) {
+        let command: Vec<String> = command
+            .split_whitespace()
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect();
+        file.semantic.command = if command.is_empty() {
+            None
+        } else {
+            Some(command)
+        };
+    }
 }
 
 fn normalize_aliases(aliases: Vec<String>) -> Result<Vec<String>> {
@@ -225,7 +258,7 @@ fn default_semantic_provider() -> Option<String> {
 }
 
 fn default_semantic_model() -> String {
-    "BAAI/bge-small-en-v1.5".to_string()
+    "AllMiniLML6V2".to_string()
 }
 
 fn default_min_active_confidence() -> f32 {

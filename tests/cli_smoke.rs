@@ -103,7 +103,7 @@ fn remember_reindex_and_search_memory() {
         .expect("memora binary")
         .arg("--home")
         .arg(&home)
-        .args(["search", "SQLite"])
+        .args(["search", "SQLite", "--mode", "text"])
         .assert()
         .success()
         .stdout(contains("decision"))
@@ -141,11 +141,115 @@ fn search_auto_refreshes_missing_index() {
         .expect("memora binary")
         .arg("--home")
         .arg(&home)
-        .args(["search", "Freshness"])
+        .args(["search", "Freshness", "--mode", "text"])
         .assert()
         .success()
         .stdout(contains("freshness: reason=index_missing"))
         .stdout(contains("Freshness"));
+}
+
+#[test]
+fn vector_and_hybrid_search_modes_return_memory_candidates() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "remember",
+            "--type",
+            "fact",
+            "--text",
+            "Hybrid retrieval stores local hashed embeddings in SQLite.",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_SEMANTIC_PROVIDER", "deterministic")
+        .env("MEMORA_SEMANTIC_MODEL", "deterministic-test-v1")
+        .arg("--home")
+        .arg(&home)
+        .args(["search", "hashed embeddings", "--mode", "vector"])
+        .assert()
+        .success()
+        .stdout(contains("fact"))
+        .stdout(contains("embeddings"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_SEMANTIC_PROVIDER", "deterministic")
+        .env("MEMORA_SEMANTIC_MODEL", "deterministic-test-v1")
+        .arg("--home")
+        .arg(&home)
+        .args(["search", "Hybrid retrieval", "--mode", "hybrid"])
+        .assert()
+        .success()
+        .stdout(contains("fact"))
+        .stdout(contains("Hybrid"));
+}
+
+#[test]
+fn local_command_embedding_provider_is_supported() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let script = temp.path().join("embed.sh");
+    fs::write(
+        &script,
+        r#"#!/bin/sh
+printf '{"embeddings":[[1.0,0.0,0.0,0.0]]}'
+"#,
+    )
+    .expect("script");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "remember",
+            "--type",
+            "fact",
+            "--text",
+            "Local command embeddings use a JSON stdin stdout contract.",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_SEMANTIC_PROVIDER", "local-command")
+        .env("MEMORA_SEMANTIC_MODEL", "test-local-command")
+        .env(
+            "MEMORA_SEMANTIC_COMMAND",
+            format!("sh {}", script.display()),
+        )
+        .arg("--home")
+        .arg(&home)
+        .args(["search", "anything", "--mode", "vector"])
+        .assert()
+        .success()
+        .stdout(contains("Local command"))
+        .stdout(contains("fact"));
 }
 
 #[test]
@@ -215,6 +319,16 @@ fn raw_source_and_wiki_capture_flow() {
         .assert()
         .success()
         .stdout(contains("Wiki/sources/"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["context", "Rust", "--intent", "evidence", "--mode", "text"])
+        .assert()
+        .success()
+        .stdout(contains("## Sources"))
+        .stdout(contains("source_id="));
 }
 
 #[test]

@@ -1,7 +1,13 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     config::RuntimeConfig,
+    embeddings::{
+        cosine_similarity, deserialize_vector, provider_from_config, serialize_vector,
+        EmbeddingProvider,
+    },
     error::{MemoraError, Result},
     memory::{list_memories, MemoryDocument},
     util::content_hash,
@@ -23,6 +29,7 @@ pub struct SearchFilters {
     pub status: Option<String>,
     pub scope: Option<String>,
     pub limit: usize,
+    pub mode: SearchMode,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +40,28 @@ pub struct SearchResult {
     pub status: String,
     pub score: f64,
     pub snippet: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    Auto,
+    Text,
+    Vector,
+    Hybrid,
+}
+
+impl SearchMode {
+    pub fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "text" => Ok(Self::Text),
+            "vector" => Ok(Self::Vector),
+            "hybrid" => Ok(Self::Hybrid),
+            other => Err(MemoraError::InvalidArgument(format!(
+                "unsupported search mode: {other}"
+            ))),
+        }
+    }
 }
 
 pub fn reindex(config: &RuntimeConfig, clean: bool) -> Result<ReindexStats> {
@@ -100,6 +129,54 @@ pub fn search(
     }
     let connection = Connection::open(config.index_path())?;
     ensure_schema(&connection)?;
+    let effective_mode = filters.mode;
+    if effective_mode == SearchMode::Text {
+        return text_search(&connection, query, &filters);
+    }
+    let provider = match provider_from_config(&config.file.semantic) {
+        Ok(provider) => provider,
+        Err(error) if effective_mode == SearchMode::Auto => {
+            eprintln!("semantic disabled; falling back to text search: {error}");
+            return text_search(&connection, query, &filters);
+        }
+        Err(error) => return Err(error),
+    };
+    if effective_mode == SearchMode::Vector {
+        return vector_search(&connection, query, &filters, provider);
+    }
+
+    let mut merged: HashMap<String, SearchResult> = HashMap::new();
+    for result in text_search(&connection, query, &filters).unwrap_or_default() {
+        merged.insert(result.id.clone(), result);
+    }
+    for mut result in vector_search(&connection, query, &filters, provider).unwrap_or_default() {
+        if let Some(existing) = merged.get_mut(&result.id) {
+            existing.score += result.score * 0.8;
+            if existing.snippet.trim().is_empty() {
+                existing.snippet = result.snippet;
+            }
+        } else {
+            result.score *= 0.8;
+            merged.insert(result.id.clone(), result);
+        }
+    }
+    let mut results: Vec<_> = merged.into_values().collect();
+    results.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    results.truncate(filters.limit.max(1));
+    Ok(results)
+}
+
+fn text_search(
+    connection: &Connection,
+    query: &str,
+    filters: &SearchFilters,
+) -> Result<Vec<SearchResult>> {
     let fts_query = fts_query(query);
     let limit = filters.limit.max(1) as i64;
     let mut sql = String::from(
@@ -203,6 +280,15 @@ fn ensure_schema(connection: &Connection) -> Result<()> {
             PRIMARY KEY (from_id, to_id, relation)
         );
 
+        CREATE TABLE IF NOT EXISTS embeddings (
+            chunk_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            vector TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            PRIMARY KEY (chunk_id, model),
+            FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
             id UNINDEXED,
             document_id UNINDEXED,
@@ -262,6 +348,10 @@ fn upsert_document(connection: &Connection, memory: &MemoryDocument, hash: &str)
 }
 
 fn replace_chunks(connection: &Connection, memory: &MemoryDocument) -> Result<()> {
+    connection.execute(
+        "DELETE FROM embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?1)",
+        params![memory.frontmatter.id],
+    )?;
     connection.execute(
         "DELETE FROM chunk_fts WHERE document_id = ?1",
         params![memory.frontmatter.id],
@@ -344,4 +434,154 @@ fn fts_query(query: &str) -> String {
 
 fn estimate_tokens(text: &str) -> i64 {
     std::cmp::max(1, (text.split_whitespace().count() as f64 / 0.75) as i64)
+}
+
+fn vector_search(
+    connection: &Connection,
+    query: &str,
+    filters: &SearchFilters,
+    mut provider: Box<dyn EmbeddingProvider>,
+) -> Result<Vec<SearchResult>> {
+    let query_vector = provider.embed(&[format!("query: {query}")])?.remove(0);
+    let mut sql = String::from(
+        r#"
+        SELECT c.id, c.text, c.content_hash, d.id, d.path, m.type, m.status
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        JOIN memories m ON m.id = d.id
+        WHERE 1 = 1
+        "#,
+    );
+    let mut filter_values = Vec::new();
+    if let Some(project) = &filters.project {
+        sql.push_str(" AND m.project = ?");
+        filter_values.push(project.clone());
+    }
+    if let Some(memory_type) = &filters.memory_type {
+        sql.push_str(" AND m.type = ?");
+        filter_values.push(memory_type.clone());
+    }
+    if let Some(status) = &filters.status {
+        sql.push_str(" AND m.status = ?");
+        filter_values.push(status.clone());
+    } else {
+        sql.push_str(" AND m.status IN ('active', 'pending', 'stale')");
+    }
+    if let Some(scope) = &filters.scope {
+        sql.push_str(" AND m.scope = ?");
+        filter_values.push(scope.clone());
+    }
+    sql.push_str(" LIMIT ?");
+
+    let fetch_limit = (filters.limit.max(1) * 20).max(100) as i64;
+    let mut values: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    for value in &filter_values {
+        values.push(value);
+    }
+    values.push(&fetch_limit);
+
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(values.as_slice(), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+        ))
+    })?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        let (chunk_id, text, chunk_hash, id, path, memory_type, status) = row?;
+        let vector =
+            embedding_for_chunk(connection, &mut *provider, &chunk_id, &text, &chunk_hash)?;
+        let similarity = cosine_similarity(&query_vector, &vector);
+        if similarity <= 0.05 {
+            continue;
+        }
+        results.push(SearchResult {
+            id,
+            path,
+            memory_type,
+            status,
+            score: 10.0 * similarity,
+            snippet: vector_snippet(&text, query),
+        });
+    }
+    results.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    results.truncate(filters.limit.max(1));
+    Ok(results)
+}
+
+fn embedding_for_chunk(
+    connection: &Connection,
+    provider: &mut dyn EmbeddingProvider,
+    chunk_id: &str,
+    text: &str,
+    content_hash: &str,
+) -> Result<Vec<f32>> {
+    let model = format!("{}:{}", provider.name(), provider.model());
+    let existing: Option<(String, String)> = connection
+        .query_row(
+            "SELECT vector, content_hash FROM embeddings WHERE chunk_id = ?1 AND model = ?2",
+            params![chunk_id, model],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((vector, hash)) = existing {
+        if hash == content_hash {
+            return deserialize_vector(&vector);
+        }
+    }
+
+    let vector = provider.embed(&[format!("passage: {text}")])?.remove(0);
+    let serialized = serialize_vector(&vector);
+    connection.execute(
+        "INSERT OR REPLACE INTO embeddings (chunk_id, model, vector, content_hash) VALUES (?1, ?2, ?3, ?4)",
+        params![chunk_id, model, serialized, content_hash],
+    )?;
+    Ok(vector)
+}
+
+fn vector_tokens(text: &str) -> Vec<String> {
+    let base: Vec<String> = text
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| normalize_token(&token.to_lowercase()))
+        .collect();
+    let mut tokens = base.clone();
+    for window in base.windows(2) {
+        tokens.push(format!("{}_{}", window[0], window[1]));
+    }
+    tokens
+}
+
+fn normalize_token(token: &str) -> String {
+    if token.len() > 4 && token.ends_with('s') {
+        token[..token.len() - 1].to_string()
+    } else {
+        token.to_string()
+    }
+}
+
+fn vector_snippet(text: &str, query: &str) -> String {
+    let query_tokens = vector_tokens(query);
+    let lower = text.to_lowercase();
+    for token in query_tokens {
+        if let Some(index) = lower.find(&token.replace('_', " ")) {
+            let start = index.saturating_sub(80);
+            let end = std::cmp::min(text.len(), index + 160);
+            return text[start..end].replace('\n', " ");
+        }
+    }
+    text.chars().take(180).collect()
 }

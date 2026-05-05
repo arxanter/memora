@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 use crate::{
     config::RuntimeConfig,
@@ -47,6 +48,14 @@ pub struct SourceRecord {
     pub source_path: PathBuf,
     pub extract_path: Option<PathBuf>,
     pub title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceSearchResult {
+    pub source_id: String,
+    pub path: String,
+    pub score: usize,
+    pub snippet: String,
 }
 
 pub fn add_source(config: &RuntimeConfig, options: SourceAddOptions) -> Result<SourceRecord> {
@@ -147,7 +156,86 @@ pub fn lookup_source(config: &RuntimeConfig, source_id: &str, budget: usize) -> 
     Ok(selected.to_string())
 }
 
+pub fn search_sources(
+    config: &RuntimeConfig,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SourceSearchResult>> {
+    let root = config.vault_path.join("Sources");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let tokens = tokens(query);
+    let mut results = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let raw = fs::read_to_string(path)?;
+        let text = strip_frontmatter(&raw);
+        let haystack = text.to_lowercase();
+        let score: usize = tokens
+            .iter()
+            .map(|token| haystack.matches(token).count())
+            .sum();
+        if score == 0 && !tokens.is_empty() {
+            continue;
+        }
+        let source_id = path
+            .strip_prefix(config.vault_path.join("Sources"))
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .map(|component| component.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let relative_path = path
+            .strip_prefix(&config.vault_path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
+        results.push(SourceSearchResult {
+            source_id,
+            path: relative_path,
+            score,
+            snippet: snippet(text, &tokens),
+        });
+    }
+    results.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    results.truncate(limit.max(1));
+    Ok(results)
+}
+
 fn new_source_id(title: &str) -> String {
     let date = now_rfc3339().chars().take(10).collect::<String>();
     format!("{date}_{}", slugify(title))
+}
+
+fn tokens(query: &str) -> Vec<String> {
+    query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| token.to_lowercase())
+        .collect()
+}
+
+fn snippet(text: &str, tokens: &[String]) -> String {
+    let lower = text.to_lowercase();
+    let start = tokens
+        .iter()
+        .find_map(|token| lower.find(token))
+        .unwrap_or(0)
+        .saturating_sub(80);
+    text.chars()
+        .skip(start)
+        .take(180)
+        .collect::<String>()
+        .replace('\n', " ")
 }

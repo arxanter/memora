@@ -1,6 +1,7 @@
 mod agent;
 mod cli;
 mod config;
+mod embeddings;
 mod error;
 mod freshness;
 mod indexer;

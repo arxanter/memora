@@ -359,6 +359,8 @@ struct SearchCommand {
     scope: Option<String>,
     #[arg(long)]
     limit: Option<usize>,
+    #[arg(long, default_value = "auto")]
+    mode: String,
 }
 
 #[derive(Debug, Args)]
@@ -372,6 +374,8 @@ struct ProbeCommand {
     intent: String,
     #[arg(long)]
     load: bool,
+    #[arg(long, default_value = "auto")]
+    mode: String,
 }
 
 #[derive(Debug, Args)]
@@ -385,6 +389,8 @@ struct ContextCommand {
     budget: usize,
     #[arg(long)]
     load: bool,
+    #[arg(long, default_value = "auto")]
+    mode: String,
 }
 
 #[derive(Debug, Args)]
@@ -542,6 +548,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     status: command.status,
                     scope: command.scope,
                     limit: command.limit.unwrap_or(10),
+                    mode: crate::indexer::SearchMode::parse(&command.mode)?,
                 },
             )?;
             print_search_results(results);
@@ -566,6 +573,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                         status: None,
                         scope: None,
                         limit: 5,
+                        mode: crate::indexer::SearchMode::parse(&command.mode)?,
                     },
                 )
                 .unwrap_or_default();
@@ -596,6 +604,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     status: None,
                     scope: None,
                     limit: 5,
+                    mode: crate::indexer::SearchMode::parse(&command.mode)?,
                 },
             )
             .unwrap_or_default();
@@ -604,6 +613,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("## Wiki");
             for result in crate::wiki::search(&config, &command.query, 5)? {
                 println!("{} score={}", result.page.relative_path, result.score);
+            }
+            println!("## Sources");
+            for result in crate::sources::search_sources(&config, &command.query, 5)? {
+                println!(
+                    "{} score={} source_id={}",
+                    result.path, result.score, result.source_id
+                );
+                if !result.snippet.trim().is_empty() {
+                    println!("  {}", result.snippet);
+                }
             }
             Ok(())
         }
