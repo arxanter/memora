@@ -29,6 +29,7 @@ from agent_integration import (
 )
 from brief import brief_memory
 from config import (
+    DEFAULT_SEMANTIC_MIN_SIMILARITY,
     DEFAULT_VAULT_DIR_NAME,
     ENV_MEMORA_HOME,
     ENV_VAULT_PATH,
@@ -2776,7 +2777,7 @@ def _build_context_probe(
             mode=mode,
             min_score=0.0,
             min_similarity=max(
-                float(getattr(config.semantic, "min_similarity", 0.0) or 0.0),
+                DEFAULT_SEMANTIC_MIN_SIMILARITY,
                 BUILD_CONTEXT_SEMANTIC_PROBE_MIN_SIMILARITY,
             ),
         )

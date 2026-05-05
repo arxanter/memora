@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping, Optional, Union
 
 import yaml
 
-from config import AgentPolicyConfig, AgentTrustLevel, MemoryConfig
+from config import AgentPolicyConfig, MemoryConfig
 from indexer import estimate_tokens
 from safety import (
     SafetyScanResult,
@@ -882,14 +882,6 @@ def _optional_string(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
 def _clean_list(values: Optional[Iterable[str]]) -> list[str]:
     if values is None:
         return []
@@ -948,9 +940,7 @@ def _plan_promoted_memory(
     risk_flags = normalize_risk_flags(
         (*_clean_list(memory.get("risk_flags", ())), *safety.risk_flags)
     )
-    selected_status = _promoted_memory_status(memory, policy, confidence)
-    if risk_flags and selected_status == LifecycleStatus.ACTIVE:
-        selected_status = LifecycleStatus.PENDING
+    selected_status = _promoted_memory_status()
 
     return _PlannedMemory(
         memory_type=memory_type,
@@ -964,53 +954,8 @@ def _plan_promoted_memory(
     )
 
 
-def _promoted_memory_status(
-    memory: Mapping[str, Any],
-    policy: AgentPolicyConfig,
-    confidence: float,
-) -> LifecycleStatus:
-    if policy.require_review_for_source_promotions:
-        return LifecycleStatus.PENDING
-
-    trust_level = _trust_level(policy)
-    explicit_user_save = _explicit_user_save(memory)
-    requested = _optional_string(memory.get("status"))
-    requested_status = LifecycleStatus(requested) if requested else None
-    if requested_status and requested_status != LifecycleStatus.ACTIVE:
-        return (
-            requested_status
-            if trust_level == AgentTrustLevel.AUTONOMOUS.value
-            else LifecycleStatus.PENDING
-        )
-
-    if confidence < policy.min_active_confidence:
-        return LifecycleStatus.PENDING
-    if trust_level == AgentTrustLevel.AUTONOMOUS.value:
-        return LifecycleStatus.ACTIVE
-    if (
-        trust_level == AgentTrustLevel.EXPLICIT_ACTIVE.value
-        and policy.explicit_user_saves_active
-        and explicit_user_save
-    ):
-        return LifecycleStatus.ACTIVE
+def _promoted_memory_status() -> LifecycleStatus:
     return LifecycleStatus.PENDING
-
-
-def _explicit_user_save(memory: Mapping[str, Any]) -> bool:
-    return any(
-        _bool(memory.get(key))
-        for key in (
-            "explicit_user_save",
-            "user_explicit",
-            "authorized_by_user",
-            "direct_user_instruction",
-        )
-    )
-
-
-def _trust_level(policy: AgentPolicyConfig) -> str:
-    value = policy.trust_level
-    return value.value if isinstance(value, AgentTrustLevel) else str(value)
 
 
 def _memory_text(memory: Mapping[str, Any]) -> str:

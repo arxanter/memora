@@ -212,7 +212,7 @@ def remember_memory(
         raise ValueError("memory text must not be empty")
     selected_tags = tuple(tags)
 
-    selected_scope = MemoryScope(scope or config.default_scope)
+    selected_scope = MemoryScope(scope or MemoryScope.USER)
     selected_project = project or config.default_project
     if selected_scope == MemoryScope.PROJECT and not selected_project:
         raise ValueError("project-scoped memory requires --project or default_project in config")
@@ -221,9 +221,9 @@ def remember_memory(
     selected_status = LifecycleStatus(
         status
         or (
-            config.agent_default_status
+            LifecycleStatus.PENDING
             if selected_author_kind == AuthorKind.AGENT
-            else config.user_default_status
+            else LifecycleStatus.ACTIVE
         )
     )
     safety = merge_scan_results(

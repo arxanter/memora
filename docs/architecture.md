@@ -107,7 +107,8 @@ context.
 
 The SQLite index is disposable local state rebuilt from Markdown with
 `memora reindex`. Search and recall read from the index and can refresh it before
-queries according to `index_freshness` config.
+queries using built-in freshness defaults, with per-command `--refresh` and
+`--no-refresh` overrides.
 
 `build-context` first applies recall policy from `recall_policy.py`. If the
 trigger policy does not request memory, it runs a cheap data probe against the

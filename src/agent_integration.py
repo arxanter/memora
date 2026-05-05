@@ -968,7 +968,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Present id, type, confidence, source, risk flags, summary, and recommended action. Do not approve or reject without explicit confirmation unless the vault policy allows autonomous lifecycle changes with source, confidence, reason, and audit history.",
         "",
-        "Session-end capture workflow: when `agent_policy.session_capture` is enabled, produce one concise summary of decisions, durable facts, tasks, and open questions. If a transcript/export is available, finalize it through the CLI with proposed memories:",
+        "Session-end capture workflow: produce one concise summary of decisions, durable facts, tasks, and open questions. If a transcript/export is available, finalize it through the CLI with proposed memories:",
         "",
         "```bash",
         session_finalize,

@@ -1,97 +1,19 @@
 # Ready sample vault config for CLI-first Memora workflows.
-# Generated cache files under state/ remain local and rebuildable.
+# Layout, recall, freshness, and profile tuning use code defaults.
 schema_version: 1
-raw_dir: raw
-memories_dir: Memories
-sources_dir: Sources
-wiki_dir: Wiki
-state_dir: state
-index_path: state/index.sqlite
-default_scope: project
 default_project: memora
-user_default_status: active
-agent_default_status: pending
 
 semantic:
   provider: null
   model: local-embedding-model
   command: null
-  timeout_seconds: 30.0
-  batch_size: 32
-  dimensions: null
-  min_similarity: 0.0
-  vector_limit: 100
-  keyword_limit: 100
-
-recall:
-  candidate_limit: 50
-  max_tokens_per_chunk: 300
-  max_chunks_per_document: 2
-  max_chunks_per_project: 8
-  max_chunks_per_memory_type:
-    preference: 4
-    decision: 6
-    project_context: 6
-    fact: 8
-    task: 4
-    conversation_summary: 3
-
-recall_policies:
-  default:
-    budget: 1200
-    include_related: false
-    include_pending: false
-    include_profile: true
-    types: []
-  coding:
-    budget: 900
-    include_related: false
-    include_pending: false
-    include_profile: true
-    types:
-      - decision
-      - preference
-      - project_context
-      - task
-  planning:
-    budget: 2000
-    include_related: true
-    include_pending: false
-    include_profile: true
-    types:
-      - decision
-      - project_context
-      - conversation_summary
-  review:
-    budget: 2400
-    include_related: false
-    include_pending: true
-    include_profile: false
-    types: []
 
 agent_policy:
   aliases:
     - Remi
     - Рэми
     - Реми
-  trust_level: review
-  default_recall_budget: 1200
+  enabled: true
+  auto_recall: true
   min_active_confidence: 0.85
   min_pending_confidence: 0.55
-  explicit_user_saves_active: true
-  autonomous_lifecycle: false
-  require_review_for_source_promotions: true
-
-index_freshness:
-  enabled: true
-  interval_seconds: 30
-  debounce_seconds: 2.0
-  clean: false
-  refresh_before_search: true
-  refresh_before_recall: true
-
-profile:
-  enabled: true
-  user_budget: 500
-  project_budget: 700
-  inject_by_default: false

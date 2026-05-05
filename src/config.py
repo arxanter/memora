@@ -3,52 +3,39 @@
 from __future__ import annotations
 
 import os
-from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Sequence, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from schema import LifecycleStatus, MemoryScope, MemoryType, SCHEMA_VERSION
+from schema import MemoryType, SCHEMA_VERSION
 
 CONFIG_FILE_NAME = "config.yaml"
 DEFAULT_HOME_DIR_NAME = "memora"
 DEFAULT_VAULT_DIR_NAME = "vault"
+DEFAULT_RAW_DIR = "raw"
+DEFAULT_MEMORIES_DIR = "Memories"
+DEFAULT_SOURCES_DIR = "Sources"
+DEFAULT_WIKI_DIR = "Wiki"
 DEFAULT_STATE_DIR_NAME = "state"
+DEFAULT_INDEX_PATH = "state/index.sqlite"
+DEFAULT_USER_RECALL_BUDGET = 500
+DEFAULT_PROJECT_RECALL_BUDGET = 700
+DEFAULT_SEMANTIC_TIMEOUT_SECONDS = 30.0
+DEFAULT_SEMANTIC_BATCH_SIZE = 32
+DEFAULT_SEMANTIC_DETERMINISTIC_DIMENSIONS = 32
+DEFAULT_SEMANTIC_MIN_SIMILARITY = 0.0
+DEFAULT_SEMANTIC_VECTOR_LIMIT = 100
+DEFAULT_SEMANTIC_KEYWORD_LIMIT = 100
 LEGACY_CONFIG_DIR_NAME = ".memora"
 CONFIG_DIR_NAME = LEGACY_CONFIG_DIR_NAME
 ENV_MEMORA_HOME = "MEMORA_HOME"
 ENV_VAULT_PATH = "MEMORA_VAULT"
 ENV_SEMANTIC_PROVIDER = "MEMORA_SEMANTIC_PROVIDER"
 ENV_SEMANTIC_MODEL = "MEMORA_SEMANTIC_MODEL"
-ENV_SEMANTIC_BATCH_SIZE = "MEMORA_SEMANTIC_BATCH_SIZE"
-ENV_SEMANTIC_DIMENSIONS = "MEMORA_SEMANTIC_DIMENSIONS"
-ENV_SEMANTIC_MIN_SIMILARITY = "MEMORA_SEMANTIC_MIN_SIMILARITY"
-ENV_FRESHNESS_ENABLED = "MEMORA_FRESHNESS_ENABLED"
-ENV_FRESHNESS_INTERVAL_SECONDS = "MEMORA_FRESHNESS_INTERVAL_SECONDS"
-ENV_FRESHNESS_DEBOUNCE_SECONDS = "MEMORA_FRESHNESS_DEBOUNCE_SECONDS"
-ENV_FRESHNESS_CLEAN = "MEMORA_FRESHNESS_CLEAN"
-ENV_FRESHNESS_REFRESH_BEFORE_SEARCH = "MEMORA_FRESHNESS_REFRESH_BEFORE_SEARCH"
-ENV_FRESHNESS_REFRESH_BEFORE_RECALL = "MEMORA_FRESHNESS_REFRESH_BEFORE_RECALL"
-ENV_AGENT_TRUST_LEVEL = "MEMORA_TRUST_LEVEL"
-ENV_AGENT_DEFAULT_RECALL_BUDGET = "MEMORA_DEFAULT_RECALL_BUDGET"
 ENV_AGENT_MEMORY_ENABLED = "MEMORA_AGENT_MEMORY_ENABLED"
 ENV_AGENT_AUTO_RECALL = "MEMORA_AGENT_AUTO_RECALL"
-ENV_AGENT_SESSION_CAPTURE = "MEMORA_AGENT_SESSION_CAPTURE"
-ENV_PROFILE_ENABLED = "MEMORA_PROFILE_ENABLED"
-ENV_PROFILE_USER_BUDGET = "MEMORA_PROFILE_USER_BUDGET"
-ENV_PROFILE_PROJECT_BUDGET = "MEMORA_PROFILE_PROJECT_BUDGET"
-ENV_PROFILE_INJECT_BY_DEFAULT = "MEMORA_PROFILE_INJECT_BY_DEFAULT"
-
-
-class AgentTrustLevel(str, Enum):
-    """How much autonomy agents have when writing or mutating memory."""
-
-    MANUAL = "manual"
-    REVIEW = "review"
-    EXPLICIT_ACTIVE = "explicit_active"
-    AUTONOMOUS = "autonomous"
 
 
 class ConfigError(ValueError):
@@ -58,15 +45,11 @@ class ConfigError(ValueError):
 class SemanticConfig(BaseModel):
     """Optional semantic search configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     provider: Optional[str] = "fastembed"
     model: str = "BAAI/bge-small-en-v1.5"
     command: Optional[list[str]] = None
-    timeout_seconds: float = Field(default=30.0, gt=0)
-    batch_size: int = Field(default=32, ge=1)
-    dimensions: Optional[int] = Field(default=None, ge=1)
-    min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
-    vector_limit: int = Field(default=100, ge=1)
-    keyword_limit: int = Field(default=100, ge=1)
 
     @property
     def enabled(self) -> bool:
@@ -187,36 +170,13 @@ def _default_recall_policies() -> dict[str, TaskRecallPolicyConfig]:
 class AgentPolicyConfig(BaseModel):
     """User-configurable rules for AI agent memory behavior."""
 
-    model_config = ConfigDict(use_enum_values=True, validate_default=True)
+    model_config = ConfigDict(use_enum_values=True, validate_default=True, extra="ignore")
 
     aliases: list[str] = Field(default_factory=lambda: ["Remi", "Рэми", "Реми"])
     enabled: bool = True
     auto_recall: bool = True
-    session_capture: bool = True
-    trust_level: AgentTrustLevel = AgentTrustLevel.REVIEW
-    default_recall_budget: int = Field(default=1200, ge=1)
     min_active_confidence: float = Field(default=0.85, ge=0, le=1)
     min_pending_confidence: float = Field(default=0.55, ge=0, le=1)
-    explicit_user_saves_active: bool = True
-    autonomous_lifecycle: bool = False
-    require_review_for_source_promotions: bool = True
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_source_promotion_policy(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        if (
-            "require_review_for_source_extracts" in data
-            and "require_review_for_source_promotions" not in data
-        ):
-            return {
-                **data,
-                "require_review_for_source_promotions": data[
-                    "require_review_for_source_extracts"
-                ],
-            }
-        return data
 
     @field_validator("aliases")
     @classmethod
@@ -248,8 +208,9 @@ class AgentPolicyConfig(BaseModel):
 class IndexFreshnessConfig(BaseModel):
     """Index freshness settings for CLI commands that refresh before reads."""
 
+    model_config = ConfigDict(extra="ignore")
+
     enabled: bool = True
-    interval_seconds: int = Field(default=30, ge=1)
     debounce_seconds: float = Field(default=2.0, ge=0)
     clean: bool = False
     refresh_before_search: bool = True
@@ -259,52 +220,25 @@ class IndexFreshnessConfig(BaseModel):
 class ProfileConfig(BaseModel):
     """Bounded in-memory profile context configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     enabled: bool = True
-    user_budget: int = Field(default=500, ge=1)
-    project_budget: int = Field(default=700, ge=1)
+    user_budget: int = Field(default=DEFAULT_USER_RECALL_BUDGET, ge=1)
+    project_budget: int = Field(default=DEFAULT_PROJECT_RECALL_BUDGET, ge=1)
     inject_by_default: bool = False
 
 
 class MemoryConfig(BaseModel):
     """Configuration for a managed local Memora home."""
 
-    model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True, extra="ignore")
 
     schema_version: int = SCHEMA_VERSION
     home_path: Path
     vault_path: Path
-    raw_dir: str = "raw"
-    memories_dir: str = "Memories"
-    sources_dir: str = "Sources"
-    wiki_dir: str = "Wiki"
-    state_dir: str = DEFAULT_STATE_DIR_NAME
-    index_path: str = "state/index.sqlite"
-    default_scope: MemoryScope = MemoryScope.USER
     default_project: Optional[str] = None
-    user_default_status: LifecycleStatus = LifecycleStatus.ACTIVE
-    agent_default_status: LifecycleStatus = LifecycleStatus.PENDING
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
-    recall: RecallConfig = Field(default_factory=RecallConfig)
-    recall_policies: dict[str, TaskRecallPolicyConfig] = Field(
-        default_factory=_default_recall_policies
-    )
     agent_policy: AgentPolicyConfig = Field(default_factory=AgentPolicyConfig)
-    index_freshness: IndexFreshnessConfig = Field(default_factory=IndexFreshnessConfig)
-    profile: ProfileConfig = Field(default_factory=ProfileConfig)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_recall_policy_defaults(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        policies = data.get("recall_policies")
-        if not isinstance(policies, dict):
-            return data
-        review_policy = policies.get("review")
-        if isinstance(review_policy, dict) and "include_profile" not in review_policy:
-            policies = {**policies, "review": {**review_policy, "include_profile": False}}
-            return {**data, "recall_policies": policies}
-        return data
 
     @field_validator("schema_version")
     @classmethod
@@ -313,23 +247,49 @@ class MemoryConfig(BaseModel):
             raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
         return value
 
-    @field_validator(
-        "raw_dir",
-        "memories_dir",
-        "sources_dir",
-        "wiki_dir",
-        "state_dir",
-        "index_path",
-    )
-    @classmethod
-    def require_non_empty_string(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("config string values must not be empty")
-        return value
-
     @property
     def config_path(self) -> Path:
         return self.home_path / CONFIG_FILE_NAME
+
+    @property
+    def raw_dir(self) -> str:
+        return DEFAULT_RAW_DIR
+
+    @property
+    def memories_dir(self) -> str:
+        return DEFAULT_MEMORIES_DIR
+
+    @property
+    def sources_dir(self) -> str:
+        return DEFAULT_SOURCES_DIR
+
+    @property
+    def wiki_dir(self) -> str:
+        return DEFAULT_WIKI_DIR
+
+    @property
+    def state_dir(self) -> str:
+        return DEFAULT_STATE_DIR_NAME
+
+    @property
+    def index_path(self) -> str:
+        return DEFAULT_INDEX_PATH
+
+    @property
+    def recall(self) -> RecallConfig:
+        return RecallConfig()
+
+    @property
+    def recall_policies(self) -> dict[str, TaskRecallPolicyConfig]:
+        return _default_recall_policies()
+
+    @property
+    def index_freshness(self) -> IndexFreshnessConfig:
+        return IndexFreshnessConfig()
+
+    @property
+    def profile(self) -> ProfileConfig:
+        return ProfileConfig()
 
     @property
     def memory_root(self) -> Path:
@@ -526,87 +486,38 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
     for env_name, field_name in (
         (ENV_SEMANTIC_PROVIDER, "provider"),
         (ENV_SEMANTIC_MODEL, "model"),
-        (ENV_SEMANTIC_BATCH_SIZE, "batch_size"),
-        (ENV_SEMANTIC_DIMENSIONS, "dimensions"),
-        (ENV_SEMANTIC_MIN_SIMILARITY, "min_similarity"),
     ):
         value = os.environ.get(env_name)
         if value not in (None, ""):
             semantic_overrides[field_name] = value
 
-    freshness_overrides: dict[str, Any] = {}
-    for env_name, field_name in (
-        (ENV_FRESHNESS_ENABLED, "enabled"),
-        (ENV_FRESHNESS_INTERVAL_SECONDS, "interval_seconds"),
-        (ENV_FRESHNESS_DEBOUNCE_SECONDS, "debounce_seconds"),
-        (ENV_FRESHNESS_CLEAN, "clean"),
-        (ENV_FRESHNESS_REFRESH_BEFORE_SEARCH, "refresh_before_search"),
-        (ENV_FRESHNESS_REFRESH_BEFORE_RECALL, "refresh_before_recall"),
-    ):
-        value = os.environ.get(env_name)
-        if value not in (None, ""):
-            freshness_overrides[field_name] = value
-
     agent_policy_overrides: dict[str, Any] = {}
     for env_name, field_name in (
-        (ENV_AGENT_TRUST_LEVEL, "trust_level"),
-        (ENV_AGENT_DEFAULT_RECALL_BUDGET, "default_recall_budget"),
         (ENV_AGENT_MEMORY_ENABLED, "enabled"),
         (ENV_AGENT_AUTO_RECALL, "auto_recall"),
-        (ENV_AGENT_SESSION_CAPTURE, "session_capture"),
     ):
         value = os.environ.get(env_name)
         if value not in (None, ""):
             agent_policy_overrides[field_name] = value
 
-    profile_overrides: dict[str, Any] = {}
-    for env_name, field_name in (
-        (ENV_PROFILE_ENABLED, "enabled"),
-        (ENV_PROFILE_USER_BUDGET, "user_budget"),
-        (ENV_PROFILE_PROJECT_BUDGET, "project_budget"),
-        (ENV_PROFILE_INJECT_BY_DEFAULT, "inject_by_default"),
-    ):
-        value = os.environ.get(env_name)
-        if value not in (None, ""):
-            profile_overrides[field_name] = value
-
-    if (
-        not semantic_overrides
-        and not freshness_overrides
-        and not agent_policy_overrides
-        and not profile_overrides
-    ):
+    if not semantic_overrides and not agent_policy_overrides:
         return config_data
 
     semantic_config = config_data.get("semantic") or {}
     if not isinstance(semantic_config, dict):
         semantic_config = {}
-    freshness_config = config_data.get("index_freshness") or {}
-    if not isinstance(freshness_config, dict):
-        freshness_config = {}
     agent_policy_config = config_data.get("agent_policy") or {}
     if not isinstance(agent_policy_config, dict):
         agent_policy_config = {}
-    profile_config = config_data.get("profile") or {}
-    if not isinstance(profile_config, dict):
-        profile_config = {}
     return {
         **config_data,
         "semantic": {
             **semantic_config,
             **semantic_overrides,
         },
-        "index_freshness": {
-            **freshness_config,
-            **freshness_overrides,
-        },
         "agent_policy": {
             **agent_policy_config,
             **agent_policy_overrides,
-        },
-        "profile": {
-            **profile_config,
-            **profile_overrides,
         },
     }
 

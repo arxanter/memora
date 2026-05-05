@@ -123,9 +123,6 @@ You can override the narrow semantic config without editing the vault:
 ```bash
 export MEMORA_SEMANTIC_PROVIDER=local-command
 export MEMORA_SEMANTIC_MODEL=same-session-model
-export MEMORA_SEMANTIC_BATCH_SIZE=32
-export MEMORA_SEMANTIC_DIMENSIONS=1536
-export MEMORA_SEMANTIC_MIN_SIMILARITY=0.15
 ```
 
 These overrides are applied when config is loaded. They do not rewrite

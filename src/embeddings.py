@@ -9,7 +9,12 @@ import re
 import subprocess
 from typing import Callable, Protocol, Sequence
 
-from config import SemanticConfig
+from config import (
+    DEFAULT_SEMANTIC_BATCH_SIZE,
+    DEFAULT_SEMANTIC_DETERMINISTIC_DIMENSIONS,
+    DEFAULT_SEMANTIC_TIMEOUT_SECONDS,
+    SemanticConfig,
+)
 
 
 class EmbeddingProvider(Protocol):
@@ -162,7 +167,7 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
     if config.provider == "deterministic":
         return DeterministicEmbeddingProvider(
             model=config.model,
-            dimensions=config.dimensions or 32,
+            dimensions=DEFAULT_SEMANTIC_DETERMINISTIC_DIMENSIONS,
         )
     if config.provider == "local-command":
         if config.command is None:
@@ -172,13 +177,13 @@ def provider_from_config(config: SemanticConfig) -> EmbeddingProvider:
         return LocalCommandEmbeddingProvider(
             command=config.command,
             model=config.model,
-            timeout_seconds=config.timeout_seconds,
-            batch_size=config.batch_size,
+            timeout_seconds=DEFAULT_SEMANTIC_TIMEOUT_SECONDS,
+            batch_size=DEFAULT_SEMANTIC_BATCH_SIZE,
         )
     if config.provider == "fastembed":
         return FastEmbedEmbeddingProvider(
             model=config.model,
-            batch_size=config.batch_size,
+            batch_size=DEFAULT_SEMANTIC_BATCH_SIZE,
         )
     raise EmbeddingProviderError(f"unsupported semantic provider: {config.provider}")
 

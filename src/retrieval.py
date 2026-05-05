@@ -10,7 +10,12 @@ from typing import Any, Literal, Mapping, Optional, Sequence
 
 import yaml
 
-from config import MemoryConfig
+from config import (
+    DEFAULT_SEMANTIC_KEYWORD_LIMIT,
+    DEFAULT_SEMANTIC_MIN_SIMILARITY,
+    DEFAULT_SEMANTIC_VECTOR_LIMIT,
+    MemoryConfig,
+)
 from embeddings import (
     EmbeddingProvider,
     EmbeddingProviderError,
@@ -504,9 +509,7 @@ def _search_memory_once(
     try:
         text_primary: list[_Candidate] = []
         if fts_query is not None:
-            keyword_limit = (
-                config.semantic.keyword_limit if semantic_enabled else max(limit * 8, 40)
-            )
+            keyword_limit = DEFAULT_SEMANTIC_KEYWORD_LIMIT if semantic_enabled else max(limit * 8, 40)
             text_primary = _primary_candidates(
                 connection,
                 fts_query,
@@ -521,8 +524,8 @@ def _search_memory_once(
                 query,
                 filters,
                 provider=provider,
-                fetch_limit=max(limit * 8, config.semantic.vector_limit),
-                min_similarity=config.semantic.min_similarity,
+                fetch_limit=max(limit * 8, DEFAULT_SEMANTIC_VECTOR_LIMIT),
+                min_similarity=DEFAULT_SEMANTIC_MIN_SIMILARITY,
             )
 
         primary = _merge_candidates(text_primary, semantic_primary)
