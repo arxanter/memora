@@ -22,6 +22,22 @@ If Rust is not installed on the machine, install the stable toolchain first.
 
 ## Local Install
 
+Install latest GitHub release without Cargo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --version v0.1.0
+```
+
+The installer downloads the platform-specific release binary, verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, and initializes the Memora home.
+
+Build from source:
+
 ```bash
 memora setup
 memora self install
