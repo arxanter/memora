@@ -47,7 +47,10 @@ future pollers can drop original material there without understanding the
 canonical memory schema. Raw files are not canonical memories and should not be
 loaded by default recall. Processing raw material should copy or normalize it
 into `Sources/<source_id>/source.md` and optional `extract.md`, then propose
-source-backed pending memories under `Memories/`.
+source-backed pending memories under `Memories/`. Once curated evidence is saved,
+the processed raw file should be moved from `raw/inbox` to `raw/processed` with
+`memora raw mark-processed` so future raw reviews stay focused on unprocessed
+material.
 
 ## Memory Frontmatter
 

@@ -43,6 +43,11 @@ sensitivity, capture time, original path, file name, byte size, and content
 hash. `raw inspect` returns this metadata and a preview when the staged file is
 readable text.
 
+`memora raw list` defaults to `raw/inbox` so agents review only unprocessed
+material. After `source add` saves curated evidence, agents should call
+`memora raw mark-processed <path> --source-id <source_id>` to move the raw file
+and sidecar metadata into `raw/processed`.
+
 ## Curated Sources
 
 `memora source add <source.md> --extract <extract.md>` saves durable evidence
@@ -84,7 +89,7 @@ Generated rules are the contract for Cursor, Claude, Codex, and generic
 
 - treat `Remi`, `Рэми`, and `Реми` aliases as explicit Memora triggers;
 - call `memora build-context ...` only when memory is relevant, using the compact
-  default output for recall and `--json` only for structured/debug payloads;
+  default output for recall;
 - use returned context only when `memory_needed=true`;
 - stage raw input with `raw add`;
 - save durable evidence with `source add`;

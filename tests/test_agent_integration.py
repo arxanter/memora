@@ -217,7 +217,7 @@ def test_plan_managed_agent_write_appends_to_unmanaged_memora_text_target(tmp_pa
         "Keep this user-owned intro.\n\n"
         "## Memora Usage\n\n"
         'Use `memora build-context "<task>"` for recall.\n\n'
-        "Use `memora review --json` for pending memory.\n\n"
+        "Use `memora review` for pending memory.\n\n"
         "## Project Rules\n\n"
         "Keep this user-owned outro.\n",
         encoding="utf-8",
@@ -285,7 +285,7 @@ def test_agent_status_detects_unmanaged_target_as_appendable(tmp_path):
     target.write_text(
         "## Memora Usage\n\n"
         'Use `memora build-context "<task>"` for recall.\n\n'
-        "Use `memora review --json` for pending memory.\n",
+        "Use `memora review` for pending memory.\n",
         encoding="utf-8",
     )
 

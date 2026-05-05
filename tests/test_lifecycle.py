@@ -37,16 +37,16 @@ def test_review_reject_lifecycle_command(tmp_path):
         confidence=0.7,
     )
 
-    review_payload = runner.invoke(app, ["review", "--vault", str(vault), "--json"])
+    review_payload = runner.invoke(app, ["review", "--vault", str(vault)])
     reject_payload = runner.invoke(
         app,
-        ["review", "reject", "mem_20260430_agent", "--vault", str(vault), "--json"],
+        ["review", "reject", "mem_20260430_agent", "--vault", str(vault)],
     )
 
     assert review_payload.exit_code == 0, review_payload.output
     assert reject_payload.exit_code == 0, reject_payload.output
-    assert json.loads(review_payload.output)["items"][0]["id"] == "mem_20260430_agent"
-    assert json.loads(reject_payload.output)["mutations"][0]["status"] == "rejected"
+    assert "mem_20260430_agent" in review_payload.output
+    assert "updated mem_20260430_agent: pending -> rejected" in reject_payload.output
 
     document = validate_markdown_file(vault / "Memories/facts/agent.md")
     assert document.frontmatter.status == "rejected"

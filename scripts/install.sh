@@ -354,7 +354,7 @@ write_file "$BIN_DIR/memora" 0755 "$MEMORA_WRAPPER"
 
 if [ -n "$VAULT_PATH" ]; then
   log "initializing vault: $VAULT_PATH"
-  run_cmd "$BIN_DIR/memora" init "$VAULT_PATH" --json >/dev/null
+  run_cmd "$BIN_DIR/memora" init "$VAULT_PATH" >/dev/null
 fi
 
 cat <<EOF

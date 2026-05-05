@@ -122,12 +122,12 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, save this fact/decision/preference",
             "сохрани это как факт/решение/preference",
-            "create one atomic memory with `memora remember --json`; lifecycle follows `agent_policy`.",
+            "create one atomic memory with `memora remember`; lifecycle follows `agent_policy`.",
         ),
         (
             f"{primary}, review pending memory",
             "проверь pending memory",
-            "run `memora review --json`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.",
+            "run `memora review`, present a compact queue, and ask before approve/reject unless policy allows autonomous action.",
         ),
         (
             f"{primary}, update memory for <topic>",
@@ -416,6 +416,7 @@ def agent_scheduled_template_payload(
         "Stage the fetched raw file with `memora raw add` so the run has traceable input metadata.",
         "Create one concise extract for the run with Summary, Durable Facts, Decisions, Tasks, Preferences, Open Questions, and Relevant Quotes.",
         "Preserve curated evidence with `memora source add`.",
+        "Move each successfully processed raw input out of the inbox with `memora raw mark-processed`.",
         "Promote only durable atomic facts, decisions, preferences, tasks, or project context with `memora remember`.",
         "Return a compact report with inspected source count, saved source id/path, pending memory count, rejected proposal count, and review command.",
     ]
@@ -446,9 +447,10 @@ def agent_scheduled_template_payload(
             "",
             "Core ingest commands:",
             "```bash",
-            f'memora raw add <raw-file> --kind {selected_kind if selected_kind in {"slack"} else "text"} --format markdown --project "{selected_project}" --json',
-            f'memora source add <source.md> --extract <extract.md> --kind {selected_kind if selected_kind in {"slack"} else "text"} --project "{selected_project}" --json',
-            f'memora remember --type fact --project "{selected_project}" --text "<durable atomic fact>" --json',
+            f'memora raw add <raw-file> --kind {selected_kind if selected_kind in {"slack"} else "text"} --format markdown --project "{selected_project}"',
+            f'memora source add <source.md> --extract <extract.md> --kind {selected_kind if selected_kind in {"slack"} else "text"} --project "{selected_project}"',
+            "memora raw mark-processed <raw-file> --source-id <source_id>",
+            f'memora remember --type fact --project "{selected_project}" --text "<durable atomic fact>"',
             "```",
             "",
             "Safety guidance:",
@@ -485,7 +487,7 @@ def agent_session_template_payload(
             "",
             "At the end of a substantial task:",
             "1. Create a concise session summary with decisions, durable facts, tasks, and open questions.",
-            "2. If a transcript export is available, save it with `memora session finalize --summary-file <summary> --json`.",
+            "2. If a transcript export is available, save it with `memora session finalize --summary-file <summary>`.",
             "3. Propose only durable atomic memories; avoid raw logs, secrets, and transient implementation chatter.",
             "4. Leave inferred memories pending unless policy explicitly allows activation.",
             "5. Report the source saved, pending memory count, and review command.",
@@ -840,20 +842,21 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
     unscoped_search = f'memora search "<query>"{vault_arg}'
     brief = f'memora brief "<topic>"{vault_arg}{project_arg}'
     search = f'memora search "<query>"{vault_arg}{project_arg}'
-    review = f"memora review{vault_arg} --json"
-    remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>" --json'
+    review = f"memora review{vault_arg}"
+    remember = f'memora remember{vault_arg}{project_arg} --type decision --text "<durable decision>"'
     raw_add = (
-        f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown --json"
+        f"memora raw add <raw-file>{vault_arg}{project_arg} --kind text --format markdown"
     )
-    source_add = f"memora source add <source.md>{vault_arg}{project_arg} --extract <extract.md> --kind text --json"
-    session_finalize = f"memora session finalize <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --memories-file <memories.json> --json"
+    source_add = f"memora source add <source.md>{vault_arg}{project_arg} --extract <extract.md> --kind text"
+    raw_processed = f"memora raw mark-processed <raw-file>{vault_arg} --source-id <source_id>"
+    session_finalize = f"memora session finalize <transcript>{vault_arg}{project_arg} --summary-file <summary.md> --memories-file <memories.json>"
     primary = _primary_latin_alias(aliases)
     addressing = "/".join(aliases)
     routing_lines = _intent_routing_lines(aliases)
     return [
         "Current product direction is CLI-first and CLI-only for agents. Use `memora ...` commands from any project directory for recall, search, source lookup, raw staging, curated source evidence, memory writes, review, status, indexing, and session capture.",
         "",
-        "For recall/search/brief/build-context, prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`. Use `--json` for machine-readable writes, review/lifecycle operations, integration payloads, tests, and debugging.",
+        "Prefer the default compact agent output and inspect individual memories on demand with `memora inspect <id>`.",
         "",
         "Do not read, write, edit, delete, or migrate Memora vault files directly. This includes `Memories/`, `Sources/`, `Briefs/`, `raw/`, `.memora/index.sqlite`, cache, embeddings, locks, and schema files. Treat vault paths, SQLite/cache internals, frontmatter, filenames, and generated schema as private storage managed by the CLI.",
         "",
@@ -903,11 +906,12 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "- Do not propose saving transient implementation chatter, temporary logs, speculative ideas, secrets, raw dumps, sensitive personal data, or facts already obvious from the current code.",
         '- Keep prompts lightweight: "This seems useful to remember as <type>. Save it?" Only write after explicit approval unless the user directly asks to remember/save it.',
         "",
-        "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
+        "Source capture workflow: the AI agent reads or fetches the material first, stages unprocessed input in `raw/`, writes a concise extract, preserves curated evidence in `Sources/`, moves the processed raw file to `raw/processed` with `memora raw mark-processed`, then promotes only durable atomic facts, decisions, preferences, project context, or tasks.",
         "",
         "```bash",
         raw_add,
         source_add,
+        raw_processed,
         remember,
         "```",
         "",
@@ -929,7 +933,7 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Chat-noise reduction: do not narrate every `memora ...` call or paste large JSON. Summarize final effects only: source saved, pending memories created, review required, no durable memory found, or CLI gap encountered.",
         "",
-        "Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; stage raw input with `memora raw add`; preserve curated evidence with `memora source add`; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.",
+        "Scheduled task guidance: confirm source boundaries if ambiguous; fetch only requested sources; stage raw input with `memora raw add`; preserve curated evidence with `memora source add`; move processed raw files with `memora raw mark-processed`; never persist secrets, credentials, auth tokens, private personal data, or raw mailbox dumps as canonical memory; create one extract per run; promote only durable atomic items; return source count, pending memory count, and review command.",
         "",
     ]
 

@@ -106,7 +106,7 @@ raw input -> curated source -> atomic memory -> recalled context
 ```
 
 Humans usually do not need to run the lower-level memory commands directly.
-Generated agent rules call them with `--json` and preserve citations.
+Generated agent rules use compact CLI output and preserve citations.
 
 What the agent does behind the scenes
 
@@ -114,6 +114,8 @@ What the agent does behind the scenes
 - Saves durable facts, decisions, preferences, tasks, and project context with
 small atomic memory entries.
 - Stages raw files separately from curated source evidence.
+- Moves successfully processed raw files out of `raw/inbox` with
+  `memora raw mark-processed`.
 - Leaves inferred agent-authored memories pending for review unless policy says
 otherwise.
 - Avoids storing secrets, raw logs, and temporary implementation chatter as

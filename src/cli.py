@@ -112,8 +112,9 @@ HELP_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("agent-aliases set …", "Save assistant names to the vault config."),
             ("session finalize", "Save an agent transcript, summary, and proposed memories."),
             ("raw add <path>", "Copy one raw file into raw staging with sidecar metadata."),
-            ("raw list", "List raw inbox/archive files."),
+            ("raw list", "List raw inbox files by default."),
             ("raw inspect <path>", "Inspect one raw file before processing."),
+            ("raw mark-processed <path>", "Move a processed raw file out of the inbox."),
             (
                 "source add <source.md>",
                 "Save curated source text and optional extract under Sources/.",
@@ -159,7 +160,6 @@ def init_command(
     wrapper: Optional[Path] = typer.Option(
         None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Create an Obsidian-compatible vault layout and config."""
 
@@ -171,11 +171,8 @@ def init_command(
                 Path(payload["vault_path"]), wrapper=wrapper
             )
     except Exception as exc:  # pragma: no cover - exercised through CLI error handling
-        _handle_error(exc, json_output=json_output, code="init_failed")
+        _handle_error(exc, code="init_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Initialized vault:[/green] {payload['vault_path']}")
     if payload["config_created"]:
@@ -194,7 +191,6 @@ def setup_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview setup actions without writing files."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Preview or create the default CLI-first Memora vault layout."""
 
@@ -202,11 +198,8 @@ def setup_command(
         selected_vault = _resolve_setup_vault_path(vault)
         payload = setup_vault(selected_vault, dry_run=dry_run).to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="setup_failed")
+        _handle_error(exc, code="setup_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     label = "Setup dry run" if payload["dry_run"] else "Setup complete"
     console.print(f"[green]{label}:[/green] {payload['vault_path']}")
@@ -224,7 +217,6 @@ def vault_show_command(
     wrapper: Optional[Path] = typer.Option(
         None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show the default vault configured in the installed wrapper."""
 
@@ -232,11 +224,8 @@ def vault_show_command(
         wrapper_path = _resolve_memora_wrapper_path(wrapper)
         payload = _default_vault_payload(wrapper_path)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="vault_show_failed")
+        _handle_error(exc, code="vault_show_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if payload["configured"]:
         console.print(f"Default vault: {payload['vault_path']}")
@@ -251,18 +240,14 @@ def vault_set_command(
     wrapper: Optional[Path] = typer.Option(
         None, "--wrapper", help="Installed memora wrapper path; defaults to PATH lookup."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Set the installed wrapper default vault after validating it exists."""
 
     try:
         payload = _set_default_vault_payload(vault, wrapper=wrapper)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="vault_set_failed")
+        _handle_error(exc, code="vault_set_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Default vault updated:[/green] {payload['vault_path']}")
     console.print(f"Wrapper: {payload['wrapper_path']}")
@@ -287,7 +272,6 @@ def self_update_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview git actions without running them."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Soft-update the Memora source checkout with git stash, pull, and stash pop."""
 
@@ -300,11 +284,8 @@ def self_update_command(
             dry_run=dry_run,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="self_update_failed")
+        _handle_error(exc, code="self_update_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     label = "Self update dry run" if payload["dry_run"] else "Self update complete"
     console.print(f"[green]{label}:[/green] {payload['checkout_path']}")
@@ -319,7 +300,6 @@ def self_update_command(
 
 @app.command("help")
 def help_command(
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show Memora commands grouped by workflow."""
 
@@ -342,17 +322,14 @@ def help_command(
         ],
         "tips": [
             "Run `memora <command> --help` for command-specific options.",
-            "Retrieval commands default to compact agent output; use `--json` for structured/debug payloads.",
+            "Commands default to compact agent-readable text.",
             "Use `memora agent rules --client cursor` to generate project agent instructions.",
         ],
     }
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print("[bold]Memora commands[/bold]")
     console.print("Run [cyan]memora <command> --help[/cyan] for command-specific options.")
-    console.print("Most commands support [cyan]--json[/cyan].\n")
+    console.print("Default output is compact text for agents.\n")
     for group in payload["groups"]:
         console.print(f"[bold]{group['name']}[/bold]")
         for command in group["commands"]:
@@ -379,7 +356,6 @@ def agent_group_rules_command(
         "-a",
         help="Assistant name override for this run only (repeat). Default: vault config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate CLI-first coding-agent instructions."""
 
@@ -392,11 +368,8 @@ def agent_group_rules_command(
             alias_overrides=alias or None,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_rules_failed")
+        _handle_error(exc, code="agent_rules_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     typer.echo(payload["content"], nl=False)
 
@@ -410,7 +383,6 @@ def agent_targets_command(
     project: Optional[Path] = typer.Option(
         None, "--project", help="Project directory used for project-scope targets."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show resolved coding-agent integration targets."""
 
@@ -418,11 +390,8 @@ def agent_targets_command(
         project_path = _resolve_agent_project_path(project, scope=scope, command="agent targets")
         payload = _agent_targets_payload(client=client, scope=scope, project=project_path)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_targets_failed")
+        _handle_error(exc, code="agent_targets_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     for target in payload["targets"]:
         console.print(
@@ -453,7 +422,6 @@ def agent_integrate_command(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
     force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Install generated coding-agent instructions for one or more clients."""
 
@@ -470,11 +438,8 @@ def agent_integrate_command(
             alias_overrides=alias or None,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_integrate_failed")
+        _handle_error(exc, code="agent_integrate_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     _print_agent_operation_results(payload, dry_run_label="Dry run")
 
@@ -502,7 +467,6 @@ def agent_update_command(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview writes without changing files."),
     force: bool = typer.Option(False, "--force", help="Overwrite unmanaged existing target files."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Conservatively update managed coding-agent instructions."""
 
@@ -519,11 +483,8 @@ def agent_update_command(
             alias_overrides=alias or None,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_update_failed")
+        _handle_error(exc, code="agent_update_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     _print_agent_operation_results(payload, dry_run_label="Update dry run")
 
@@ -546,7 +507,6 @@ def agent_status_command(
         "-a",
         help="Assistant names for expected content hash (repeat). Default: vault config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Report coding-agent integration target status without mutating files."""
 
@@ -560,11 +520,8 @@ def agent_status_command(
             alias_overrides=alias or None,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_status_failed")
+        _handle_error(exc, code="agent_status_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     for result in payload["results"]:
         console.print(f"{result['client']}: {result['status']} -> {result['target_path']}")
@@ -588,7 +545,6 @@ def agent_doctor_command(
         "-a",
         help="Assistant names for expected rule content (repeat). Default: vault config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Lightly validate agent integration readiness without mutating files."""
 
@@ -604,11 +560,8 @@ def agent_doctor_command(
             alias_overrides=alias or None,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_doctor_failed")
+        _handle_error(exc, code="agent_doctor_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if payload["ok"]:
         console.print(
@@ -626,7 +579,6 @@ def agent_aliases_list_command(
     vault: Optional[Path] = typer.Option(
         None, "--vault", "-v", help="Vault path; default: resolve from cwd."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show assistant names from agent_policy.aliases."""
 
@@ -643,11 +595,8 @@ def agent_aliases_list_command(
             "aliases": cfg.agent_policy.aliases,
         }
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_aliases_list_failed")
+        _handle_error(exc, code="agent_aliases_list_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[bold]Assistant aliases[/bold] ({payload['vault_path']}):")
     for name in payload["aliases"]:
@@ -660,7 +609,6 @@ def agent_aliases_set_command(
     vault: Optional[Path] = typer.Option(
         None, "--vault", "-v", help="Vault path; default: resolve from cwd."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Persist assistant names to .memora/config.yaml (agent_policy.aliases)."""
 
@@ -678,11 +626,8 @@ def agent_aliases_set_command(
             "aliases": updated,
         }
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_aliases_set_failed")
+        _handle_error(exc, code="agent_aliases_set_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Updated assistant aliases[/green] for {payload['vault_path']}:")
     for name in payload["aliases"]:
@@ -700,18 +645,14 @@ def agent_scheduled_template_command(
     project: Optional[str] = typer.Option(
         None, "--project", help="Project name to embed in the template."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Render a minimal scheduled-memory task template."""
 
     try:
         payload = _agent_scheduled_template_payload(client=client, kind=kind, project=project)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_scheduled_template_failed")
+        _handle_error(exc, code="agent_scheduled_template_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     typer.echo(payload["content"])
 
@@ -724,18 +665,14 @@ def agent_session_template_command(
     project: Optional[str] = typer.Option(
         None, "--project", help="Project name to embed in the template."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Render a minimal session-end capture template."""
 
     try:
         payload = _agent_session_template_payload(client=client, project=project)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_session_template_failed")
+        _handle_error(exc, code="agent_session_template_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     typer.echo(payload["content"])
 
@@ -766,7 +703,6 @@ def agent_capture_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Validate and preview without writing to the vault."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Batch-save an agent-analyzed source and pending atomic memories."""
 
@@ -785,11 +721,8 @@ def agent_capture_command(
             dry_run=dry_run,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="agent_capture_failed")
+        _handle_error(exc, code="agent_capture_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if dry_run:
         console.print(
@@ -825,7 +758,6 @@ def session_finalize_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Validate and preview without writing to the vault."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Finalize an AI-agent session with a source, summary memory, and proposals."""
 
@@ -845,11 +777,8 @@ def session_finalize_command(
             dry_run=dry_run,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="session_finalize_failed")
+        _handle_error(exc, code="session_finalize_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if dry_run:
         console.print(
@@ -865,16 +794,15 @@ def session_finalize_command(
 @raw_app.command("list")
 def raw_list_command(
     path: Optional[Path] = typer.Argument(
-        None, help="Raw directory to list; defaults to <vault>/raw."
+        None, help="Raw directory to list; defaults to <vault>/raw/inbox."
     ),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
-    """List files in the raw inbox/archive layer."""
+    """List files in the raw inbox by default."""
 
     try:
         config = load_config(vault)
-        raw_path = _resolve_raw_path(config, path)
+        raw_path = _resolve_raw_path(config, path, default_subdir="inbox")
         candidates = _raw_files(raw_path)
         payload = {
             "ok": True,
@@ -889,11 +817,8 @@ def raw_list_command(
             ],
         }
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="raw_list_failed")
+        _handle_error(exc, code="raw_list_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(
         f"[green]Raw files:[/green] {payload['file_count']} [dim]{payload['relative_path']}[/dim]"
@@ -922,7 +847,6 @@ def raw_add_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show the staging plan without copying files."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Copy one raw file into raw staging with metadata only."""
 
@@ -940,11 +864,8 @@ def raw_add_command(
             dry_run=dry_run,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="raw_add_failed")
+        _handle_error(exc, code="raw_add_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if payload["dry_run"]:
         console.print(
@@ -959,7 +880,6 @@ def raw_add_command(
 def raw_inspect_command(
     path: Path = typer.Argument(..., help="Raw file to inspect."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Inspect one raw file before processing."""
 
@@ -975,11 +895,8 @@ def raw_inspect_command(
             **_raw_file_payload(config, raw_path, include_preview=True),
         }
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="raw_inspect_failed")
+        _handle_error(exc, code="raw_inspect_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[bold]{payload['relative_path']}[/bold]")
     console.print(f"Size: {payload['size_bytes']} bytes")
@@ -988,6 +905,44 @@ def raw_inspect_command(
     if payload.get("preview"):
         console.print("")
         console.print(payload["preview"], markup=False, soft_wrap=True)
+
+
+@raw_app.command("mark-processed")
+def raw_mark_processed_command(
+    path: Path = typer.Argument(..., help="Raw file to move into raw/processed."),
+    vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
+    source_id: Optional[str] = typer.Option(
+        None, "--source-id", help="Saved source id that was curated from this raw file."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the move plan without changing files."
+    ),
+) -> None:
+    """Move one processed raw file and its sidecar metadata into raw/processed."""
+
+    try:
+        config = load_config(vault)
+        payload = _raw_mark_processed_payload(
+            config,
+            path,
+            source_id=source_id,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        _handle_error(exc, code="raw_mark_processed_failed")
+
+
+    if payload["already_processed"]:
+        console.print(f"[green]Already processed:[/green] {payload['relative_path']}")
+        return
+    if payload["dry_run"]:
+        console.print(
+            f"[yellow]Dry run:[/yellow] would move {payload['relative_path']} -> {payload['relative_processed_path']}"
+        )
+        return
+    console.print(f"[green]Processed raw:[/green] {payload['relative_processed_path']}")
+    if payload.get("relative_processed_metadata_path"):
+        console.print(f"Metadata: {payload['relative_processed_metadata_path']}")
 
 
 @source_app.command("add")
@@ -1010,7 +965,6 @@ def source_add_command(
     ),
     sensitivity: str = typer.Option("normal", "--sensitivity", help="Sensitivity metadata."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Save curated source text and optional agent-authored extract."""
 
@@ -1029,13 +983,11 @@ def source_add_command(
             tags=tag,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="source_add_failed")
+        _handle_error(exc, code="source_add_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Saved source:[/green] {payload['relative_source_path']}")
+    console.print(f"Source id: {payload['source_id']}")
     if payload.get("relative_extract_path"):
         console.print(f"Extract: {payload['relative_extract_path']}")
 
@@ -1051,7 +1003,6 @@ def remember(
     ),
     status: Optional[LifecycleStatus] = typer.Option(None, "--status", help="Lifecycle status."),
     tag: list[str] = typer.Option([], "--tag", help="Tag to add; may be repeated."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Create a validated Markdown memory file."""
 
@@ -1068,11 +1019,8 @@ def remember(
         )
         payload = result.to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="remember_failed")
+        _handle_error(exc, code="remember_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Created memory:[/green] {payload['relative_path']}")
 
@@ -1103,7 +1051,6 @@ def memory_update_command(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview the update without writing files."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Update safe editable fields on an existing canonical memory."""
 
@@ -1131,11 +1078,8 @@ def memory_update_command(
         )
         payload = result.to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="memory_update_failed")
+        _handle_error(exc, code="memory_update_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     label = "Planned memory update" if dry_run else "Updated memory"
     if not payload.get("changed"):
@@ -1153,7 +1097,6 @@ def reindex(
     clean: bool = typer.Option(
         False, "--clean", help="Delete the existing SQLite index before rebuilding."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Rebuild the local SQLite index from Markdown."""
 
@@ -1161,11 +1104,8 @@ def reindex(
         config = load_config(vault)
         payload = reindex_vault(config, clean=clean).to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="reindex_failed")
+        _handle_error(exc, code="reindex_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"[green]Indexed vault:[/green] {payload['index_path']}")
     console.print(
@@ -1222,7 +1162,6 @@ def search(
         help="Refresh the index before search; defaults to index_freshness config.",
     ),
     limit: int = typer.Option(10, "--limit", min=1, help="Maximum number of results."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Search indexed memory using keyword, optional semantic, metadata, and graph signals."""
 
@@ -1254,13 +1193,9 @@ def search(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="index_missing" if isinstance(exc, RetrievalIndexError) else "search_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     _print_agent_search(payload)
 
@@ -1306,7 +1241,6 @@ def recall(
         "--refresh/--no-refresh",
         help="Refresh the index before recall; defaults to index_freshness config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Recall ranked memory chunks packed under a strict token budget."""
 
@@ -1344,13 +1278,9 @@ def recall(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="index_missing" if isinstance(exc, RetrievalIndexError) else "recall_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if not payload["chunks"]:
         console.print("[yellow]No memories packed.[/yellow]")
@@ -1402,7 +1332,6 @@ def explain_recall_command(
         "--refresh/--no-refresh",
         help="Refresh the index before explanation; defaults to index_freshness config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Explain why recall selected or skipped candidate chunks."""
 
@@ -1437,15 +1366,11 @@ def explain_recall_command(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="index_missing"
             if isinstance(exc, RetrievalIndexError)
             else "explain_recall_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(
         f"[green]Selected {payload['selected_count']} chunk(s)[/green] "
@@ -1477,7 +1402,6 @@ def lookup_source_command(
         "--loaded-source-id",
         help="Source id already loaded in this session; may be repeated or comma-separated.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Return compact read-only evidence for a saved source directory."""
 
@@ -1492,13 +1416,8 @@ def lookup_source_command(
             loaded_source_ids=loaded_source_id,
         )
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="lookup_source_failed")
+        _handle_error(exc, code="lookup_source_failed")
 
-    if json_output:
-        _print_json(payload)
-        if not payload.get("ok", False):
-            raise typer.Exit(1)
-        return
 
     if not payload.get("ok", False):
         error = payload.get("error") or {}
@@ -1564,7 +1483,6 @@ def brief(
         "--refresh/--no-refresh",
         help="Refresh the index before brief; defaults to index_freshness config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Generate a citation-preserving memora brief under a strict budget."""
 
@@ -1602,13 +1520,9 @@ def brief(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="index_missing" if isinstance(exc, RetrievalIndexError) else "brief_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     _print_agent_brief(payload)
 
@@ -1654,7 +1568,6 @@ def build_context_command(
         "--refresh/--no-refresh",
         help="Refresh the index before context building; defaults to index_freshness config.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Build CLI-first agent context with deterministic recall gating."""
 
@@ -1775,15 +1688,11 @@ def build_context_command(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="index_missing"
             if isinstance(exc, RetrievalIndexError)
             else "build_context_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if not payload["memory_needed"]:
         _print_agent_build_context(payload)
@@ -1794,14 +1703,10 @@ def build_context_command(
 @app.command("should-recall", hidden=True)
 def should_recall_command(
     message: str = typer.Argument(..., help="User message to classify."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Decide whether a user request should be enriched with memory."""
 
     payload = should_recall(message).to_dict()
-    if json_output:
-        _print_json(payload)
-        return
 
     if payload["should_recall"]:
         console.print(
@@ -1818,7 +1723,6 @@ def should_recall_command(
 @app.command()
 def status(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Summarize vault health and local index state."""
 
@@ -1826,11 +1730,8 @@ def status(
         config = load_config(vault)
         payload = status_summary(config)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="status_failed")
+        _handle_error(exc, code="status_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"Vault: {payload['vault_path']}")
     console.print(f"Memories: {payload['memory_count']}")
@@ -1843,7 +1744,6 @@ def status(
 def inspect(
     memory_id: str = typer.Argument(..., help="Memory id to inspect."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Inspect one memory by id."""
 
@@ -1853,13 +1753,9 @@ def inspect(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="memory_not_found" if isinstance(exc, ValueError) else "inspect_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     _print_agent_inspect(payload)
 
@@ -1871,7 +1767,6 @@ def open_command(
     launch: bool = typer.Option(
         False, "--launch", help="Open the Obsidian URI with the system `open` command."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Print the Markdown path and Obsidian URI for a memory."""
 
@@ -1881,13 +1776,9 @@ def open_command(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="memory_not_found" if isinstance(exc, ValueError) else "open_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     console.print(f"Path: {payload['path']}")
     console.print(f"Obsidian: {payload['obsidian_uri']}")
@@ -1902,7 +1793,6 @@ def open_command(
 def graph(
     memory_id: str = typer.Argument(..., help="Memory id to graph."),
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Show incoming and outgoing graph links for a memory."""
 
@@ -1912,13 +1802,9 @@ def graph(
     except Exception as exc:
         _handle_error(
             exc,
-            json_output=json_output,
             code="memory_not_found" if isinstance(exc, ValueError) else "graph_failed",
         )
 
-    if json_output:
-        _print_json(payload)
-        return
 
     memory = payload["memory"]
     console.print(f"[bold]{memory['id']}[/bold] [dim]{memory['path']}[/dim]")
@@ -1933,7 +1819,6 @@ def graph(
 @app.command()
 def doctor(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Validate Stage 1 memory Markdown schema."""
 
@@ -1941,11 +1826,8 @@ def doctor(
         config = load_config(vault)
         payload = doctor_report(config)
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="doctor_failed")
+        _handle_error(exc, code="doctor_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if payload["ok"]:
         console.print(
@@ -1967,7 +1849,6 @@ def doctor(
 @app.command()
 def conflicts(
     vault: Optional[Path] = typer.Option(None, "--vault", "-v", help="Vault path."),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Detect Markdown sync conflicts that require manual resolution."""
 
@@ -1975,13 +1856,8 @@ def conflicts(
         config = load_config(vault)
         payload = detect_sync_conflicts(config).to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="conflicts_failed")
+        _handle_error(exc, code="conflicts_failed")
 
-    if json_output:
-        _print_json(payload)
-        if not payload["ok"]:
-            raise typer.Exit(1)
-        return
 
     if payload["ok"]:
         console.print("[green]No Markdown sync conflicts found.[/green]")
@@ -2005,7 +1881,6 @@ def review(
     group_by: Optional[str] = typer.Option(
         None, "--group-by", help="Group human output by: source."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """List pending agent-generated memories awaiting review."""
 
@@ -2017,11 +1892,8 @@ def review(
         config = load_config(vault)
         payload = review_queue(config).to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code="review_failed")
+        _handle_error(exc, code="review_failed")
 
-    if json_output:
-        _print_json(payload)
-        return
 
     if not payload["items"]:
         console.print("[green]No pending agent memories.[/green]")
@@ -2048,7 +1920,6 @@ def review_approve(
         "--override-unsafe",
         help="Approve items with unsafe recall risk flags after explicit review.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Approve pending agent-generated memories by id."""
 
@@ -2059,7 +1930,6 @@ def review_approve(
         reason=reason,
         dry_run=dry_run,
         override_unsafe=override_unsafe,
-        json_output=json_output,
     )
 
 
@@ -2071,7 +1941,6 @@ def review_reject(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview rejections without writing files."
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON."),
 ) -> None:
     """Reject pending agent-generated memories by id."""
 
@@ -2081,7 +1950,6 @@ def review_reject(
         vault=vault,
         reason=reason,
         dry_run=dry_run,
-        json_output=json_output,
     )
 
 
@@ -2106,7 +1974,6 @@ def _review_action_command(
     vault: Optional[Path],
     reason: Optional[str],
     dry_run: bool,
-    json_output: bool,
     override_unsafe: bool = False,
     by_id: Optional[str] = None,
 ) -> None:
@@ -2122,13 +1989,8 @@ def _review_action_command(
             by_id=by_id,
         ).to_dict()
     except Exception as exc:
-        _handle_error(exc, json_output=json_output, code=f"review_{action}_failed")
+        _handle_error(exc, code=f"review_{action}_failed")
 
-    if json_output:
-        _print_json(payload)
-        if not payload["ok"]:
-            raise typer.Exit(1)
-        return
 
     _print_review_action_result(payload)
     if not payload["ok"]:
@@ -2213,8 +2075,12 @@ def _normalize_review_group_by(group_by: Optional[str]) -> Optional[str]:
     raise ValueError(f"unsupported --group-by value {group_by!r}; expected 'source'")
 
 
-def _resolve_raw_path(config: Any, path: Optional[Path]) -> Path:
+def _resolve_raw_path(
+    config: Any, path: Optional[Path], *, default_subdir: Optional[str] = None
+) -> Path:
     if path is None:
+        if default_subdir:
+            return (config.raw_root / default_subdir).resolve()
         return config.raw_root
     candidate = path.expanduser()
     if candidate.is_absolute():
@@ -2223,6 +2089,13 @@ def _resolve_raw_path(config: Any, path: Optional[Path]) -> Path:
     if parts and parts[0] == config.raw_dir:
         return (config.vault_path / candidate).resolve()
     return (config.raw_root / candidate).resolve()
+
+
+def _relative_to_raw_root(config: Any, path: Path) -> Path:
+    try:
+        return path.resolve().relative_to(config.raw_root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"raw file must be under {_relative_to_vault(config, config.raw_root)}") from exc
 
 
 def _raw_files(path: Path) -> list[Path]:
@@ -2381,6 +2254,92 @@ def _raw_add_payload(
     shutil.copy2(source_path, target_path)
     metadata_path.write_text(
         json_module.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return payload
+
+
+def _raw_mark_processed_payload(
+    config: Any,
+    path: Path,
+    *,
+    source_id: Optional[str],
+    dry_run: bool,
+) -> dict[str, Any]:
+    raw_path = _resolve_raw_path(config, path)
+    if _is_raw_metadata_path(raw_path):
+        raise ValueError("pass the raw file path, not its .meta.json sidecar")
+    if not raw_path.is_file():
+        raise ValueError(f"raw file not found: {raw_path}")
+
+    raw_relative = _relative_to_raw_root(config, raw_path)
+    already_processed = raw_relative.parts[:1] == ("processed",)
+    metadata_path = _raw_metadata_path(raw_path)
+    metadata = _raw_metadata(raw_path) or {}
+
+    if already_processed:
+        return {
+            "ok": True,
+            "implemented": True,
+            "command": "raw mark-processed",
+            "dry_run": dry_run,
+            "already_processed": True,
+            "path": str(raw_path),
+            "relative_path": _relative_to_vault(config, raw_path),
+            "metadata_path": str(metadata_path) if metadata_path.is_file() else None,
+            "relative_metadata_path": (
+                _relative_to_vault(config, metadata_path) if metadata_path.is_file() else None
+            ),
+            "metadata": metadata if metadata else None,
+        }
+
+    if raw_relative.parts[:1] == ("inbox",):
+        processed_relative = Path("processed").joinpath(*raw_relative.parts[1:])
+    else:
+        processed_relative = Path("processed").joinpath(*raw_relative.parts)
+    processed_path = _unique_path(config.raw_root / processed_relative)
+    processed_metadata_path = _raw_metadata_path(processed_path)
+    processed_at = datetime.now(timezone.utc).astimezone().isoformat()
+    updated_metadata = {
+        **metadata,
+        "status": "processed",
+        "processed_at": processed_at,
+        "previous_relative_path": _relative_to_vault(config, raw_path),
+        "content_hash": _file_content_hash(raw_path),
+    }
+    if source_id:
+        updated_metadata["source_id"] = source_id
+
+    payload = {
+        "ok": True,
+        "implemented": True,
+        "command": "raw mark-processed",
+        "dry_run": dry_run,
+        "already_processed": False,
+        "path": str(raw_path),
+        "relative_path": _relative_to_vault(config, raw_path),
+        "processed_path": str(processed_path),
+        "relative_processed_path": _relative_to_vault(config, processed_path),
+        "metadata_path": str(metadata_path),
+        "relative_metadata_path": _relative_to_vault(config, metadata_path),
+        "processed_metadata_path": str(processed_metadata_path),
+        "relative_processed_metadata_path": _relative_to_vault(config, processed_metadata_path),
+        "metadata": updated_metadata,
+        "would_move": [str(raw_path), str(processed_path)],
+    }
+    if metadata_path.is_file():
+        payload["would_move"].extend([str(metadata_path), str(processed_metadata_path)])
+    else:
+        payload["would_write"] = [str(processed_metadata_path)]
+
+    if dry_run:
+        return payload
+
+    processed_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(raw_path), str(processed_path))
+    if metadata_path.is_file():
+        shutil.move(str(metadata_path), str(processed_metadata_path))
+    processed_metadata_path.write_text(
+        json_module.dumps(updated_metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return payload
 
@@ -3797,9 +3756,6 @@ def _relative_to_vault(config: Any, path: Path) -> str:
         return str(path)
 
 
-def _print_json(payload: dict[str, Any]) -> None:
-    typer.echo(json_module.dumps(payload, indent=2, sort_keys=True))
-
 
 def _print_agent_operation_results(payload: Mapping[str, Any], *, dry_run_label: str) -> None:
     label = dry_run_label if payload.get("dry_run") else "Agent integration"
@@ -3835,15 +3791,12 @@ def _agent_vault_status_probe(vault: Optional[Path]) -> dict[str, Any]:
         }
 
 
-def _handle_error(exc: Exception, *, json_output: bool, code: str) -> None:
+def _handle_error(exc: Exception, *, code: str) -> None:
     message = str(exc)
     if isinstance(exc, ConfigError):
         code = "config_error"
 
-    if json_output:
-        _print_json({"ok": False, "error": {"code": code, "message": message}})
-    else:
-        console.print(f"[red]{code}:[/red] {message}")
+    console.print(f"[red]{code}:[/red] {message}")
     raise typer.Exit(1)
 
 

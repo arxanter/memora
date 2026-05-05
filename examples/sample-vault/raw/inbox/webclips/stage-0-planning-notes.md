@@ -4,7 +4,7 @@ This raw inbox example represents unprocessed material from a web clip, pasted
 note, or local export. It is safe to preview before curation:
 
 ```bash
-memora raw inspect raw/inbox/webclips/stage-0-planning-notes.md --vault examples/sample-vault --json
+memora raw inspect raw/inbox/webclips/stage-0-planning-notes.md --vault examples/sample-vault
 ```
 
 When useful, an agent should write a concise extract, save durable evidence with

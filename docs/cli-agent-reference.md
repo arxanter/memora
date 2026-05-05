@@ -1,12 +1,10 @@
 # Memora CLI Agent Reference
 
-Purpose: compact command map for agents. Retrieval commands default to compact
-agent-readable text; use `--json` when a machine-readable/debug payload is
-needed. Omit `--vault` unless the default vault is not configured.
+Purpose: compact command map for agents. Commands default to compact
+agent-readable text. Omit `--vault` unless the default vault is not configured.
 
 Common options:
 
-- `--json`: structured output for integrations, tests, lifecycle writes, or debugging.
 - `--vault PATH`, `-v PATH`: override vault resolution.
 - `--project NAME`: project filter/metadata where supported.
 - `--dry-run`: validate or preview without writing where supported.
@@ -29,60 +27,61 @@ Use these most often:
 - `memora build-context "<task>" --project <project> --task-class planning`
 - `memora search "<query>" --project <project>`
 - `memora inspect <id>`
-- `memora remember --type <type> --text "<atomic memory>" --project <project> --json`
-- `memora memory update <id> --scope user --clear-project --json`
-- `memora raw add <path> --kind <kind> --format <format> --project <project> --json`
-- `memora source add <source.md> --extract <extract.md> --kind <kind> --project <project> --json`
-- `memora review --json`
-- `memora review approve <id...> --reason "<reason>" --json`
-- `memora review reject <id...> --reason "<reason>" --json`
+- `memora remember --type <type> --text "<atomic memory>" --project <project>`
+- `memora memory update <id> --scope user --clear-project`
+- `memora raw add <path> --kind <kind> --format <format> --project <project>`
+- `memora source add <source.md> --extract <extract.md> --kind <kind> --project <project>`
+- `memora raw mark-processed <raw-path> --source-id <source_id>`
+- `memora review`
+- `memora review approve <id...> --reason "<reason>"`
+- `memora review reject <id...> --reason "<reason>"`
 
 Do not edit vault files directly. If the needed operation is not listed, stop
 and report the CLI gap.
 
 ## Setup And Health
 
-`memora init <vault> [--set-default] [--wrapper PATH] [--json]`
+`memora init <vault> [--set-default] [--wrapper PATH]`
 
 - Create vault layout and `.memora/config.yaml`.
 - With `--set-default`, also update the installed `memora` wrapper default.
 
-`memora setup [vault] [--dry-run] [--json]`
+`memora setup [vault] [--dry-run]`
 
 - Preview or create default vault layout. Without `<vault>`, uses the configured
   default vault (`MEMORA_VAULT`) before falling back to the current directory.
 
-`memora vault show [--wrapper PATH] [--json]`
+`memora vault show [--wrapper PATH]`
 
 - Show the default vault configured in the installed wrapper.
 
-`memora vault set <vault> [--wrapper PATH] [--json]`
+`memora vault set <vault> [--wrapper PATH]`
 
 - Validate that `<vault>` is initialized, then set it as the installed wrapper default.
 
-`memora help [--json]`
+`memora help`
 
 - Return public command groups. Useful for lightweight capability discovery.
 
-`memora status [--vault PATH] [--json]`
+`memora status [--vault PATH]`
 
 - Summarize vault health and index state.
 
-`memora doctor [--vault PATH] [--json]`
+`memora doctor [--vault PATH]`
 
 - Validate memory Markdown schema and graph links.
 
-`memora reindex [--vault PATH] [--clean] [--json]`
+`memora reindex [--vault PATH] [--clean]`
 
 - Rebuild local SQLite index from Markdown.
 
 ## Agent Integration
 
-`memora agent rules [--client <client>] [--scope project|user] [--vault PATH] [--project NAME] [--alias NAME ...] [--json]`
+`memora agent rules [--client <client>] [--scope project|user] [--vault PATH] [--project NAME] [--alias NAME ...]`
 
 - Generate Memora instructions for an agent client.
 
-`memora agent integrate [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force] [--json]`
+`memora agent integrate [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force]`
 
 - Install generated instructions into a project/user target. For project scope,
   run from the target project or pass `--project PATH`; Memora refuses implicit
@@ -92,51 +91,56 @@ and report the CLI gap.
   `~/.memora/integrations/` for manual installation because Cursor user rules
   are settings-managed.
 
-`memora agent update [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force] [--json]`
+`memora agent update [--client <client>] [--scope project|user] [--project PATH] [--target PATH] [--vault PATH] [--alias NAME ...] [--dry-run] [--force]`
 
 - Update managed instruction blocks.
 
-`memora agent status [--client <client>] [--scope project|user] [--project PATH] [--vault PATH] [--alias NAME ...] [--json]`
+`memora agent status [--client <client>] [--scope project|user] [--project PATH] [--vault PATH] [--alias NAME ...]`
 
 - Check installed instruction status.
 
-`memora agent-aliases list [--vault PATH] [--json]`
+`memora agent-aliases list [--vault PATH]`
 
 - Show Remi-style assistant aliases.
 
-`memora agent-aliases set <name...> [--vault PATH] [--json]`
+`memora agent-aliases set <name...> [--vault PATH]`
 
 - Persist assistant aliases.
 
 ## Raw And Sources
 
-`memora raw add <path> --kind <kind> --format <format> [--title TEXT] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--dry-run] [--vault PATH] [--json]`
+`memora raw add <path> --kind <kind> --format <format> [--title TEXT] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--dry-run] [--vault PATH]`
 
 - Copy raw input into staging with sidecar metadata. Does not create memories.
 
-`memora raw list [path] [--vault PATH] [--json]`
+`memora raw list [path] [--vault PATH]`
 
-- List staged raw files. Optional `path` defaults to vault `raw/`.
+- List staged raw inbox files. Optional `path` defaults to vault `raw/inbox`.
 
-`memora raw inspect <path> [--vault PATH] [--json]`
+`memora raw inspect <path> [--vault PATH]`
 
 - Inspect raw metadata and preview text when available.
 
-`memora source add <source.md> [--extract <extract.md>] [--kind <kind>] [--format <format>] [--title TEXT] [--url URL] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--vault PATH] [--json]`
+`memora raw mark-processed <path> [--source-id <source_id>] [--dry-run] [--vault PATH]`
+
+- Move a successfully processed raw file and sidecar metadata to `raw/processed`.
+  Run this after curated source evidence has been saved with `memora source add`.
+
+`memora source add <source.md> [--extract <extract.md>] [--kind <kind>] [--format <format>] [--title TEXT] [--url URL] [--project NAME] [--sensitivity normal|private|secret|unsafe] [--tag TAG ...] [--vault PATH]`
 
 - Save curated durable evidence under `Sources/`.
 
-`memora lookup-source <source_id> [--query TEXT] [--budget N] [--session-id ID] [--loaded-source-id ID ...] [--vault PATH] [--json]`
+`memora lookup-source <source_id> [--query TEXT] [--budget N] [--session-id ID] [--loaded-source-id ID ...] [--vault PATH]`
 
 - Return compact source evidence with citations.
 
 ## Memory Writes And Review
 
-`memora remember --type <memory_type> --text TEXT [--scope user|project] [--project NAME] [--status <status>] [--tag TAG ...] [--vault PATH] [--json]`
+`memora remember --type <memory_type> --text TEXT [--scope user|project] [--project NAME] [--status <status>] [--tag TAG ...] [--vault PATH]`
 
 - Create one canonical atomic memory.
 
-`memora memory update <id> [--type <memory_type>] [--scope user|project|global] [--project NAME|--clear-project] [--status <status>] [--confidence N|--clear-confidence] [--tag TAG ...|--clear-tags] [--title TEXT|--clear-title] [--text TEXT] [--reason TEXT] [--dry-run] [--vault PATH] [--json]`
+`memora memory update <id> [--type <memory_type>] [--scope user|project|global] [--project NAME|--clear-project] [--status <status>] [--confidence N|--clear-confidence] [--tag TAG ...|--clear-tags] [--title TEXT|--clear-title] [--text TEXT] [--reason TEXT] [--dry-run] [--vault PATH]`
 
 - Update safe editable fields on an existing canonical memory.
 - `--tag` replaces the full tag list; repeat it for multiple tags. Use
@@ -146,62 +150,60 @@ and report the CLI gap.
 - Non-project scopes clear `project` automatically unless `--project` is
   supplied.
 
-`memora review [--group-by source] [--vault PATH] [--json]`
+`memora review [--group-by source] [--vault PATH]`
 
 - List pending agent-authored memories.
 
-`memora review approve <id...> [--reason TEXT] [--dry-run] [--override-unsafe] [--vault PATH] [--json]`
+`memora review approve <id...> [--reason TEXT] [--dry-run] [--override-unsafe] [--vault PATH]`
 
 - Approve pending memories.
 
-`memora review reject <id...> [--reason TEXT] [--dry-run] [--vault PATH] [--json]`
+`memora review reject <id...> [--reason TEXT] [--dry-run] [--vault PATH]`
 
 - Reject pending memories.
 
 ## Retrieval
 
-`memora build-context <task> [--budget N] [--project NAME] [--task-class <class>] [--include-related] [--include-profile|--no-include-profile] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH] [--json]`
+`memora build-context <task> [--budget N] [--project NAME] [--task-class <class>] [--include-related] [--include-profile|--no-include-profile] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH]`
 
 - Main agent recall command. Use returned context only when
   `memory_needed=true`.
 - `--include-profile` adds a bounded in-memory rollup to this response.
-- Default output is compact agent text. `--json` preserves the full legacy
-  payload, including `trace`, `freshness`, `brief`, `profile`, and citations.
+- Default output is compact agent text.
 
-`memora search <query> [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--created-after DATE] [--created-before DATE] [--updated-after DATE] [--updated-before DATE] [--valid-from DATE] [--valid-to DATE] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--limit N] [--vault PATH] [--json]`
+`memora search <query> [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--created-after DATE] [--created-before DATE] [--updated-after DATE] [--updated-before DATE] [--valid-from DATE] [--valid-to DATE] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--limit N] [--vault PATH]`
 
 - Ranked search with snippets and citations.
 - Default output is a compact candidate list with IDs. Use `memora inspect <id>`
   to load a full memory only when needed.
 
-`memora recall <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH] [--json]`
+`memora recall <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH]`
 
 - Pack memory chunks under a token budget.
 
-`memora brief <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--loaded-source-id ID ...] [--refresh|--no-refresh] [--vault PATH] [--json]`
+`memora brief <query> [--budget N] [--project NAME] [--type <memory_type>] [--status <status>] [--scope user|project] [--task-class <class>] [--include-related] [--semantic|--no-semantic] [--mode <mode>] [--session-id ID] [--loaded-memory-id ID ...] [--refresh|--no-refresh] [--vault PATH]`
 
 - Produce citation-preserving Markdown context.
-- Default output is a compact cited brief with memory IDs. Use `--json` for the
-  full Markdown and section payload.
+- Default output is a compact cited brief with memory IDs.
 
 ## Inspect And Open
 
-`memora inspect <id> [--vault PATH] [--json]`
+`memora inspect <id> [--vault PATH]`
 
 - Show one memory by id.
 - Default output shows metadata and body without absolute vault/debug fields.
 
-`memora open <id> [--launch] [--vault PATH] [--json]`
+`memora open <id> [--launch] [--vault PATH]`
 
 - Print memory path and Obsidian URI; optionally launch URI.
 
-`memora conflicts [--vault PATH] [--json]`
+`memora conflicts [--vault PATH]`
 
 - Detect Markdown sync conflicts that require manual resolution.
 
 ## Session Capture
 
-`memora session finalize [transcript] [--transcript PATH] --summary-file <summary.md> [--memories-file <memories.json>] [--format TEXT] [--project NAME] [--tag TAG ...] [--sensitivity normal|private|secret|unsafe] [--confidence 0..1] [--dry-run] [--vault PATH] [--json]`
+`memora session finalize [transcript] [--transcript PATH] --summary-file <summary.md> [--memories-file <memories.json>] [--format TEXT] [--project NAME] [--tag TAG ...] [--sensitivity normal|private|secret|unsafe] [--confidence 0..1] [--dry-run] [--vault PATH]`
 
 - Save session transcript/source, summary extract, and optional proposed
   memories for review.

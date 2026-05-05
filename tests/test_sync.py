@@ -47,19 +47,17 @@ def test_detect_sync_conflicts_reports_markers_duplicate_ids_and_invalid_frontma
     assert doctor["conflict_count"] == 3
 
 
-def test_conflicts_cli_emits_json_and_exits_nonzero_for_conflicts(tmp_path):
+def test_conflicts_cli_reports_conflicts_and_exits_nonzero(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
     _write_memory(vault, "Memories/facts/one.md", memory_id="mem_20260430_dup", body="First copy.")
     _write_memory(vault, "Memories/facts/two.md", memory_id="mem_20260430_dup", body="Second copy.")
 
-    result = runner.invoke(app, ["conflicts", "--vault", str(vault), "--json"])
+    result = runner.invoke(app, ["conflicts", "--vault", str(vault)])
 
     assert result.exit_code == 1, result.output
-    payload = json.loads(result.output)
-    assert payload["ok"] is False
-    assert payload["conflict_count"] == 1
-    assert payload["issues"][0]["kind"] == "duplicate_id"
+    assert "Found 1 Markdown sync conflict(s)." in result.output
+    assert "duplicate_id" in result.output
 
 
 def test_clean_reindex_rebuilds_disposable_index_from_markdown(tmp_path):
