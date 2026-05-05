@@ -7,7 +7,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence, Union
+from typing import Any, Iterable, Optional, Sequence
 
 import yaml
 from pydantic import ValidationError
@@ -22,9 +22,6 @@ from schema import (
     validate_vault,
 )
 from sync import vault_lock
-
-PathLike = Union[Path, str]
-
 
 @dataclass(frozen=True)
 class IndexedChunk:
@@ -112,14 +109,6 @@ class ReindexResult:
             "orphan_count": self.graph.orphan_count,
             "graph_issues": [issue.to_dict() for issue in self.graph.issues],
         }
-
-
-@dataclass(frozen=True)
-class KeywordSearchResult:
-    chunk_id: str
-    document_id: str
-    chunk_type: str
-    text: str
 
 
 def reindex_vault(config: MemoryConfig, *, clean: bool = False) -> ReindexResult:
@@ -367,38 +356,6 @@ def split_document_chunks(document: MemoryDocument) -> tuple[IndexedChunk, ...]:
             )
         )
     return tuple(indexed_chunks)
-
-
-def keyword_search(
-    index_path: PathLike,
-    query: str,
-    *,
-    limit: int = 10,
-) -> tuple[KeywordSearchResult, ...]:
-    """Low-level FTS5 helper for tests and future retrieval services."""
-
-    cleaned_query = query.strip()
-    if not cleaned_query:
-        return ()
-    with sqlite3.connect(Path(index_path)) as connection:
-        rows = connection.execute(
-            """
-            SELECT id, document_id, chunk_type, text
-            FROM chunk_fts
-            WHERE chunk_fts MATCH ?
-            LIMIT ?
-            """,
-            (cleaned_query, limit),
-        ).fetchall()
-    return tuple(
-        KeywordSearchResult(
-            chunk_id=row[0],
-            document_id=row[1],
-            chunk_type=row[2],
-            text=row[3],
-        )
-        for row in rows
-    )
 
 
 def content_hash(value: str) -> str:
@@ -682,12 +639,10 @@ __all__ = [
     "GraphIssue",
     "GraphValidationReport",
     "IndexedChunk",
-    "KeywordSearchResult",
     "ReindexResult",
     "content_hash",
     "ensure_schema",
     "estimate_tokens",
-    "keyword_search",
     "reindex_vault",
     "split_document_chunks",
     "validate_graph",

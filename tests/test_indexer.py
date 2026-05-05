@@ -1,7 +1,7 @@
 import sqlite3
 
 from config import load_config
-from indexer import keyword_search, reindex_vault, validate_graph
+from indexer import reindex_vault, validate_graph
 from vault import init_vault
 
 
@@ -50,9 +50,17 @@ def test_reindex_creates_stage_four_tables_and_populates_fts(tmp_path):
         fts_count = connection.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0]
         assert fts_count == 2
 
-    matches = keyword_search(config.index_file, "keyword")
+    with sqlite3.connect(config.index_file) as connection:
+        matches = connection.execute(
+            """
+            SELECT document_id
+            FROM chunk_fts
+            WHERE chunk_fts MATCH ?
+            """,
+            ("keyword",),
+        ).fetchall()
     assert len(matches) == 2
-    assert {match.document_id for match in matches} == {"mem_20260430_sqlite1"}
+    assert {row[0] for row in matches} == {"mem_20260430_sqlite1"}
 
 
 def test_reindex_skips_unchanged_documents_by_content_hash(tmp_path):

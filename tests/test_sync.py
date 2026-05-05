@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from cli import app
 from config import load_config
-from indexer import keyword_search, reindex_vault
+from indexer import reindex_vault
 from sync import LockTimeout, atomic_write_text, detect_sync_conflicts, vault_lock
 from vault import doctor_report, init_vault
 
@@ -77,8 +77,17 @@ def test_clean_reindex_rebuilds_disposable_index_from_markdown(tmp_path):
 
     assert result.documents_indexed == 1
     assert result.documents_seen == 1
-    assert keyword_search(config.index_file, "rebuilds")[0].document_id == "mem_20260430_rebuild"
     with sqlite3.connect(config.index_file) as connection:
+        match = connection.execute(
+            """
+            SELECT document_id
+            FROM chunk_fts
+            WHERE chunk_fts MATCH ?
+            LIMIT 1
+            """,
+            ("rebuilds",),
+        ).fetchone()
+        assert match[0] == "mem_20260430_rebuild"
         assert connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
 
 

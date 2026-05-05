@@ -32,7 +32,6 @@ from config import (
     DEFAULT_SEMANTIC_MIN_SIMILARITY,
     DEFAULT_VAULT_DIR_NAME,
     ENV_MEMORA_HOME,
-    ENV_VAULT_PATH,
     ConfigError,
     load_config,
     resolve_memora_home,
@@ -301,39 +300,15 @@ def help_command(
 ) -> None:
     """Show Memora commands grouped by workflow."""
 
-    payload = {
-        "ok": True,
-        "implemented": True,
-        "command": "help",
-        "groups": [
-            {
-                "name": group_name,
-                "commands": [
-                    {
-                        "usage": usage,
-                        "description": description,
-                    }
-                    for usage, description in commands
-                ],
-            }
-            for group_name, commands in HELP_GROUPS
-        ],
-        "tips": [
-            "Run `memora <command> --help` for command-specific options.",
-            "Commands default to compact agent-readable text.",
-            "Use `memora agent rules --client cursor` to generate project agent instructions.",
-        ],
-    }
-
     console.print("[bold]Memora commands[/bold]")
     console.print("Run [cyan]memora <command> --help[/cyan] for command-specific options.")
     console.print("Default output is compact text for agents.\n")
-    for group in payload["groups"]:
-        console.print(f"[bold]{group['name']}[/bold]")
-        for command in group["commands"]:
+    for group_name, commands in HELP_GROUPS:
+        console.print(f"[bold]{group_name}[/bold]")
+        for usage, description in commands:
             line = Text("  ")
-            line.append(f"{command['usage']:<30}", style="cyan")
-            line.append(f" {command['description']}")
+            line.append(f"{usage:<30}", style="cyan")
+            line.append(f" {description}")
             console.print(line)
         console.print("")
     console.print("Agent setup: [cyan]memora agent rules --client cursor[/cyan]")
@@ -2258,7 +2233,6 @@ def _review_action_command(
     reason: Optional[str],
     dry_run: bool,
     override_unsafe: bool = False,
-    by_id: Optional[str] = None,
 ) -> None:
     try:
         config = load_config(vault)
@@ -2269,7 +2243,6 @@ def _review_action_command(
             reason=reason,
             dry_run=dry_run,
             override_unsafe=override_unsafe,
-            by_id=by_id,
         ).to_dict()
     except Exception as exc:
         _handle_error(exc, code=f"review_{action}_failed")
@@ -2312,7 +2285,7 @@ def _print_review_diff(item: dict[str, Any]) -> None:
     risk_flags = item.get("risk_flags") or []
     if risk_flags:
         console.print(f"risk: {', '.join(risk_flags)}")
-    actions = item.get("proposed_actions") or ["approve", "reject", "defer", "inspect"]
+    actions = item.get("proposed_actions") or ["approve", "reject", "inspect"]
     console.print(f"actions: {', '.join(actions)}")
     for line in (
         f"+ id: {item['id']}",
@@ -2897,6 +2870,7 @@ def _context_intent(query: str, requested: str) -> tuple[str, str]:
         token in lowered
         for token in (
             "decided",
+            "decide",
             "decision",
             "preference",
             "task",

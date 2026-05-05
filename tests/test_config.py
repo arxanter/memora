@@ -9,7 +9,6 @@ from config import (
     ENV_SEMANTIC_MODEL,
     ENV_SEMANTIC_PROVIDER,
     ENV_VAULT_PATH,
-    config_to_dict,
     load_config,
     set_agent_aliases,
 )
@@ -173,30 +172,24 @@ def test_load_config_keeps_profile_as_runtime_default_not_public_config(tmp_path
     init_vault(vault)
 
     config = load_config(vault)
-    summary = config_to_dict(config)
 
     assert config.profile.enabled is True
     assert config.profile.user_budget == 500
     assert config.profile.project_budget == 700
     assert config.profile.inject_by_default is False
-    assert "profile" not in summary
 
 
 def test_sample_vault_config_loads_with_cli_first_defaults():
     sample_vault = ROOT / "examples" / "sample-vault"
 
     config = load_config(sample_vault)
-    summary = config_to_dict(config)
 
     assert config.default_project == "memora"
     assert config.recall_policies["planning"].include_related is True
     assert config.recall_policies["review"].include_pending is True
     assert config.profile.enabled is True
     assert config.index_freshness.refresh_before_search is True
-    assert summary["semantic"]["provider"] is None
-    assert "recall" not in summary
-    assert "recall_policies" not in summary
-    assert "index_freshness" not in summary
+    assert config.semantic.provider is None
 
 
 def test_load_config_ignores_legacy_profile_yaml_overrides(tmp_path):

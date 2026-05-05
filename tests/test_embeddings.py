@@ -19,12 +19,12 @@ class _CompletedProcess:
 
 def test_provider_from_config_builds_deterministic_test_provider():
     provider = provider_from_config(
-        SemanticConfig(provider="deterministic", model="deterministic-test-v1", dimensions=8)
+        SemanticConfig(provider="deterministic", model="deterministic-test-v1")
     )
 
     assert provider.name == "deterministic"
     assert provider.model == "deterministic-test-v1"
-    assert len(provider.embed(["fixture"])[0]) == 8
+    assert len(provider.embed(["fixture"])[0]) == 32
 
 
 def test_provider_from_config_builds_fastembed_provider_without_importing_model():

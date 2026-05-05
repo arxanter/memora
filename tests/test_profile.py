@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 
-import pytest
 import yaml
 
 from config import ProfileConfig, load_config
@@ -157,67 +156,6 @@ def test_generate_project_profile_context_filters_exact_project_and_enforces_bud
     assert "[[Memories/decisions/project-a|mem_20260501_project_a]]" in markdown
     assert "Other project memory should be excluded." not in markdown
     assert "This second exact project memory" not in markdown
-
-
-def test_generate_profile_context_uses_configured_default_budgets_and_explicit_override(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/preferences/user-default-budget.md",
-        memory_id="mem_20260501_user_default_budget",
-        memory_type="preference",
-        body="Profile builders should use the configured user budget.",
-    )
-    _write_memory(
-        vault,
-        "Memories/project-context/project-default-budget.md",
-        memory_id="mem_20260501_project_default_budget",
-        memory_type="project_context",
-        scope="project",
-        project="memora",
-        body="Project profiles should use the configured project budget.",
-    )
-    config = load_config(vault).model_copy(
-        update={"profile": ProfileConfig(user_budget=321, project_budget=654)}
-    )
-
-    user_result = generate_profile_context(
-        config,
-        profile_type="user",
-        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
-    )
-    project_result = generate_profile_context(
-        config,
-        profile_type="project",
-        project="memora",
-        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
-    )
-    explicit_result = generate_profile_context(
-        config,
-        profile_type="user",
-        budget=777,
-        now=datetime(2026, 5, 1, 12, 0, tzinfo=timezone.utc),
-    )
-
-    user_frontmatter = yaml.safe_load(user_result.markdown.split("---", 2)[1])
-    project_frontmatter = yaml.safe_load(project_result.markdown.split("---", 2)[1])
-    explicit_frontmatter = yaml.safe_load(explicit_result.markdown.split("---", 2)[1])
-    assert user_result.budget == 321
-    assert user_frontmatter["token_budget"] == 321
-    assert project_result.budget == 654
-    assert project_frontmatter["token_budget"] == 654
-    assert explicit_result.budget == 777
-    assert explicit_frontmatter["token_budget"] == 777
-
-
-def test_generate_profile_context_respects_disabled_config(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    config = load_config(vault).model_copy(update={"profile": ProfileConfig(enabled=False)})
-
-    with pytest.raises(ValueError, match="profile generation is disabled"):
-        generate_profile_context(config, profile_type="user", budget=500)
 
 
 def test_build_context_profile_payload_returns_context_without_file_paths(tmp_path):

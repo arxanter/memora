@@ -522,12 +522,3 @@ def _apply_environment_overrides(config_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def config_to_dict(config: MemoryConfig) -> dict[str, Any]:
-    """Return a JSON-safe config summary."""
-
-    data = config.model_dump(mode="json")
-    data["home_path"] = str(config.home_path)
-    data["vault_path"] = str(config.vault_path)
-    data["config_path"] = str(config.config_path)
-    data["state_path"] = str(config.state_root)
-    return data

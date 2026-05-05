@@ -5,15 +5,7 @@ from typer.testing import CliRunner
 from cli import app
 from config import load_config
 from indexer import reindex_vault
-from lifecycle import (
-    contradict_memories,
-    curation_plan,
-    decay_memories,
-    reject_memory,
-    review_batch_action,
-    review_queue,
-    supersede_memory,
-)
+from lifecycle import review_batch_action, review_queue
 from retrieval import SearchFilters, search_memory
 from schema import validate_markdown_file
 from vault import doctor_report, init_vault
@@ -55,48 +47,6 @@ def test_review_reject_lifecycle_command(tmp_path):
     assert [entry["action"] for entry in history] == ["reject"]
 
 
-def test_supersede_updates_status_relation_and_audit_together(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/decisions/old.md",
-        memory_id="mem_20260430_old",
-        memory_type="decision",
-        body="Use old lifecycle behavior.",
-    )
-    _write_memory(
-        vault,
-        "Memories/decisions/new.md",
-        memory_id="mem_20260430_new",
-        memory_type="decision",
-        body="Use new lifecycle behavior.",
-    )
-    config = load_config(vault)
-
-    result = supersede_memory(config, "mem_20260430_old", new_id="mem_20260430_new")
-
-    assert result.to_dict()["relation"] == "supersedes"
-    old_doc = validate_markdown_file(vault / "Memories/decisions/old.md")
-    new_doc = validate_markdown_file(vault / "Memories/decisions/new.md")
-    assert old_doc.frontmatter.status == "superseded"
-    assert old_doc.frontmatter.valid_to is not None
-    assert any(
-        relation.type == "supersedes" and relation.target == "mem_20260430_old"
-        for relation in new_doc.frontmatter.relations
-    )
-    assert old_doc.frontmatter.model_dump(mode="json")["history"][0]["by"] == "mem_20260430_new"
-    assert new_doc.frontmatter.model_dump(mode="json")["history"][0]["target"] == "mem_20260430_old"
-
-    reindex_vault(config)
-    rows = search_memory(
-        config,
-        "lifecycle behavior",
-        filters=SearchFilters(status="superseded"),
-    ).to_dict()["results"]
-    assert [row["id"] for row in rows] == ["mem_20260430_old"]
-
-
 def test_contradict_surfaces_in_brief_and_doctor_without_missing_link(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)
@@ -106,6 +56,7 @@ def test_contradict_surfaces_in_brief_and_doctor_without_missing_link(tmp_path):
         memory_id="mem_20260430_left",
         memory_type="decision",
         body="Contradiction lifecycle says Markdown is durable.",
+        contradicts=["mem_20260430_right"],
     )
     _write_memory(
         vault,
@@ -116,7 +67,6 @@ def test_contradict_surfaces_in_brief_and_doctor_without_missing_link(tmp_path):
     )
     config = load_config(vault)
 
-    contradict_memories(config, "mem_20260430_left", "mem_20260430_right")
     doctor = doctor_report(config)
 
     assert doctor["ok"] is True
@@ -210,28 +160,6 @@ def test_retrieval_hides_superseded_pending_and_rejected_by_default(tmp_path):
     assert "mem_20260430_old" in explicit_superseded_ids
     assert "mem_20260430_pending" not in default_ids
     assert "mem_20260430_rejected" not in default_ids
-
-
-def test_decay_marks_expired_active_memories_stale(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/facts/expired.md",
-        memory_id="mem_20260430_expired",
-        memory_type="fact",
-        body="Expired valid_to memory should decay to stale.",
-        valid_from="2025-01-01",
-        valid_to="2026-01-01",
-    )
-    config = load_config(vault)
-
-    result = decay_memories(config)
-
-    assert result.to_dict()["changed"] == 1
-    document = validate_markdown_file(vault / "Memories/facts/expired.md")
-    assert document.frontmatter.status == "stale"
-    assert document.frontmatter.model_dump(mode="json")["history"][0]["action"] == "decay"
 
 
 def test_review_queue_only_lists_pending_agent_memories(tmp_path):
@@ -370,39 +298,6 @@ def test_review_batch_reject_changes_multiple_pending_items_and_records_history(
         history = document.frontmatter.model_dump(mode="json")["history"]
         assert history[-1]["action"] == "reject"
         assert history[-1]["reason"] == "not durable"
-
-
-def test_review_batch_defer_keeps_pending_and_records_history(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/tasks/defer.md",
-        memory_id="mem_20260430_defer",
-        memory_type="task",
-        status="pending",
-        body="Pending memory can be deferred for later review.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_review/extract.md",
-        confidence=0.65,
-    )
-    config = load_config(vault)
-
-    result = review_batch_action(
-        config,
-        "defer",
-        ["mem_20260430_defer"],
-        reason="needs product confirmation",
-    ).to_dict()
-
-    assert result["ok"] is True
-    assert result["mutations"][0]["previous_status"] == "pending"
-    assert result["mutations"][0]["status"] == "pending"
-    document = validate_markdown_file(vault / "Memories/tasks/defer.md")
-    assert document.frontmatter.status == "pending"
-    history = document.frontmatter.model_dump(mode="json")["history"]
-    assert history[-1]["action"] == "defer"
-    assert history[-1]["reason"] == "needs product confirmation"
 
 
 def test_review_batch_dry_run_plans_operations_without_writing(tmp_path):
@@ -574,7 +469,7 @@ def test_review_queue_surfaces_frontmatter_importance_without_schema_migration(t
         "reasons": ["frontmatter_importance"],
     }
     assert "high_importance" in frontmatter_item["risk_flags"]
-    assert frontmatter_item["recommended_action"] == "defer"
+    assert frontmatter_item["recommended_action"] == "inspect"
 
     invalid_item = items["mem_20260430_invalid_importance"]
     assert invalid_item["importance"] == {
@@ -882,101 +777,6 @@ def test_review_queue_surfaces_high_signal_opposite_claims_without_mutating_memo
     unrelated_item = items["mem_20260430_pending_unrelated_claim"]
     assert unrelated_item["contradiction_candidates"] == []
     assert "has_contradictions" not in unrelated_item["risk_flags"]
-
-
-def test_curation_plan_proposes_conservative_actions_without_mutating_memories(tmp_path):
-    vault = tmp_path / "memory-vault"
-    init_vault(vault)
-    _write_memory(
-        vault,
-        "Memories/facts/active-duplicate.md",
-        memory_id="mem_20260430_active_duplicate",
-        memory_type="fact",
-        status="active",
-        body="Lifecycle curation detects duplicate review text.",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/active-truth.md",
-        memory_id="mem_20260430_active_truth",
-        memory_type="fact",
-        status="active",
-        body="Lifecycle curation active memory says Markdown is durable.",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/pending-duplicate.md",
-        memory_id="mem_20260430_pending_duplicate",
-        memory_type="fact",
-        status="pending",
-        body="Lifecycle curation detects duplicate review text.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_curate_duplicates/extract.md",
-        confidence=0.95,
-    )
-    _write_memory(
-        vault,
-        "Memories/facts/pending-contradiction.md",
-        memory_id="mem_20260430_pending_contradiction",
-        memory_type="fact",
-        status="pending",
-        body="Lifecycle curation pending memory contradicts active truth.",
-        author_kind="agent",
-        source_path="Sources/2026-04-30_curate_contradictions/extract.md",
-        confidence=0.95,
-        contradicts=["mem_20260430_active_truth"],
-    )
-    memory_paths = sorted((vault / "Memories").rglob("*.md"))
-    before = {path: path.read_text(encoding="utf-8") for path in memory_paths}
-    config = load_config(vault)
-
-    payload = curation_plan(config)
-
-    assert {path: path.read_text(encoding="utf-8") for path in memory_paths} == before
-    assert payload["command"] == "curate"
-    assert payload["tool"] == "curate"
-    assert payload["implemented"] is True
-    assert payload["pending_count"] == 2
-    assert payload["proposal_count"] == 2
-    assert payload["counts"]["actions"] == {
-        "inspect_contradiction": 1,
-        "merge_or_reject_duplicate": 1,
-    }
-    items = {item["id"]: item for item in payload["items"]}
-    duplicate_item = items["mem_20260430_pending_duplicate"]
-    assert duplicate_item["recommended_action"] == "merge_or_reject_duplicate"
-    assert duplicate_item["review_recommended_action"] == "inspect"
-    assert duplicate_item["curation"]["proposal_only"] is True
-    assert duplicate_item["curation"]["reason"] == "likely_duplicate_of_active_memory"
-    assert duplicate_item["candidate_summaries"] == [
-        {
-            "kind": "duplicate",
-            "id": "mem_20260430_active_duplicate",
-            "relative_path": "Memories/facts/active-duplicate.md",
-            "type": "fact",
-            "status": "active",
-            "reason": "normalized_content_exact_match",
-        }
-    ]
-    contradiction_item = items["mem_20260430_pending_contradiction"]
-    assert contradiction_item["recommended_action"] == "inspect_contradiction"
-    assert contradiction_item["curation"]["proposal_only"] is True
-    assert (
-        contradiction_item["curation"]["reason"] == "likely_contradiction_requires_human_inspection"
-    )
-    assert contradiction_item["candidate_summaries"] == [
-        {
-            "kind": "contradiction",
-            "id": "mem_20260430_active_truth",
-            "relation_direction": "outgoing",
-            "reason": "explicit_contradicts_relation",
-            "relative_path": "Memories/facts/active-truth.md",
-            "type": "fact",
-            "status": "active",
-        }
-    ]
 
 
 def test_review_queue_groups_pending_memories_by_source(tmp_path):

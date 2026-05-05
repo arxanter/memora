@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence, Union
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import yaml
 
@@ -32,7 +32,7 @@ from safety import (
     scan_metadata,
     scan_text,
 )
-from sync import atomic_write_many, atomic_write_text, vault_lock
+from sync import atomic_write_text, vault_lock
 from vault import MEMORY_TYPE_DIRECTORIES
 
 _FRONTMATTER_RE = re.compile(
@@ -333,7 +333,7 @@ class ReviewItem:
     updated_at: str
     risk_flags: tuple[str, ...] = ()
     recommended_action: str = "inspect"
-    proposed_actions: tuple[str, ...] = ("approve", "reject", "defer", "inspect")
+    proposed_actions: tuple[str, ...] = ("approve", "reject", "inspect")
     duplicate_candidates: tuple[DuplicateCandidate, ...] = ()
     contradiction_candidates: tuple[ContradictionCandidate, ...] = ()
 
@@ -396,103 +396,6 @@ class ReviewQueue:
             "source_groups": _source_groups(self.items),
             "citations": self.citations,
         }
-
-
-def curation_plan(
-    config: MemoryConfig,
-    *,
-    project: Optional[str] = None,
-    source: Optional[str] = None,
-) -> dict[str, Any]:
-    """Return conservative, read-only review proposals without mutating memories."""
-
-    queue = review_queue(config)
-    records_by_id = _records_by_id(config)
-    items = [
-        _curation_item(item)
-        for item in queue.items
-        if _matches_project(item, records_by_id, project) and _matches_source(item.source, source)
-    ]
-    action_counts = _count_by_key(items, "recommended_action")
-    duplicate_candidate_count = sum(len(item["duplicate_candidates"]) for item in items)
-    contradiction_candidate_count = sum(len(item["contradiction_candidates"]) for item in items)
-    return {
-        "ok": True,
-        "implemented": True,
-        "command": "curate",
-        "tool": "curate",
-        "vault_path": str(config.vault_path),
-        "filters": {
-            "project": project,
-            "source": source,
-        },
-        "pending_count": len(queue.items),
-        "proposal_count": len(items),
-        "counts": {
-            "pending": len(queue.items),
-            "proposals": len(items),
-            "duplicate_candidates": duplicate_candidate_count,
-            "contradiction_candidates": contradiction_candidate_count,
-            "actions": action_counts,
-        },
-        "items": items,
-        "citations": [item["citation"] for item in items],
-    }
-
-
-def mark_status(
-    config: MemoryConfig,
-    memory_id: str,
-    status: Union[LifecycleStatus, str],
-    *,
-    reason: Optional[str] = None,
-    _action: str = "mark_status",
-) -> LifecycleResult:
-    """Set a memory lifecycle status and append an audit history entry."""
-
-    selected_status = _status_value(status)
-    with vault_lock(config):
-        return _mark_status_unlocked(
-            config,
-            memory_id,
-            selected_status,
-            reason=reason,
-            _action=_action,
-        )
-
-
-def approve_memory(
-    config: MemoryConfig,
-    memory_id: str,
-    *,
-    reason: Optional[str] = None,
-) -> LifecycleResult:
-    """Approve a pending memory by making it active."""
-
-    result = mark_status(
-        config, memory_id, LifecycleStatus.ACTIVE, reason=reason, _action="approve"
-    )
-    return LifecycleResult(command="approve", mutations=result.mutations, details=result.details)
-
-
-def defer_memory(
-    config: MemoryConfig,
-    memory_id: str,
-    *,
-    reason: Optional[str] = None,
-) -> LifecycleResult:
-    """Keep or return a memory to pending while recording a review audit entry."""
-
-    with vault_lock(config):
-        result = _mark_status_unlocked(
-            config,
-            memory_id,
-            LifecycleStatus.PENDING.value,
-            reason=reason,
-            _action="defer",
-            _record_noop=True,
-        )
-    return LifecycleResult(command="defer", mutations=result.mutations, details=result.details)
 
 
 def _mark_status_unlocked(
@@ -562,20 +465,6 @@ def _mark_status_unlocked(
         mutations=(mutation,),
         details={"id": memory_id, "status": selected_status, "changed": True},
     )
-
-
-def reject_memory(
-    config: MemoryConfig,
-    memory_id: str,
-    *,
-    reason: Optional[str] = None,
-) -> LifecycleResult:
-    """Reject a memory so it is excluded by default retrieval."""
-
-    result = mark_status(
-        config, memory_id, LifecycleStatus.REJECTED, reason=reason, _action="reject"
-    )
-    return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
 
 
 def update_memory(
@@ -786,22 +675,14 @@ def review_batch_action(
     reason: Optional[str] = None,
     dry_run: bool = False,
     override_unsafe: bool = False,
-    by_id: Optional[str] = None,
 ) -> ReviewBatchResult:
     """Apply an explicit batch review action to pending agent-generated memories."""
 
     selected_action = action.strip().lower()
-    if selected_action not in {"approve", "reject", "defer", "supersede"}:
-        raise ValueError("review action must be approve, reject, defer, or supersede")
+    if selected_action not in {"approve", "reject"}:
+        raise ValueError("review action must be approve or reject")
     if not memory_ids:
         raise ValueError("at least one memory id is required")
-    if selected_action == "supersede":
-        if len(memory_ids) != 1:
-            raise ValueError("review supersede accepts exactly one old memory id")
-        if not by_id:
-            raise ValueError("review supersede requires --by <new_id>")
-    elif by_id:
-        raise ValueError("--by is only supported for review supersede")
 
     if dry_run:
         results = _plan_review_batch_action(
@@ -809,7 +690,6 @@ def review_batch_action(
             selected_action,
             memory_ids,
             override_unsafe=override_unsafe,
-            by_id=by_id,
         )
     else:
         with vault_lock(config):
@@ -819,14 +699,11 @@ def review_batch_action(
                 memory_ids,
                 reason=reason,
                 override_unsafe=override_unsafe,
-                by_id=by_id,
             )
 
     details: dict[str, Any] = {"requested_ids": list(memory_ids)}
     if selected_action == "approve":
         details["override_unsafe"] = override_unsafe
-    if by_id:
-        details["by_id"] = by_id
     return ReviewBatchResult(
         command=f"review {selected_action}",
         action=selected_action,
@@ -843,7 +720,6 @@ def _plan_review_batch_action(
     memory_ids: Sequence[str],
     *,
     override_unsafe: bool,
-    by_id: Optional[str],
 ) -> tuple[ReviewBatchItemResult, ...]:
     review_items = {item.memory_id: item for item in review_queue(config).items}
     records_by_id = _records_by_id(config)
@@ -855,12 +731,6 @@ def _plan_review_batch_action(
         if error is not None:
             results.append(
                 _review_error_result(memory_id, action=action, dry_run=True, error=error)
-            )
-            continue
-        by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
-        if by_error is not None:
-            results.append(
-                _review_error_result(memory_id, action=action, dry_run=True, error=by_error)
             )
             continue
         item = review_items[memory_id]
@@ -900,7 +770,6 @@ def _apply_review_batch_action_unlocked(
     *,
     reason: Optional[str],
     override_unsafe: bool,
-    by_id: Optional[str],
 ) -> tuple[ReviewBatchItemResult, ...]:
     review_items = {item.memory_id: item for item in review_queue(config).items}
     records_by_id = _records_by_id(config)
@@ -915,18 +784,6 @@ def _apply_review_batch_action_unlocked(
             )
             continue
         item = review_items[memory_id]
-        by_error = _supersede_by_error(action, memory_id, by_id=by_id, records_by_id=records_by_id)
-        if by_error is not None:
-            results.append(
-                _review_error_result(
-                    memory_id,
-                    action=action,
-                    dry_run=False,
-                    error=by_error,
-                    item=item,
-                )
-            )
-            continue
         unsafe_error = _unsafe_approval_error(action, item, override_unsafe=override_unsafe)
         if unsafe_error is not None:
             results.append(
@@ -945,7 +802,6 @@ def _apply_review_batch_action_unlocked(
                 action,
                 memory_id,
                 reason=reason,
-                by_id=by_id,
             )
         except Exception as exc:
             results.append(
@@ -985,7 +841,6 @@ def _apply_one_review_action_unlocked(
     memory_id: str,
     *,
     reason: Optional[str],
-    by_id: Optional[str],
 ) -> LifecycleResult:
     if action == "approve":
         result = _mark_status_unlocked(
@@ -1007,18 +862,6 @@ def _apply_one_review_action_unlocked(
             _action="reject",
         )
         return LifecycleResult(command="reject", mutations=result.mutations, details=result.details)
-    if action == "defer":
-        result = _mark_status_unlocked(
-            config,
-            memory_id,
-            LifecycleStatus.PENDING.value,
-            reason=reason,
-            _action="defer",
-            _record_noop=True,
-        )
-        return LifecycleResult(command="defer", mutations=result.mutations, details=result.details)
-    if action == "supersede":
-        return _supersede_memory_unlocked(config, memory_id, new_id=str(by_id), reason=reason)
     raise ValueError(f"unsupported review action: {action}")
 
 
@@ -1055,30 +898,6 @@ def _unsafe_approval_error(
     }
 
 
-def _supersede_by_error(
-    action: str,
-    memory_id: str,
-    *,
-    by_id: Optional[str],
-    records_by_id: Mapping[str, _MemoryRecord],
-) -> Optional[dict[str, str]]:
-    if action != "supersede":
-        return None
-    if not by_id:
-        return {"code": "missing_replacement", "message": "review supersede requires --by <new_id>"}
-    if by_id == memory_id:
-        return {
-            "code": "invalid_replacement",
-            "message": "old_id and new_id must be different",
-        }
-    if by_id not in records_by_id:
-        return {
-            "code": "replacement_not_found",
-            "message": f"replacement memory not found: {by_id}",
-        }
-    return None
-
-
 def _review_error_result(
     memory_id: str,
     *,
@@ -1107,206 +926,7 @@ def _review_action_status(action: str, *, current_status: str) -> str:
         return LifecycleStatus.ACTIVE.value
     if action == "reject":
         return LifecycleStatus.REJECTED.value
-    if action == "defer":
-        return LifecycleStatus.PENDING.value
-    if action == "supersede":
-        return LifecycleStatus.SUPERSEDED.value
     return current_status
-
-
-def supersede_memory(
-    config: MemoryConfig,
-    old_id: str,
-    *,
-    new_id: str,
-    reason: Optional[str] = None,
-) -> LifecycleResult:
-    """Mark an old memory superseded and link it from the replacement memory."""
-
-    with vault_lock(config):
-        return _supersede_memory_unlocked(config, old_id, new_id=new_id, reason=reason)
-
-
-def _supersede_memory_unlocked(
-    config: MemoryConfig,
-    old_id: str,
-    *,
-    new_id: str,
-    reason: Optional[str],
-) -> LifecycleResult:
-    if old_id == new_id:
-        raise ValueError("old_id and new_id must be different")
-
-    old_record = _find_memory(config, old_id)
-    new_record = _find_memory(config, new_id)
-    now = _now()
-    today = now.date().isoformat()
-
-    old_previous = str(old_record.data.get("status"))
-    new_previous = str(new_record.data.get("status"))
-
-    old_record.data["status"] = LifecycleStatus.SUPERSEDED.value
-    old_record.data["valid_to"] = old_record.data.get("valid_to") or _valid_to_for(
-        old_record.data, today
-    )
-    old_record.data["updated_at"] = now.isoformat()
-    _append_history(
-        old_record.data,
-        action="superseded",
-        at=now,
-        previous_status=old_previous,
-        status=LifecycleStatus.SUPERSEDED.value,
-        by=new_id,
-        reason=reason,
-    )
-
-    _ensure_relation(new_record.data, relation=RelationType.SUPERSEDES.value, target=old_id)
-    new_record.data["updated_at"] = now.isoformat()
-    _append_history(
-        new_record.data,
-        action="supersedes",
-        at=now,
-        previous_status=new_previous,
-        status=str(new_record.data.get("status")),
-        target=old_id,
-        reason=reason,
-    )
-
-    rendered_old = _render_updated(old_record.data, old_record.body, path=old_record.path)
-    rendered_new = _render_updated(new_record.data, new_record.body, path=new_record.path)
-    _atomic_replace_many(((old_record.path, rendered_old), (new_record.path, rendered_new)))
-
-    return LifecycleResult(
-        command="supersede",
-        mutations=(
-            _mutation(
-                config,
-                old_record,
-                old_previous,
-                LifecycleStatus.SUPERSEDED.value,
-                "superseded",
-            ),
-            _mutation(
-                config, new_record, new_previous, str(new_record.data.get("status")), "supersedes"
-            ),
-        ),
-        details={"old_id": old_id, "new_id": new_id, "relation": RelationType.SUPERSEDES.value},
-    )
-
-
-def contradict_memories(
-    config: MemoryConfig,
-    id1: str,
-    id2: str,
-    *,
-    reason: Optional[str] = None,
-) -> LifecycleResult:
-    """Record a contradiction edge from the first memory to the second."""
-
-    with vault_lock(config):
-        return _contradict_memories_unlocked(config, id1, id2, reason=reason)
-
-
-def _contradict_memories_unlocked(
-    config: MemoryConfig,
-    id1: str,
-    id2: str,
-    *,
-    reason: Optional[str],
-) -> LifecycleResult:
-    if id1 == id2:
-        raise ValueError("contradicting memory ids must be different")
-
-    left = _find_memory(config, id1)
-    right = _find_memory(config, id2)
-    now = _now()
-    left_previous = str(left.data.get("status"))
-    right_previous = str(right.data.get("status"))
-
-    _ensure_relation(left.data, relation=RelationType.CONTRADICTS.value, target=id2)
-    left.data["updated_at"] = now.isoformat()
-    _append_history(
-        left.data,
-        action="contradicts",
-        at=now,
-        previous_status=left_previous,
-        status=str(left.data.get("status")),
-        target=id2,
-        reason=reason,
-    )
-
-    _append_history(
-        right.data,
-        action="contradicted_by",
-        at=now,
-        previous_status=right_previous,
-        status=str(right.data.get("status")),
-        by=id1,
-        reason=reason,
-    )
-
-    rendered_left = _render_updated(left.data, left.body, path=left.path)
-    rendered_right = _render_updated(right.data, right.body, path=right.path)
-    _atomic_replace_many(((left.path, rendered_left), (right.path, rendered_right)))
-
-    return LifecycleResult(
-        command="contradict",
-        mutations=(
-            _mutation(config, left, left_previous, str(left.data.get("status")), "contradicts"),
-            _mutation(
-                config, right, right_previous, str(right.data.get("status")), "contradicted_by"
-            ),
-        ),
-        details={"id1": id1, "id2": id2, "relation": RelationType.CONTRADICTS.value},
-    )
-
-
-def decay_memories(config: MemoryConfig, *, now: Optional[datetime] = None) -> LifecycleResult:
-    """Mark active memories with expired valid_to dates as stale."""
-
-    with vault_lock(config):
-        return _decay_memories_unlocked(config, now=now)
-
-
-def _decay_memories_unlocked(
-    config: MemoryConfig, *, now: Optional[datetime] = None
-) -> LifecycleResult:
-    selected_now = now or _now()
-    today = selected_now.date()
-    updates: list[tuple[_MemoryRecord, str, str]] = []
-    rendered: list[tuple[Path, str]] = []
-
-    for record in _iter_memory_records(config):
-        previous_status = str(record.data.get("status"))
-        valid_to = _optional_date_string(record.data.get("valid_to"))
-        if (
-            previous_status != LifecycleStatus.ACTIVE.value
-            or valid_to is None
-            or valid_to >= today.isoformat()
-        ):
-            continue
-        record.data["status"] = LifecycleStatus.STALE.value
-        record.data["updated_at"] = selected_now.isoformat()
-        _append_history(
-            record.data,
-            action="decay",
-            at=selected_now,
-            previous_status=previous_status,
-            status=LifecycleStatus.STALE.value,
-            reason="valid_to elapsed",
-        )
-        rendered.append((record.path, _render_updated(record.data, record.body, path=record.path)))
-        updates.append((record, previous_status, LifecycleStatus.STALE.value))
-
-    _atomic_replace_many(rendered)
-    mutations = tuple(
-        _mutation(config, record, previous, status, "decay") for record, previous, status in updates
-    )
-    return LifecycleResult(
-        command="decay",
-        mutations=mutations,
-        details={"changed": len(mutations), "as_of": today.isoformat()},
-    )
 
 
 def review_queue(config: MemoryConfig) -> ReviewQueue:
@@ -1385,31 +1005,6 @@ def _source_groups(items: Sequence[ReviewItem]) -> list[dict[str, Any]]:
     return sorted(groups.values(), key=lambda group: str(group["source"] or ""))
 
 
-def _curation_item(item: ReviewItem) -> dict[str, Any]:
-    recommended_action = _curation_recommended_action(item)
-    duplicate_candidates = [candidate.to_dict() for candidate in item.duplicate_candidates]
-    contradiction_candidates = [candidate.to_dict() for candidate in item.contradiction_candidates]
-    curation = _curation_metadata(item, recommended_action=recommended_action)
-    return {
-        "id": item.memory_id,
-        "path": str(item.path),
-        "relative_path": item.relative_path.as_posix(),
-        "type": item.memory_type,
-        "status": item.status,
-        "confidence": item.confidence,
-        "source": item.source,
-        "risk_flags": list(item.risk_flags),
-        "recommended_action": recommended_action,
-        "review_recommended_action": item.recommended_action,
-        "importance": item.importance.to_dict(),
-        "duplicate_candidates": duplicate_candidates,
-        "contradiction_candidates": contradiction_candidates,
-        "curation": curation,
-        "candidate_summaries": _candidate_summaries(item),
-        "citation": item.citation,
-    }
-
-
 def _curation_recommended_action(item: ReviewItem) -> str:
     flags = set(item.risk_flags)
     if item.contradiction_candidates:
@@ -1425,7 +1020,7 @@ def _curation_recommended_action(item: ReviewItem) -> str:
         return "inspect"
     if not flags and item.recommended_action == "approve":
         return "approve"
-    return "defer"
+    return "inspect"
 
 
 def _curation_metadata(item: ReviewItem, *, recommended_action: str) -> dict[str, Any]:
@@ -1481,69 +1076,8 @@ def _curation_signals(item: ReviewItem) -> list[dict[str, Any]]:
     return signals
 
 
-def _candidate_summaries(item: ReviewItem) -> list[dict[str, Any]]:
-    summaries: list[dict[str, Any]] = []
-    for candidate in item.duplicate_candidates:
-        summaries.append(
-            {
-                "kind": "duplicate",
-                "id": candidate.memory_id,
-                "relative_path": candidate.relative_path.as_posix(),
-                "type": candidate.memory_type,
-                "status": candidate.status,
-                "reason": candidate.match_reason,
-            }
-        )
-    for candidate in item.contradiction_candidates:
-        summary = {
-            "kind": "contradiction",
-            "id": candidate.memory_id,
-            "relation_direction": candidate.relation_direction,
-            "reason": candidate.match_reason,
-        }
-        if candidate.relative_path is not None:
-            summary["relative_path"] = candidate.relative_path.as_posix()
-        if candidate.memory_type is not None:
-            summary["type"] = candidate.memory_type
-        if candidate.status is not None:
-            summary["status"] = candidate.status
-        summaries.append(summary)
-    return summaries
-
-
 def _records_by_id(config: MemoryConfig) -> dict[str, _MemoryRecord]:
     return {record.document.frontmatter.id: record for record in _iter_memory_records(config)}
-
-
-def _matches_project(
-    item: ReviewItem,
-    records_by_id: dict[str, _MemoryRecord],
-    project: Optional[str],
-) -> bool:
-    if project is None:
-        return True
-    record = records_by_id.get(item.memory_id)
-    return record is not None and record.document.frontmatter.project == project
-
-
-def _matches_source(source: Optional[dict[str, Any]], selected_source: Optional[str]) -> bool:
-    if selected_source is None:
-        return True
-    if not source:
-        return False
-    return selected_source in {
-        str(value)
-        for key, value in source.items()
-        if key in {"path", "url", "source_id"} and value not in (None, "")
-    }
-
-
-def _count_by_key(items: Sequence[dict[str, Any]], key: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in items:
-        value = str(item.get(key) or "")
-        counts[value] = counts.get(value, 0) + 1
-    return dict(sorted(counts.items()))
 
 
 def _review_risk_flags(
@@ -1596,7 +1130,7 @@ def _review_recommended_action(
         and frontmatter.confidence >= config.agent_policy.min_active_confidence
     ):
         return "approve"
-    return "defer"
+    return "inspect"
 
 
 def _memory_safety_flags(
@@ -1842,22 +1376,6 @@ def _outgoing_contradiction_targets(frontmatter: MemoryFrontmatter) -> tuple[str
         if relation.type == RelationType.CONTRADICTS
     )
     return tuple(dict.fromkeys(targets))
-
-
-def _ensure_relation(data: dict[str, Any], *, relation: str, target: str) -> None:
-    relations = data.get("relations")
-    if not isinstance(relations, list):
-        relations = []
-    for item in relations:
-        if (
-            isinstance(item, dict)
-            and str(item.get("type")) == relation
-            and str(item.get("target")) == target
-        ):
-            data["relations"] = relations
-            return
-    relations.append({"type": relation, "target": target})
-    data["relations"] = relations
 
 
 def _heuristic_contradiction_candidate(
@@ -2218,10 +1736,6 @@ def _atomic_replace(path: Path, content: str) -> None:
     atomic_write_text(path, content)
 
 
-def _atomic_replace_many(files: Sequence[tuple[Path, str]]) -> None:
-    atomic_write_many(files)
-
-
 def _append_history(
     data: dict[str, Any],
     *,
@@ -2268,10 +1782,6 @@ def _mutation(
     )
 
 
-def _status_value(status: Union[LifecycleStatus, str]) -> str:
-    return LifecycleStatus(status).value
-
-
 def _string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -2298,9 +1808,6 @@ def _now() -> datetime:
 
 
 __all__ = [
-    "approve_memory",
-    "curation_plan",
-    "defer_memory",
     "LifecycleMutation",
     "LifecycleResult",
     "ReviewBatchItemResult",
@@ -2308,11 +1815,6 @@ __all__ = [
     "ReviewImportance",
     "ReviewItem",
     "ReviewQueue",
-    "contradict_memories",
-    "decay_memories",
-    "mark_status",
-    "reject_memory",
     "review_batch_action",
     "review_queue",
-    "supersede_memory",
 ]

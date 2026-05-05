@@ -3,27 +3,24 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Union
 
 import yaml
 
-from config import AgentPolicyConfig, MemoryConfig
+from config import MemoryConfig
 from indexer import estimate_tokens
 from safety import (
     SafetyScanResult,
     merge_scan_results,
-    normalize_risk_flags,
     scan_metadata,
     scan_source_material,
     scan_text,
 )
-from schema import AuthorKind, LifecycleStatus, MemoryScope, MemoryType, SourceRef
 from session import normalize_session_recall_state, session_trace
 from sync import atomic_write_many, vault_lock
-from vault import RememberResult, remember_memory
 
 PathLike = Union[Path, str]
 SOURCE_CHANNELS = {
@@ -46,7 +43,6 @@ SOURCE_QUALITIES = {
     "unknown",
 }
 SOURCE_SENSITIVITIES = {"normal", "private", "secret", "unsafe"}
-PROMOTION_BLOCKED_SENSITIVITIES = {"secret", "unsafe"}
 _SCHEDULED_CHANNEL_RE = re.compile(r"^scheduled_[a-z0-9_]{1,64}$")
 
 
@@ -119,78 +115,6 @@ class SourceCaptureResult:
 
 
 @dataclass(frozen=True)
-class PromotedMemoryResult:
-    """One memory promoted from a saved source extract."""
-
-    result: RememberResult
-    source: SourceRef
-    confidence: float
-    author_name: str
-
-    @property
-    def citation(self) -> dict[str, str]:
-        return {
-            "id": self.result.memory_id,
-            "path": self.result.relative_path.as_posix(),
-            "kind": "memory",
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = self.result.to_dict()
-        payload.update(
-            {
-                "review_required": self.result.status == LifecycleStatus.PENDING,
-                "author": {"kind": AuthorKind.AGENT.value, "name": self.author_name},
-                "confidence": self.confidence,
-                "source": self.source.model_dump(mode="json", exclude_none=True),
-                "citations": [self.citation],
-            }
-        )
-        return payload
-
-
-@dataclass(frozen=True)
-class SourcePromotionResult:
-    """Saved source material plus pending atomic memories linked to it."""
-
-    source: SourceCaptureResult
-    memories: tuple[PromotedMemoryResult, ...]
-
-    @property
-    def citations(self) -> list[dict[str, str]]:
-        citations: list[dict[str, str]] = []
-        seen: set[tuple[str, str, str]] = set()
-        for citation in [*self.source.citations, *(memory.citation for memory in self.memories)]:
-            signature = (citation["kind"], citation["id"], citation["path"])
-            if signature in seen:
-                continue
-            seen.add(signature)
-            citations.append(citation)
-        return citations
-
-    def to_dict(self) -> dict[str, Any]:
-        pending_count = sum(
-            1 for memory in self.memories if memory.result.status == LifecycleStatus.PENDING
-        )
-        next_steps = ["Review the saved source and extract under Sources/."]
-        if pending_count:
-            next_steps.append("Review the pending atomic memories before approving them.")
-        else:
-            next_steps.append("Atomic memories were activated by the configured agent policy.")
-        return {
-            "ok": True,
-            "implemented": True,
-            "source": self.source.to_dict(),
-            "memory_count": len(self.memories),
-            "pending_count": pending_count,
-            "review_required": pending_count > 0,
-            "memories": [memory.to_dict() for memory in self.memories],
-            "citations": self.citations,
-            "next_steps": next_steps,
-        }
-
-
-@dataclass(frozen=True)
 class SourceLookupChunk:
     """Compact source evidence returned by a lookup request."""
 
@@ -216,27 +140,6 @@ class SourceLookupChunk:
             "tokens_estimate": self.tokens_estimate,
             "citation": self.citation,
         }
-
-
-@dataclass(frozen=True)
-class _PlannedMemory:
-    memory_type: MemoryType
-    text: str
-    scope: Optional[MemoryScope]
-    project: Optional[str]
-    tags: tuple[str, ...]
-    confidence: float
-    status: LifecycleStatus
-    risk_flags: tuple[str, ...] = ()
-
-
-_PROMOTABLE_MEMORY_TYPES = {
-    MemoryType.FACT,
-    MemoryType.PREFERENCE,
-    MemoryType.DECISION,
-    MemoryType.TASK,
-    MemoryType.PROJECT_CONTEXT,
-}
 
 
 def lookup_source(
@@ -481,106 +384,6 @@ def save_source_material(
         risk_flags=safety.risk_flags,
         safety=safety,
     )
-
-
-def save_source_with_memories(
-    config: MemoryConfig,
-    *,
-    source: Mapping[str, Any],
-    memories: Iterable[Mapping[str, Any]],
-    author_name: str = "CLI agent",
-) -> SourcePromotionResult:
-    """Save source material and promote agent-supplied atomic memories for review."""
-
-    source_payload = dict(source)
-    selected_sensitivity = _normalized_choice(
-        _optional_string(source_payload.get("sensitivity")),
-        SOURCE_SENSITIVITIES,
-        default="normal",
-    )
-    source_safety = scan_source_material(
-        content=_optional_string(
-            source_payload.get("content")
-            or source_payload.get("raw")
-            or source_payload.get("markdown")
-        ),
-        extract=_optional_string(source_payload.get("extract") or source_payload.get("summary")),
-        metadata={
-            "source_quality": _optional_string(source_payload.get("source_quality")) or "unknown",
-            "sensitivity": selected_sensitivity,
-        },
-    )
-    if selected_sensitivity in PROMOTION_BLOCKED_SENSITIVITIES:
-        raise ValueError(
-            "source sensitivity is blocked from memory promotion; "
-            "save the source only and review it manually"
-        )
-    planned = tuple(
-        _plan_promoted_memory(
-            memory,
-            default_project=_optional_string(source_payload.get("default_project")),
-            policy=config.agent_policy,
-        )
-        for memory in memories
-    )
-    if not planned:
-        raise ValueError("memories must include at least one durable atomic item")
-    if selected_sensitivity == "private":
-        planned = tuple(replace(item, status=LifecycleStatus.PENDING) for item in planned)
-    if source_safety.risk_flags:
-        planned = tuple(
-            replace(
-                item,
-                status=LifecycleStatus.PENDING,
-                risk_flags=normalize_risk_flags((*item.risk_flags, *source_safety.risk_flags)),
-            )
-            for item in planned
-        )
-
-    saved_source = save_source_material(
-        config,
-        title=_optional_string(source_payload.get("title")),
-        url=_optional_string(source_payload.get("url")),
-        content=_optional_string(
-            source_payload.get("content")
-            or source_payload.get("raw")
-            or source_payload.get("markdown")
-        ),
-        extract=_optional_string(source_payload.get("extract") or source_payload.get("summary")),
-        tags=_clean_list(source_payload.get("tags", ())),
-        channel=_optional_string(source_payload.get("channel")),
-        source_quality=_optional_string(source_payload.get("source_quality")),
-        sensitivity=selected_sensitivity,
-        origin=_mapping_or_none(source_payload.get("origin")),
-        slug=_optional_string(source_payload.get("slug")),
-    )
-    source_ref = _source_ref_for_promotion(saved_source)
-    promoted: list[PromotedMemoryResult] = []
-    for item in planned:
-        result = remember_memory(
-            config,
-            memory_type=item.memory_type,
-            text=item.text,
-            scope=item.scope,
-            project=item.project,
-            status=item.status,
-            tags=item.tags,
-            author_kind=AuthorKind.AGENT,
-            author_name=author_name,
-            source=source_ref,
-            confidence=item.confidence,
-            risk_flags=item.risk_flags,
-        )
-        promoted.append(
-            PromotedMemoryResult(
-                result=result,
-                source=source_ref,
-                confidence=item.confidence,
-                author_name=author_name,
-            )
-        )
-
-    return SourcePromotionResult(source=saved_source, memories=tuple(promoted))
 
 
 def _lookup_budget(value: int) -> int:
@@ -895,10 +698,6 @@ def _clean_list(values: Optional[Iterable[str]]) -> list[str]:
     return cleaned
 
 
-def _mapping_or_none(value: Any) -> Optional[Mapping[str, Any]]:
-    return value if isinstance(value, Mapping) else None
-
-
 def _clean_mapping(value: Optional[Mapping[str, Any]]) -> dict[str, str]:
     if not value:
         return {}
@@ -920,74 +719,9 @@ def _normalized_choice(value: Optional[str], allowed: set[str], *, default: str)
     return selected
 
 
-def _plan_promoted_memory(
-    memory: Mapping[str, Any],
-    *,
-    default_project: Optional[str],
-    policy: AgentPolicyConfig,
-) -> _PlannedMemory:
-    memory_type = MemoryType(memory.get("type", MemoryType.FACT.value))
-    if memory_type not in _PROMOTABLE_MEMORY_TYPES:
-        allowed = ", ".join(sorted(memory_type.value for memory_type in _PROMOTABLE_MEMORY_TYPES))
-        raise ValueError(f"source promotion only supports durable atomic memory types: {allowed}")
-
-    confidence = float(memory.get("confidence", policy.min_pending_confidence))
-    if confidence < 0 or confidence > 1:
-        raise ValueError("confidence must be between 0 and 1")
-
-    text = _memory_text(memory)
-    safety = scan_text(text, field="memory")
-    risk_flags = normalize_risk_flags(
-        (*_clean_list(memory.get("risk_flags", ())), *safety.risk_flags)
-    )
-    selected_status = _promoted_memory_status()
-
-    return _PlannedMemory(
-        memory_type=memory_type,
-        text=text,
-        scope=_optional_enum(MemoryScope, memory.get("scope")),
-        project=_optional_string(memory.get("project")) or default_project,
-        tags=tuple(_clean_list(memory.get("tags", ()))),
-        confidence=confidence,
-        status=selected_status,
-        risk_flags=risk_flags,
-    )
-
-
-def _promoted_memory_status() -> LifecycleStatus:
-    return LifecycleStatus.PENDING
-
-
-def _memory_text(memory: Mapping[str, Any]) -> str:
-    for key in ("text", "body", "content"):
-        value = memory.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    raise ValueError("memory must include non-empty text")
-
-
-def _optional_enum(enum_type: Any, value: Any) -> Any:
-    if value in (None, ""):
-        return None
-    return enum_type(value)
-
-
-def _source_ref_for_promotion(source: SourceCaptureResult) -> SourceRef:
-    relative_path = source.relative_extract_path or source.relative_source_path
-    return SourceRef(
-        path=relative_path.as_posix(),
-        url=source.url,
-        title=source.title,
-        source_id=source.source_id,
-    )
-
-
 __all__ = [
-    "PromotedMemoryResult",
     "SourceCaptureResult",
     "SourceLookupChunk",
-    "SourcePromotionResult",
     "lookup_source",
     "save_source_material",
-    "save_source_with_memories",
 ]

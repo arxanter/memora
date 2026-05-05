@@ -137,7 +137,7 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, update memory for <topic>",
             "актуализируй память по <topic>",
-            "search related active/pending items, propose supersede/reject/defer/new memory, and ask before lifecycle changes unless policy allows autonomous action.",
+            "search related active/pending items, propose approve/reject/update/new memory, and ask before lifecycle changes unless policy allows autonomous action.",
         ),
         (
             f"{primary}, analyze this source and save it",
