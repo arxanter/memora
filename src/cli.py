@@ -1482,7 +1482,7 @@ def probe_command(
     try:
         config = load_config(vault)
         selected_task_class, task_policy = _resolve_task_policy(config, task_class)
-        selected_intent, route_reason = _context_intent(query, intent)
+        selected_intent, route_reason = _probe_intent(query, intent)
         freshness = _maybe_refresh_index(config, before="search", refresh=refresh)
         if not config.agent_policy.enabled or not config.agent_policy.auto_recall:
             policy = {
@@ -2992,6 +2992,13 @@ def _context_intent(query: str, requested: str) -> tuple[str, str]:
     return "mixed", "auto_default_mixed"
 
 
+def _probe_intent(query: str, requested: str) -> tuple[str, str]:
+    selected, reason = _context_intent(query, requested)
+    if selected == "evidence":
+        return "wiki", f"{reason}_sources_disabled_for_probe"
+    return selected, reason
+
+
 def _context_payload(
     config: Any,
     query: str,
@@ -3067,8 +3074,8 @@ def _probe_payload(
     mode: str,
 ) -> dict[str, Any]:
     selected_variants = _probe_variants(query, variants)
-    budgets = _context_budgets(intent, budget)
-    surfaces = _context_surfaces(intent)
+    budgets = _probe_budgets(intent, budget)
+    surfaces = _probe_surfaces(intent)
     results: dict[str, list[dict[str, Any]]] = {surface: [] for surface in surfaces}
     seen: dict[str, set[str]] = {surface: set() for surface in surfaces}
     variant_reports: list[dict[str, Any]] = []
@@ -3277,6 +3284,14 @@ def _context_surfaces(intent: str) -> tuple[str, ...]:
     return ("memory", "wiki", "sources")
 
 
+def _probe_surfaces(intent: str) -> tuple[str, ...]:
+    if intent == "memory":
+        return ("memory",)
+    if intent in {"wiki", "evidence"}:
+        return ("wiki",)
+    return ("memory", "wiki")
+
+
 def _context_budgets(intent: str, budget: int) -> dict[str, int]:
     if intent == "memory":
         return {"memory": budget}
@@ -3289,6 +3304,15 @@ def _context_budgets(intent: str, budget: int) -> dict[str, int]:
         "wiki": max(1, int(budget * 0.35)),
         "sources": max(1, budget - int(budget * 0.5) - int(budget * 0.35)),
     }
+
+
+def _probe_budgets(intent: str, budget: int) -> dict[str, int]:
+    if intent == "memory":
+        return {"memory": budget}
+    if intent in {"wiki", "evidence"}:
+        return {"wiki": budget}
+    memory_budget = max(1, int(budget * 0.6))
+    return {"memory": memory_budget, "wiki": max(1, budget - memory_budget)}
 
 
 def _budget_results(

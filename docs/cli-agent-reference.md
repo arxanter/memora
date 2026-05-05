@@ -211,10 +211,20 @@ and report the CLI gap.
 `memora probe <query> [--variant TEXT ...] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--task-class <class>] [--budget N] [--limit N] [--load] [--semantic|--no-semantic] [--mode <mode>] [--refresh|--no-refresh] [--vault PATH]`
 
 - Single-call agent probe for "is there anything relevant in memory?" checks.
+- Searches only `Memories/` and `Wiki/`; use `context --intent evidence` or
+  `lookup-source` when saved source evidence is required.
 - Agents should pass likely alternate constructions with repeated `--variant`
   instead of issuing separate `build-context`, `context`, and `search` calls.
+  Include concise synonyms, RU/EN translations, important inflections/cases,
+  abbreviations, and domain terms.
+- Agents should pass an explicit `--intent memory`, `--intent wiki`, or
+  `--intent mixed` when they can confidently classify the request. Use
+  `--intent auto` as the fallback when unsure.
 - Returns `has_context`, `memory_needed`, route, checked variants, semantic
   status, compact candidates, and expansion commands.
+- For `probe`, `has_context=true` means at least one selected surface returned
+  candidates. `memory_needed=true` is narrower and means the memory surface
+  returned candidates.
 
 `memora context <query> [--budget N] [--project NAME] [--intent auto|memory|wiki|evidence|mixed] [--limit N] [--load] [--refresh|--no-refresh] [--vault PATH]`
 
@@ -228,6 +238,8 @@ and report the CLI gap.
 
 - Main agent recall command. Use returned context only when
   `memory_needed=true`.
+- Prefer `probe` for initial discovery with query variants; use `build-context`
+  when a packed cited brief is needed after discovery.
 - If trigger policy does not request memory, `build-context` probes indexed
   keyword and local semantic results before returning `memory_needed=false`.
 - `--include-profile` adds a bounded in-memory rollup to this response.

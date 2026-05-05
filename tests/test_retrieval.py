@@ -78,6 +78,27 @@ def test_query_planning_preserves_original_and_adds_safe_variants():
     assert len(plan.variants) <= 5
 
 
+def test_search_accepts_unicode_query_terms(tmp_path):
+    vault = tmp_path / "memory-vault"
+    init_vault(vault)
+    _write_memory(
+        vault,
+        "Memories/facts/project-tests.md",
+        memory_id="mem_20260505_project_tests",
+        memory_type="fact",
+        body="Тесты проекта проверяют CLI, wiki и lifecycle сценарии.",
+    )
+    config = load_config(vault)
+    reindex_vault(config)
+
+    payload = search_memory(config, "тесты проекта", limit=5).to_dict()
+
+    assert [result["id"] for result in payload["results"]] == [
+        "mem_20260505_project_tests"
+    ]
+    assert "тесты проекта" in payload["trace"]["planned_query_variants"]
+
+
 def test_search_falls_back_to_planned_variants_and_dedupes_results(tmp_path):
     vault = tmp_path / "memory-vault"
     init_vault(vault)

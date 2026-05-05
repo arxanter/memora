@@ -58,10 +58,16 @@ def test_render_agent_rules_preserves_phase_one_content(tmp_path):
     assert content.startswith("---\ndescription:")
     assert "CLI-first" in content
     assert "CLI-only for agents" in content
+    assert 'memora probe "<query>"' in content
+    assert '--variant "<alternate wording>"' in content
+    assert "pass the explicit probe intent" in content
+    assert "use `--intent auto` only when unsure" in content
+    assert "has_context=true" in content
+    assert "probe` searches only `Memories/` and `Wiki/`" in content
     assert 'memora build-context "<task>"' in content
     assert f'--vault "{tmp_path / "vault"}"' in content
     assert '--project "memora"' in content
-    assert "prefer the default compact agent output" in content
+    assert "Prefer the default compact agent output" in content
     assert 'memora search "<query>"' in content
     assert 'memora context "<query>"' in content
     assert 'memora wiki search "<topic>"' in content
@@ -94,6 +100,7 @@ def test_render_agent_rules_contains_strict_vault_and_remi_policy():
         assert private_path in content
     assert "If the CLI lacks an operation, stop and report the missing command" in content
     assert "Remi intent routing examples" in content
+    assert "use `memora probe` as the first discovery call" in content
     assert "Remi, show current facts about <topic>" in content
     assert "Remi, show what the wiki knows about <topic>" in content
     assert "Рэми, что мы решили по <topic>" in content

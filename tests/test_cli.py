@@ -514,6 +514,8 @@ def test_agent_rules_command_emits_cli_first_instructions_for_supported_clients(
         content = result.output
         assert "CLI-first" in content
         assert "CLI-only for agents" in content
+        assert "memora probe" in content
+        assert "--variant" in content
         assert "memora build-context" in content
         assert '--project "memora"' in content
         assert "memora raw mark-processed" in content
@@ -1924,6 +1926,81 @@ def test_probe_command_checks_variants_in_one_agent_call(tmp_path):
     assert "[M1] mem_20260505_pytest_fixtures" in result.output
     assert "Matched: pytest fixture tests" in result.output
     assert "Expand: memora inspect mem_20260505_pytest_fixtures" in result.output
+
+
+def test_probe_command_accepts_cyrillic_query_before_matching_variant(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+    _write_memory(
+        vault,
+        "Memories/facts/project-tests.md",
+        memory_id="mem_20260505_project_tests",
+        memory_type="fact",
+        scope="project",
+        project="memory-project",
+        body=(
+            "The current project tests use test suite pytest coverage checks. "
+            "Проверки pytest CLI wiki lifecycle stay covered."
+        ),
+    )
+    runner.invoke(app, ["reindex", "--vault", str(vault)])
+
+    result = runner.invoke(
+        app,
+        [
+            "probe",
+            "тесты в проекте",
+            "--vault",
+            str(vault),
+            "--project",
+            "memory-project",
+            "--intent",
+            "memory",
+            "--variant",
+            "test suite pytest coverage",
+            "--variant",
+            "current project tests",
+            "--variant",
+            "проверки pytest CLI wiki lifecycle",
+            "--no-semantic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "has_context: true" in result.output
+    assert "memory_needed: true" in result.output
+    assert "variants: тесты в проекте | test suite pytest coverage" in result.output
+    assert "[M1] mem_20260505_project_tests" in result.output
+    assert "Matched: test suite pytest coverage" in result.output
+
+
+def test_probe_command_mixed_intent_does_not_search_sources(tmp_path):
+    vault = tmp_path / "memory-vault"
+    runner.invoke(app, ["init", str(vault)])
+    source_dir = vault / "Sources" / "2026-05-05_source_only"
+    source_dir.mkdir(parents=True)
+    (source_dir / "extract.md").write_text(
+        "# Extract\n\nSource-only probe needle belongs only in saved evidence.",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "probe",
+            "source-only probe needle",
+            "--vault",
+            str(vault),
+            "--intent",
+            "mixed",
+            "--no-semantic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "has_context: false" in result.output
+    assert "Sources:" not in result.output
+    assert "lookup-source" not in result.output
 
 
 def test_probe_command_reports_no_candidates_compactly(tmp_path):

@@ -113,9 +113,18 @@ Generated rules are the contract for Cursor, Claude, Codex, and generic
 `AGENTS.md` consumers. They instruct agents to:
 
 - treat `Remi`, `Рэми`, and `Реми` aliases as explicit Memora triggers;
-- call `memora build-context ...` only when memory is relevant, using the compact
-  default output for recall;
-- use returned context only when `memory_needed=true`;
+- use `memora probe ... --variant ...` as the first discovery call when memory
+  lookup is relevant, passing concise alternate forms such as synonyms,
+  translations, inflections, abbreviations, and domain terms;
+- pass an explicit probe intent (`memory`, `wiki`, or `mixed`) when the agent can
+  confidently classify the request, falling back to `auto` only when unsure;
+- keep `probe` limited to `Memories/` and `Wiki/`; use `context` or
+  `lookup-source` for saved source evidence;
+- treat `probe` results as useful when `has_context=true`; `memory_needed=true`
+  only means the `Memories/` surface has candidates;
+- call `memora build-context ...` after discovery only when a packed cited brief
+  is needed under a task budget;
+- use `build-context` output only when `memory_needed=true`;
 - stage raw input with `raw add`;
 - save durable evidence with `source add`;
 - maintain wiki pages with `wiki ingest`, `wiki synthesize`, and `wiki lint`;

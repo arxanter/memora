@@ -112,7 +112,7 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, show current facts about <topic>",
             "покажи текущие факты по <topic>",
-            "run `memora context --intent memory` or `memora build-context`, then answer with citations.",
+            "run `memora probe --intent memory` with likely `--variant` forms first, then expand only relevant candidates.",
         ),
         (
             f"{primary}, show what the wiki knows about <topic>",
@@ -122,7 +122,7 @@ def _intent_routing_lines(aliases: Sequence[str]) -> list[str]:
         (
             f"{primary}, what did we decide about <topic>",
             "что мы решили по <topic>",
-            "run `memora build-context`; use returned memory only if `memory_needed=true`.",
+            "run `memora probe --intent memory` with likely `--variant` forms first; use `build-context` only when you need a packed cited brief.",
         ),
         (
             f"{primary}, save this fact/decision/preference",
@@ -846,7 +846,9 @@ def render_agent_rules(
 
 
 def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]) -> list[str]:
+    probe = f'memora probe "<query>"{vault_arg}{project_arg} --intent auto --variant "<alternate wording>" --variant "<synonym or translated form>"'
     build_context = f'memora build-context "<task>"{vault_arg}{project_arg} --task-class planning'
+    unscoped_probe = f'memora probe "<query>"{vault_arg} --intent auto --variant "<alternate wording>" --variant "<synonym or translated form>"'
     unscoped_build_context = f'memora build-context "<task>"{vault_arg} --task-class planning'
     unscoped_search = f'memora search "<query>"{vault_arg}'
     context = f'memora context "<query>"{vault_arg}{project_arg} --intent auto --budget 1200'
@@ -880,6 +882,8 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         f"Do not run memora recall for every turn. Use memory when the request addresses {addressing}, asks for current facts, decisions, preferences, earlier work, project history/status, or asks to save/analyze durable knowledge.",
         "",
+        "When memory lookup is relevant, use `memora probe` as the first discovery call. If you can confidently classify the request, pass the explicit probe intent (`--intent memory`, `--intent wiki`, or `--intent mixed`); use `--intent auto` only when unsure. Generate 2-5 likely alternate query constructions and pass them with repeated `--variant`: synonyms, translated RU/EN wording, important inflections/cases, abbreviations, and domain terms. Keep variants concise and high-signal; do not issue separate `context`, `search`, and `build-context` calls for the same discovery step.",
+        "",
         "Choose recall/search scope deliberately:",
         "",
         '- Use the project filter for questions about this repository, the current product, local implementation details, project decisions, current branch/status, TODOs, roadmap, bugs, tests, CLI behavior, or anything phrased as "in this project".',
@@ -887,7 +891,13 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "- If the request mixes project and general context, start with the narrower project scope when the work is in this repository; run an unscoped lookup only when the answer still needs user-wide history or preferences.",
         "- If scope is unclear, infer from the task target: code/workspace/change requests are project-scoped; preference/history/identity questions are usually unscoped.",
         "",
-        "When recall is relevant, run:",
+        "For project-scoped discovery, start with:",
+        "",
+        "```bash",
+        probe,
+        "```",
+        "",
+        "Use `build-context` after discovery only when you need Memora to pack a cited brief under a task budget:",
         "",
         "```bash",
         build_context,
@@ -896,11 +906,12 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "For unscoped recall/search, omit the project filter:",
         "",
         "```bash",
+        unscoped_probe,
         unscoped_build_context,
         unscoped_search,
         "```",
         "",
-        "Use returned context only when `memory_needed` is true. Preserve citations when answering or making decisions from recalled memory.",
+        "For `probe`, treat `has_context=true` as the signal to inspect or expand candidates; `memory_needed` only means the memory surface has candidates. `probe` searches only `Memories/` and `Wiki/`, never `Sources/`. For `build-context`, use returned context only when `memory_needed=true`. Preserve citations when answering or making decisions from recalled context. If `probe` finds compact candidates, prefer the printed expansion commands (`memora inspect` or `memora wiki read`) over broad follow-up searches.",
         "",
         "Use `memora context` when the request may need flexible routing across Memories, Wiki, and Sources without overloading the agent context:",
         "",
@@ -910,10 +921,10 @@ def agent_rules_body(*, vault_arg: str, project_arg: str, aliases: Sequence[str]
         "",
         "Context routing rules:",
         "",
-        "- Current decisions, preferences, tasks, project status, and facts that should affect agent behavior belong in `Memories/` and should be retrieved with `memora context --intent memory` or `memora build-context`.",
+        "- Current decisions, preferences, tasks, project status, and facts that should affect agent behavior belong in `Memories/` and should be discovered with `memora probe --intent memory`; use `memora build-context` only when a packed cited brief is needed.",
         "- Topic overviews, entity/concept pages, comparisons, and saved research answers belong in `Wiki/` and should be retrieved with `memora context --intent wiki` or `memora wiki search`.",
         "- Provenance, quotations, article text, transcripts, and evidence belong in `Sources/` and should be retrieved with `memora context --intent evidence` or `memora lookup-source`.",
-        "- Ambiguous research/planning questions should start with `memora context --intent mixed`; expand individual candidates with the printed `inspect`, `wiki read`, or `lookup-source` command instead of loading everything.",
+        "- Ambiguous research/planning questions should start with `memora context --intent mixed`; expand individual candidates with the printed `inspect`, `wiki read`, or `lookup-source` command instead of loading everything. Use `context`, not `probe`, when saved source evidence is required.",
         "- If `Wiki/` conflicts with active `Memories/`, treat the Wiki page as stale and update it through the CLI; do not silently overwrite active memories.",
         "",
         f"{primary} intent routing examples:",

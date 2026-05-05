@@ -622,7 +622,7 @@ def _collapse_whitespace(value: str) -> str:
 
 def _query_tokens(query: str) -> list[str]:
     slug_spaced = re.sub(r"[-_/.:]+", " ", query)
-    return [token.lower() for token in re.findall(r"[A-Za-z0-9]+", slug_spaced)]
+    return [token.lower() for token in re.findall(r"\w+", slug_spaced, flags=re.UNICODE)]
 
 
 def _normalize_query_token(token: str) -> str:
@@ -1325,7 +1325,7 @@ def _fts_score(row_order: int) -> float:
 
 
 def _to_fts_query(query: str) -> str:
-    tokens = re.findall(r"[A-Za-z0-9_]+", query)
+    tokens = re.findall(r"\w+", query, flags=re.UNICODE)
     if not tokens:
         raise ValueError("search query must include at least one searchable term")
     return " ".join(f'"{token}"' for token in tokens)
