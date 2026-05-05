@@ -47,10 +47,28 @@ pub struct RawAddOptions {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawAnalyzeOptions {
+    pub path: PathBuf,
+    pub output: Option<PathBuf>,
+    pub overwrite: bool,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct RawEntry {
     pub path: PathBuf,
     pub relative_path: String,
     pub metadata: Option<RawMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawAnalysisResult {
+    pub entry: RawEntry,
+    pub output_path: PathBuf,
+    pub relative_output_path: String,
+    pub risk_flags: Vec<String>,
+    pub template: String,
+    pub wrote: bool,
 }
 
 pub fn add_raw(config: &RuntimeConfig, options: RawAddOptions) -> Result<RawEntry> {
@@ -167,6 +185,54 @@ pub fn inspect_raw(config: &RuntimeConfig, path: PathBuf) -> Result<RawEntry> {
         relative_path: relative(config, &resolved),
         metadata: read_metadata(&resolved)?,
         path: resolved,
+    })
+}
+
+pub fn analyze_raw(
+    config: &RuntimeConfig,
+    options: RawAnalyzeOptions,
+) -> Result<RawAnalysisResult> {
+    let raw_path = resolve_raw_path(config, options.path)?;
+    let metadata = read_metadata(&raw_path)?.ok_or_else(|| {
+        MemoraError::InvalidArgument(
+            "raw metadata is required; stage files with `memora raw add` first".to_string(),
+        )
+    })?;
+    let entry = RawEntry {
+        relative_path: relative(config, &raw_path),
+        path: raw_path.clone(),
+        metadata: Some(metadata.clone()),
+    };
+    let content = String::from_utf8_lossy(&fs::read(&raw_path)?).to_string();
+    let risk_flags = scan_risk_flags(&metadata, &content);
+    let output_path = options.output.unwrap_or_else(|| {
+        config
+            .vault_path
+            .join("raw")
+            .join("analysis")
+            .join(format!("{}-extract.md", slugify(&metadata.raw_id)))
+    });
+    if output_path.exists() && !options.overwrite && !options.dry_run {
+        return Err(MemoraError::InvalidArgument(format!(
+            "{} already exists; pass --overwrite",
+            output_path.display()
+        )));
+    }
+    let template = render_extract_template(config, &raw_path, &metadata, &content, &risk_flags);
+    if !options.dry_run {
+        fs::create_dir_all(output_path.parent().ok_or_else(|| {
+            MemoraError::Message("raw analysis output has no parent".to_string())
+        })?)?;
+        fs::write(&output_path, &template)?;
+    }
+
+    Ok(RawAnalysisResult {
+        entry,
+        relative_output_path: relative(config, &output_path),
+        output_path,
+        risk_flags,
+        template,
+        wrote: !options.dry_run,
     })
 }
 
@@ -339,6 +405,8 @@ fn validate_metadata(metadata: &RawMetadata) -> Result<()> {
 fn resolve_raw_path(config: &RuntimeConfig, path: PathBuf) -> Result<PathBuf> {
     let candidate = if path.is_absolute() {
         path
+    } else if path.starts_with("raw") {
+        config.vault_path.join(path)
     } else {
         config.vault_path.join("raw").join(path)
     };
@@ -346,6 +414,129 @@ fn resolve_raw_path(config: &RuntimeConfig, path: PathBuf) -> Result<PathBuf> {
         Ok(candidate)
     } else {
         Err(MemoraError::NotFound(candidate.display().to_string()))
+    }
+}
+
+fn scan_risk_flags(metadata: &RawMetadata, content: &str) -> Vec<String> {
+    let mut flags = Vec::new();
+    if metadata.sensitivity != "normal" {
+        flags.push(format!("sensitivity:{}", metadata.sensitivity));
+    }
+    let lower = content.to_lowercase();
+    if content.contains("BEGIN PRIVATE KEY") {
+        flags.push("private_key".to_string());
+    }
+    if ["password", "passwd", "secret", "api_key", "apikey", "token"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        flags.push("possible_secret".to_string());
+    }
+    if content
+        .split_whitespace()
+        .any(|token| token.contains('@') && token.contains('.'))
+    {
+        flags.push("possible_personal_email".to_string());
+    }
+    flags.sort();
+    flags.dedup();
+    flags
+}
+
+fn render_extract_template(
+    config: &RuntimeConfig,
+    raw_path: &Path,
+    metadata: &RawMetadata,
+    content: &str,
+    risk_flags: &[String],
+) -> String {
+    let raw_relative = relative(config, raw_path);
+    let preview = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n> ");
+    let risk_lines = if risk_flags.is_empty() {
+        "- none detected".to_string()
+    } else {
+        risk_flags
+            .iter()
+            .map(|flag| format!("- {flag}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        r#"---
+title: Extract draft for {}
+raw_id: {}
+generated_at: {}
+risk_flags:
+{}
+---
+
+# Extract: {}
+
+## Safety Review
+
+Sensitivity: `{}`
+
+Risk flags:
+{}
+
+Do not promote secrets, credentials, private personal data, or raw dumps as canonical memory.
+
+## Summary
+
+TODO: Write a concise summary of the source.
+
+## Key Evidence
+
+TODO: Preserve short evidence quotes or facts that support later memories/wiki updates.
+
+## Candidate Memories
+
+- TODO: `<type>` Small durable atomic memory, if any.
+
+## Wiki Updates
+
+- TODO: Concepts/entities/syntheses that should be updated, if any.
+
+## Raw Preview
+
+> {}
+
+## Next CLI Steps
+
+```bash
+memora source add "{}" --extract "<this-extract-file>" --title "{}"
+memora raw mark-processed "{}" --source-id "<source_id>"
+```
+"#,
+        metadata.title,
+        metadata.raw_id,
+        now_rfc3339(),
+        yaml_list(risk_flags),
+        metadata.title,
+        metadata.sensitivity,
+        risk_lines,
+        preview,
+        raw_path.display(),
+        metadata.title.replace('"', "\\\""),
+        raw_relative
+    )
+}
+
+fn yaml_list(values: &[String]) -> String {
+    if values.is_empty() {
+        "  []".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| format!("  - {}", value.replace(':', "_")))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf};
+use std::{collections::HashSet, io, path::PathBuf};
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -8,7 +8,7 @@ use crate::{
     config::{load_runtime_config, set_aliases, RuntimeConfig},
     error::Result,
     memory::{MemoryUpdateOptions, RememberOptions},
-    raw::RawAddOptions,
+    raw::{RawAddOptions, RawAnalyzeOptions},
     sources::SourceAddOptions,
     vault::{self, BinaryInstallOptions, SetupOptions},
 };
@@ -108,6 +108,8 @@ struct SelfInstallCommand {
     #[arg(long)]
     from: Option<PathBuf>,
     #[arg(long)]
+    sha256: Option<String>,
+    #[arg(long)]
     force: bool,
     #[arg(long)]
     dry_run: bool,
@@ -117,6 +119,8 @@ struct SelfInstallCommand {
 struct SelfUpdateCommand {
     #[arg(long)]
     from: Option<PathBuf>,
+    #[arg(long)]
+    sha256: Option<String>,
     #[arg(long)]
     dry_run: bool,
 }
@@ -192,6 +196,7 @@ enum AgentAliasCommands {
 #[derive(Debug, Subcommand)]
 enum RawCommands {
     Add(RawAddCommand),
+    Analyze(RawAnalyzeCommand),
     List {
         path: Option<PathBuf>,
     },
@@ -215,6 +220,17 @@ struct RawAddCommand {
     sensitivity: Option<String>,
     #[arg(long = "tag")]
     tags: Vec<String>,
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct RawAnalyzeCommand {
+    path: PathBuf,
+    #[arg(long)]
+    output: Option<PathBuf>,
+    #[arg(long)]
+    overwrite: bool,
     #[arg(long)]
     dry_run: bool,
 }
@@ -378,6 +394,8 @@ struct ReviewDecisionCommand {
 #[derive(Debug, Args)]
 struct SearchCommand {
     query: String,
+    #[arg(long = "variant")]
+    variants: Vec<String>,
     #[arg(long)]
     project: Option<String>,
     #[arg(long = "type")]
@@ -414,6 +432,8 @@ struct ProbeCommand {
 #[derive(Debug, Args)]
 struct ContextCommand {
     query: String,
+    #[arg(long = "variant")]
+    variants: Vec<String>,
     #[arg(long)]
     project: Option<String>,
     #[arg(long, default_value = "auto")]
@@ -568,9 +588,13 @@ fn dispatch(cli: Cli) -> Result<()> {
             let config = load_runtime_config(cli.home)?;
             let freshness = crate::freshness::refresh_if_needed(&config)?;
             print_freshness(&freshness);
-            let results = crate::indexer::search(
+            let queries = planned_queries(&config, command.query, command.variants, "memory");
+            if queries.len() > 1 {
+                println!("planned_queries: {}", queries.join(" | "));
+            }
+            let results = merged_search_results(
                 &config,
-                &command.query,
+                &queries,
                 crate::indexer::SearchFilters {
                     project: command.project,
                     memory_type: command.memory_type,
@@ -580,7 +604,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                     mode: crate::indexer::SearchMode::parse(&command.mode)?,
                     include_related: command.include_related,
                 },
-            )?;
+            );
             print_search_results(results);
             Ok(())
         }
@@ -588,31 +612,39 @@ fn dispatch(cli: Cli) -> Result<()> {
             let config = load_runtime_config(cli.home)?;
             let freshness = crate::freshness::refresh_if_needed(&config)?;
             print_freshness(&freshness);
-            let mut queries = vec![command.query];
-            queries.extend(command.variants);
+            let queries =
+                planned_queries(&config, command.query, command.variants, &command.intent);
             let mut found_any = false;
             println!("intent: {}", command.intent);
             println!("load: {}", command.load);
-            for query in queries {
-                let results = crate::indexer::search(
+            println!("planned_queries: {}", queries.join(" | "));
+            let mode = crate::indexer::SearchMode::parse(&command.mode)?;
+            if intent_allows_memory(&command.intent) {
+                let results = merged_search_results(
                     &config,
-                    &query,
+                    &queries,
                     crate::indexer::SearchFilters {
                         project: command.project.clone(),
                         memory_type: None,
                         status: None,
                         scope: None,
                         limit: 5,
-                        mode: crate::indexer::SearchMode::parse(&command.mode)?,
+                        mode,
                         include_related: command.include_related,
                     },
-                )
-                .unwrap_or_default();
+                );
                 if !results.is_empty() {
                     found_any = true;
-                    println!("query: {query}");
+                    println!("## Memories");
                     print_search_results(results);
-                    break;
+                }
+            }
+            if intent_allows_wiki(&command.intent) {
+                let results = merged_wiki_results(&config, &queries, 5)?;
+                if !results.is_empty() {
+                    found_any = true;
+                    println!("## Wiki");
+                    print_wiki_results(results);
                 }
             }
             println!("has_context: {found_any}");
@@ -626,36 +658,38 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("intent: {}", command.intent);
             println!("budget: {}", command.budget);
             println!("load: {}", command.load);
-            let results = crate::indexer::search(
-                &config,
-                &command.query,
-                crate::indexer::SearchFilters {
-                    project: command.project,
-                    memory_type: None,
-                    status: None,
-                    scope: None,
-                    limit: 5,
-                    mode: crate::indexer::SearchMode::parse(&command.mode)?,
-                    include_related: command.include_related,
-                },
-            )
-            .unwrap_or_default();
-            println!("## Memories");
-            print_search_results(results);
-            println!("## Wiki");
-            for result in crate::wiki::search(&config, &command.query, 5)? {
-                println!("{} score={}", result.page.relative_path, result.score);
-            }
-            println!("## Sources");
-            for result in crate::sources::search_sources(&config, &command.query, 5)? {
-                println!(
-                    "{} score={} source_id={}",
-                    result.path, result.score, result.source_id
-                );
-                if !result.snippet.trim().is_empty() {
-                    println!("  {}", result.snippet);
-                }
-            }
+            let queries =
+                planned_queries(&config, command.query, command.variants, &command.intent);
+            println!("planned_queries: {}", queries.join(" | "));
+            let mode = crate::indexer::SearchMode::parse(&command.mode)?;
+            let memory_results = if intent_allows_memory(&command.intent) {
+                merged_search_results(
+                    &config,
+                    &queries,
+                    crate::indexer::SearchFilters {
+                        project: command.project.clone(),
+                        memory_type: None,
+                        status: None,
+                        scope: None,
+                        limit: 5,
+                        mode,
+                        include_related: command.include_related,
+                    },
+                )
+            } else {
+                Vec::new()
+            };
+            let wiki_results = if intent_allows_wiki(&command.intent) {
+                merged_wiki_results(&config, &queries, 5)?
+            } else {
+                Vec::new()
+            };
+            let source_results = if intent_allows_sources(&command.intent) {
+                merged_source_results(&config, &queries, 5)?
+            } else {
+                Vec::new()
+            };
+            print_packed_context(memory_results, wiki_results, source_results, command.budget);
             Ok(())
         }
         Commands::Inspect(command) => {
@@ -819,6 +853,7 @@ fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
                 &config,
                 BinaryInstallOptions {
                     source: command.from,
+                    expected_sha256: command.sha256,
                     overwrite: command.force,
                     dry_run: command.dry_run,
                 },
@@ -840,6 +875,7 @@ fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
                 &config,
                 BinaryInstallOptions {
                     source: command.from,
+                    expected_sha256: command.sha256,
                     overwrite: true,
                     dry_run: command.dry_run,
                 },
@@ -903,6 +939,33 @@ fn dispatch_raw(home: Option<PathBuf>, command: RawCommands) -> Result<()> {
             if let Some(metadata) = entry.metadata {
                 println!("raw_id: {}", metadata.raw_id);
                 println!("content_hash: {}", metadata.content_hash);
+            }
+            Ok(())
+        }
+        RawCommands::Analyze(command) => {
+            let analysis = crate::raw::analyze_raw(
+                &config,
+                RawAnalyzeOptions {
+                    path: command.path,
+                    output: command.output,
+                    overwrite: command.overwrite,
+                    dry_run: command.dry_run,
+                },
+            )?;
+            println!("raw: {}", analysis.entry.relative_path);
+            println!("analysis: {}", analysis.relative_output_path);
+            println!("absolute_path: {}", analysis.output_path.display());
+            println!("wrote: {}", analysis.wrote);
+            if command.dry_run {
+                println!("dry_run: true");
+            }
+            if analysis.risk_flags.is_empty() {
+                println!("risk_flags: none");
+            } else {
+                println!("risk_flags: {}", analysis.risk_flags.join(", "));
+            }
+            if command.dry_run {
+                println!("{}", analysis.template);
             }
             Ok(())
         }
@@ -1122,6 +1185,355 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
         .take(max_chars.saturating_sub(1))
         .collect::<String>()
         + "..."
+}
+
+fn planned_queries(
+    config: &RuntimeConfig,
+    query: String,
+    variants: Vec<String>,
+    intent: &str,
+) -> Vec<String> {
+    let mut planned = Vec::new();
+    let inputs = std::iter::once(query).chain(variants);
+    for input in inputs {
+        push_query_variant(&mut planned, input.trim());
+        let without_alias = strip_alias_trigger(config, &input);
+        push_query_variant(&mut planned, &without_alias);
+        let compact = compact_memory_query(&without_alias);
+        push_query_variant(&mut planned, &compact);
+    }
+
+    let intent = intent.to_lowercase();
+    if intent == "memory" || intent == "auto" || intent == "mixed" {
+        let existing = planned.clone();
+        for query in existing {
+            if likely_decision_query(&query) {
+                push_query_variant(&mut planned, &format!("{query} decision"));
+            }
+            if likely_task_query(&query) {
+                push_query_variant(&mut planned, &format!("{query} task todo"));
+            }
+        }
+    }
+    planned.truncate(8);
+    planned
+}
+
+fn push_query_variant(queries: &mut Vec<String>, value: &str) {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim_matches(|ch: char| {
+        ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | '?' | '!' | '.')
+    });
+    if normalized.len() < 2 {
+        return;
+    }
+    if !queries
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(normalized))
+    {
+        queries.push(normalized.to_string());
+    }
+}
+
+fn strip_alias_trigger(config: &RuntimeConfig, query: &str) -> String {
+    let trimmed = query.trim();
+    for alias in &config.file.agent_policy.aliases {
+        let alias = alias.trim();
+        if alias.is_empty() {
+            continue;
+        }
+        if trimmed.to_lowercase().starts_with(&alias.to_lowercase()) {
+            return trimmed[alias.len()..]
+                .trim_start_matches(|ch: char| {
+                    ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | '-' | '!')
+                })
+                .to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn compact_memory_query(query: &str) -> String {
+    let stopwords = [
+        "show",
+        "tell",
+        "about",
+        "please",
+        "what",
+        "did",
+        "we",
+        "decide",
+        "decided",
+        "find",
+        "memory",
+        "memories",
+        "context",
+        "покажи",
+        "покажите",
+        "расскажи",
+        "найди",
+        "что",
+        "мы",
+        "решили",
+        "решение",
+        "решения",
+        "память",
+        "контекст",
+        "по",
+        "про",
+    ];
+    query
+        .split_whitespace()
+        .filter(|token| {
+            let normalized = token
+                .trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '_')
+                .to_lowercase();
+            !normalized.is_empty() && !stopwords.contains(&normalized.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn likely_decision_query(query: &str) -> bool {
+    let lower = query.to_lowercase();
+    ["decide", "decided", "decision", "решили", "решение"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn likely_task_query(query: &str) -> bool {
+    let lower = query.to_lowercase();
+    ["todo", "task", "plan", "next", "задач", "план", "дальше"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+fn intent_allows_memory(intent: &str) -> bool {
+    matches!(
+        intent.trim().to_lowercase().as_str(),
+        "auto" | "mixed" | "memory"
+    )
+}
+
+fn intent_allows_wiki(intent: &str) -> bool {
+    matches!(
+        intent.trim().to_lowercase().as_str(),
+        "auto" | "mixed" | "wiki"
+    )
+}
+
+fn intent_allows_sources(intent: &str) -> bool {
+    matches!(
+        intent.trim().to_lowercase().as_str(),
+        "auto" | "mixed" | "evidence" | "source" | "sources"
+    )
+}
+
+fn merged_search_results(
+    config: &RuntimeConfig,
+    queries: &[String],
+    filters: crate::indexer::SearchFilters,
+) -> Vec<crate::indexer::SearchResult> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for query in queries {
+        let limit = filters.limit.max(1);
+        let results = crate::indexer::search(config, query, filters.clone()).unwrap_or_default();
+        for result in results {
+            if seen.insert(result.id.clone()) {
+                merged.push(result);
+            }
+        }
+        if merged.len() >= limit {
+            break;
+        }
+    }
+    merged.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    merged.truncate(filters.limit.max(1));
+    merged
+}
+
+fn merged_wiki_results(
+    config: &RuntimeConfig,
+    queries: &[String],
+    limit: usize,
+) -> Result<Vec<crate::wiki::WikiSearchResult>> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for query in queries {
+        for result in crate::wiki::search(config, query, limit)? {
+            if seen.insert(result.page.relative_path.clone()) {
+                merged.push(result);
+            }
+        }
+        if merged.len() >= limit {
+            break;
+        }
+    }
+    merged.truncate(limit.max(1));
+    Ok(merged)
+}
+
+fn merged_source_results(
+    config: &RuntimeConfig,
+    queries: &[String],
+    limit: usize,
+) -> Result<Vec<crate::sources::SourceSearchResult>> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for query in queries {
+        for result in crate::sources::search_sources(config, query, limit)? {
+            if seen.insert(result.path.clone()) {
+                merged.push(result);
+            }
+        }
+        if merged.len() >= limit {
+            break;
+        }
+    }
+    merged.truncate(limit.max(1));
+    Ok(merged)
+}
+
+fn print_wiki_results(results: Vec<crate::wiki::WikiSearchResult>) {
+    if results.is_empty() {
+        println!("no results");
+        return;
+    }
+    for result in results {
+        println!("{} score={}", result.page.relative_path, result.score);
+    }
+}
+
+fn print_packed_context(
+    memories: Vec<crate::indexer::SearchResult>,
+    wiki: Vec<crate::wiki::WikiSearchResult>,
+    sources: Vec<crate::sources::SourceSearchResult>,
+    budget: usize,
+) {
+    let mut remaining = budget.max(1);
+    let mut used = 0usize;
+    println!("## Packed Context");
+
+    println!("### Memories");
+    if memories.is_empty() {
+        println!("no results");
+    } else {
+        for result in memories {
+            if remaining == 0 {
+                break;
+            }
+            let related = match (&result.related_from, &result.relation) {
+                (Some(from), Some(relation)) => format!(" related_to={from} relation={relation}"),
+                _ => String::new(),
+            };
+            let snippet = result.snippet.replace('\n', " ");
+            let block = format!(
+                "- citation: `{}` id={} type={} status={} score={:.3}{}\n  snippet: {}\n",
+                result.path,
+                result.id,
+                result.memory_type,
+                result.status,
+                result.score,
+                related,
+                fallback_snippet(&snippet)
+            );
+            print_budgeted_block(&block, &mut remaining, &mut used);
+        }
+    }
+
+    println!("### Wiki");
+    if wiki.is_empty() {
+        println!("no results");
+    } else {
+        for result in wiki {
+            if remaining == 0 {
+                break;
+            }
+            let title = result
+                .page
+                .frontmatter
+                .title
+                .as_deref()
+                .unwrap_or("untitled");
+            let block = format!(
+                "- citation: `{}` title=\"{}\" score={}\n  snippet: {}\n",
+                result.page.relative_path,
+                title.replace('"', "\\\""),
+                result.score,
+                fallback_snippet(&result.page.body.replace('\n', " "))
+            );
+            print_budgeted_block(&block, &mut remaining, &mut used);
+        }
+    }
+
+    println!("### Sources");
+    if sources.is_empty() {
+        println!("no results");
+    } else {
+        for result in sources {
+            if remaining == 0 {
+                break;
+            }
+            let block = format!(
+                "- citation: `{}` source_id={} score={}\n  snippet: {}\n",
+                result.path,
+                result.source_id,
+                result.score,
+                fallback_snippet(&result.snippet)
+            );
+            print_budgeted_block(&block, &mut remaining, &mut used);
+        }
+    }
+    println!("packed_budget_used: {used}");
+    println!("packed_budget_remaining: {remaining}");
+}
+
+fn fallback_snippet(snippet: &str) -> String {
+    let snippet = snippet.trim();
+    if snippet.is_empty() {
+        "(no snippet)".to_string()
+    } else {
+        snippet.to_string()
+    }
+}
+
+fn print_budgeted_block(block: &str, remaining: &mut usize, used: &mut usize) {
+    if *remaining == 0 {
+        return;
+    }
+    let block_len = block.chars().count();
+    if block_len <= *remaining {
+        print!("{block}");
+        *remaining -= block_len;
+        *used += block_len;
+        return;
+    }
+    let truncated = truncate_for_budget(block, *remaining);
+    let printed = truncated.chars().count();
+    println!("{truncated}");
+    *used += printed;
+    *remaining = 0;
+}
+
+fn truncate_for_budget(value: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let count = value.chars().count();
+    if count <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    value.chars().take(max_chars - 3).collect::<String>() + "..."
 }
 
 fn print_search_results(results: Vec<crate::indexer::SearchResult>) {

@@ -1,7 +1,14 @@
 use assert_cmd::Command;
 use predicates::str::contains;
+use sha2::{Digest, Sha256};
 use std::fs;
 use tempfile::tempdir;
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
 
 #[test]
 fn setup_creates_managed_home() {
@@ -64,6 +71,14 @@ fn aliases_can_be_reassigned() {
 fn self_management_outputs_install_shell_init_and_completions() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
+    let fake_binary = temp.path().join("memora-bin");
+    let fake_binary_bytes = b"#!/bin/sh\n";
+    fs::write(&fake_binary, fake_binary_bytes).expect("fake binary");
+    let checksum = sha256_hex(fake_binary_bytes);
+    let updated_binary = temp.path().join("memora-bin-updated");
+    let updated_binary_bytes = b"#!/bin/sh\necho updated\n";
+    fs::write(&updated_binary, updated_binary_bytes).expect("updated binary");
+    let updated_checksum = sha256_hex(updated_binary_bytes);
 
     Command::cargo_bin("memora")
         .expect("memora binary")
@@ -75,6 +90,56 @@ fn self_management_outputs_install_shell_init_and_completions() {
         .stdout(contains("installed:"))
         .stdout(contains("bin/memora"))
         .stdout(contains("dry_run: true"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("self")
+        .arg("install")
+        .arg("--from")
+        .arg(&fake_binary)
+        .arg("--sha256")
+        .arg("sha256:deadbeef")
+        .assert()
+        .failure()
+        .stderr(contains("sha256 mismatch"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("self")
+        .arg("install")
+        .arg("--from")
+        .arg(&fake_binary)
+        .arg("--sha256")
+        .arg(&checksum)
+        .assert()
+        .success()
+        .stdout(contains("installed:"));
+    assert_eq!(
+        fs::read(home.join("bin").join("memora")).expect("installed binary"),
+        fake_binary_bytes
+    );
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("self")
+        .arg("update")
+        .arg("--from")
+        .arg(&updated_binary)
+        .arg("--sha256")
+        .arg(&updated_checksum)
+        .assert()
+        .success()
+        .stdout(contains("updated:"));
+    assert_eq!(
+        fs::read(home.join("bin").join("memora")).expect("updated binary"),
+        updated_binary_bytes
+    );
 
     Command::cargo_bin("memora")
         .expect("memora binary")
@@ -180,6 +245,70 @@ wiki body
 }
 
 #[test]
+fn doctor_reports_corrupt_memory_without_aborting() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let facts = home.join("vault/Memories/facts");
+    fs::create_dir_all(&facts).expect("facts dir");
+    fs::write(
+        facts.join("bad.md"),
+        r#"---
+schema_version: 1
+id: mem_bad
+type: fact
+scope: user
+status: active
+confidence: [not-a-number]
+created_at: 2026-05-05T10:00:00Z
+updated_at: 2026-05-05T10:00:00Z
+---
+
+bad memory
+"#,
+    )
+    .expect("bad memory");
+    fs::write(
+        facts.join("good.md"),
+        r#"---
+schema_version: 1
+id: mem_good
+type: fact
+scope: user
+status: active
+created_at: 2026-05-05T10:00:00Z
+updated_at: 2026-05-05T10:00:00Z
+relations:
+  - type: related_to
+    target: mem_missing
+tags: []
+---
+
+good memory
+"#,
+    )
+    .expect("good memory");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(contains("Memories/facts/bad.md"))
+        .stdout(contains("relation target not found: mem_missing"));
+}
+
+#[test]
 fn remember_reindex_and_search_memory() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
@@ -227,6 +356,135 @@ fn remember_reindex_and_search_memory() {
         .success()
         .stdout(contains("decision"))
         .stdout(contains("SQLite"));
+}
+
+#[test]
+fn search_and_context_use_agent_query_variants() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "remember",
+            "--type",
+            "decision",
+            "--text",
+            "Use SQLite FTS5 as the baseline search index.",
+            "--project",
+            "memory-project",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("reindex")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "search",
+            "storage backend",
+            "--variant",
+            "SQLite FTS5",
+            "--mode",
+            "text",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("planned_queries:"))
+        .stdout(contains("SQLite FTS5"))
+        .stdout(contains("decision"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "context",
+            "Remi, что решили по хранилищу?",
+            "--variant",
+            "SQLite FTS5",
+            "--mode",
+            "text",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("planned_queries:"))
+        .stdout(contains("## Packed Context"))
+        .stdout(contains("citation: `Memories/"))
+        .stdout(contains("SQLite FTS5"))
+        .stdout(contains("decision"))
+        .stdout(contains("packed_budget_used:"));
+}
+
+#[test]
+fn probe_routes_to_wiki_for_wiki_intent() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let wiki_dir = home.join("vault/Wiki/concepts");
+    fs::create_dir_all(&wiki_dir).expect("wiki dir");
+    fs::write(
+        wiki_dir.join("retrieval.md"),
+        r#"---
+title: Retrieval Guide
+type: concept
+sources:
+  - manual
+last_updated: 2026-05-05T10:00:00Z
+---
+
+Query variants improve discovery across memories and wiki pages.
+"#,
+    )
+    .expect("wiki page");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args([
+            "probe",
+            "Remi, что wiki знает про discovery?",
+            "--intent",
+            "wiki",
+            "--variant",
+            "query variants",
+            "--mode",
+            "text",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("planned_queries:"))
+        .stdout(contains("## Wiki"))
+        .stdout(contains("Wiki/concepts/retrieval.md"))
+        .stdout(contains("has_context: true"));
 }
 
 #[test]
@@ -311,6 +569,83 @@ Related graph evidence should be returned even without direct keyword overlap.
         .stdout(contains("mem_primary"))
         .stdout(contains("mem_related"))
         .stdout(contains("relation=supports"));
+}
+
+#[test]
+fn search_ranking_prefers_recent_memories_when_other_boosts_match() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let facts = home.join("vault/Memories/facts");
+    fs::create_dir_all(&facts).expect("facts dir");
+    fs::write(
+        facts.join("old.md"),
+        r#"---
+schema_version: 1
+id: mem_old_phoenix
+type: fact
+scope: user
+status: active
+confidence: 0.80
+created_at: 2020-01-01T00:00:00Z
+updated_at: 2020-01-01T00:00:00Z
+tags: []
+---
+
+phoenix ranking stable signal
+"#,
+    )
+    .expect("old memory");
+    fs::write(
+        facts.join("recent.md"),
+        r#"---
+schema_version: 1
+id: mem_recent_phoenix
+type: fact
+scope: user
+status: active
+confidence: 0.80
+created_at: 2026-05-05T00:00:00Z
+updated_at: 2026-05-05T00:00:00Z
+tags: []
+---
+
+phoenix ranking stable signal
+"#,
+    )
+    .expect("recent memory");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(contains("documents_seen: 2"));
+
+    let output = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["search", "phoenix", "--mode", "text"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).expect("utf8");
+    let recent_index = output.find("mem_recent_phoenix").expect("recent result");
+    let old_index = output.find("mem_old_phoenix").expect("old result");
+    assert!(recent_index < old_index, "{output}");
 }
 
 #[test]
@@ -535,6 +870,84 @@ fn raw_source_and_wiki_capture_flow() {
 }
 
 #[test]
+fn raw_analyze_creates_extract_template_and_risk_flags() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let input = temp.path().join("incident.md");
+    fs::write(
+        &input,
+        "# Incident\n\nContact admin@example.com and rotate api_key immediately.",
+    )
+    .expect("input");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let raw_output = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .arg("raw")
+        .arg("add")
+        .arg(&input)
+        .args([
+            "--kind",
+            "text",
+            "--format",
+            "markdown",
+            "--sensitivity",
+            "private",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("raw_id:"))
+        .get_output()
+        .stdout
+        .clone();
+    let raw_output = String::from_utf8(raw_output).expect("utf8");
+    let raw_path = raw_output
+        .lines()
+        .find_map(|line| line.strip_prefix("raw: "))
+        .expect("raw path");
+
+    let analyze_output = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["raw", "analyze", raw_path])
+        .assert()
+        .success()
+        .stdout(contains("risk_flags:"))
+        .stdout(contains("possible_secret"))
+        .stdout(contains("possible_personal_email"))
+        .get_output()
+        .stdout
+        .clone();
+    let analyze_output = String::from_utf8(analyze_output).expect("utf8");
+    let analysis_path = analyze_output
+        .lines()
+        .find_map(|line| line.strip_prefix("analysis: "))
+        .expect("analysis path");
+    let template = fs::read_to_string(home.join("vault").join(analysis_path)).expect("template");
+    assert!(template.contains("## Candidate Memories"));
+    assert!(template.contains("memora source add"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
+        .args(["raw", "inspect", raw_path])
+        .assert()
+        .success()
+        .stdout(contains("sensitivity: private"));
+}
+
+#[test]
 fn agent_integrate_writes_managed_block() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
@@ -681,6 +1094,8 @@ fn session_finalize_saves_source_and_pending_memory() {
 fn uninstall_preserves_vault_by_default() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
+    let fake_binary = temp.path().join("memora-bin");
+    fs::write(&fake_binary, "#!/bin/sh\n").expect("fake binary");
 
     Command::cargo_bin("memora")
         .expect("memora binary")
@@ -694,11 +1109,26 @@ fn uninstall_preserves_vault_by_default() {
         .expect("memora binary")
         .arg("--home")
         .arg(&home)
+        .arg("self")
+        .arg("install")
+        .arg("--from")
+        .arg(&fake_binary)
+        .assert()
+        .success()
+        .stdout(contains("installed:"));
+    assert!(home.join("bin").join("memora").is_file());
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .arg("--home")
+        .arg(&home)
         .arg("uninstall")
         .assert()
         .success()
         .stdout(contains("vault_preserved: true"));
 
     assert!(home.join("vault").is_dir());
+    assert!(home.join("config.yaml").is_file());
     assert!(!home.join("state").exists());
+    assert!(!home.join("bin").join("memora").exists());
 }

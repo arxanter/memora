@@ -70,7 +70,8 @@ Rules:
 - Also use memory without an alias when the request appears to need durable project history, user preferences, previous decisions, roadmap/status/TODOs, Wiki knowledge, or saved source evidence.
 - Do not run memory lookup on every turn. Decide whether memory is relevant first.
 - Start discovery with `memora probe "<query>" --intent memory|wiki|mixed --variant "<alternate>"`.
-- Use `memora context "<query>" --intent evidence|mixed` or `memora lookup-source <source_id>` when source evidence is required.
+- Pass 2-5 high-signal `--variant` values to `probe`, `context`, or `search` when alternate wording, translations, abbreviations, or inflections may improve retrieval.
+- Use `memora context "<query>" --intent evidence|mixed --variant "<alternate>"` or `memora lookup-source <source_id>` when source evidence is required.
 - Use `memora remember` only for small atomic durable memories.
 - Use `memora raw add`, `memora source add`, `memora raw mark-processed`, `memora wiki ingest`, and `memora wiki synthesize --save` for source capture workflows.
 - Review pending agent-created memory with `memora review`; approve or reject only when policy or user confirmation allows it.

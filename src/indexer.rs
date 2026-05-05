@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     config::RuntimeConfig,
@@ -198,7 +199,7 @@ fn text_search(
     let limit = filters.limit.max(1) as i64;
     let mut sql = String::from(
         r#"
-        SELECT d.id, d.path, m.type, m.status, m.confidence, bm25(chunk_fts) AS rank,
+        SELECT d.id, d.path, m.type, m.status, m.confidence, d.updated_at, bm25(chunk_fts) AS rank,
                snippet(chunk_fts, 3, '[', ']', '...', 12) AS snippet
         FROM chunk_fts
         JOIN documents d ON d.id = chunk_fts.document_id
@@ -238,15 +239,22 @@ fn text_search(
         let memory_type: String = row.get(2)?;
         let status: String = row.get(3)?;
         let confidence: Option<f64> = row.get(4)?;
-        let rank: f64 = row.get(5)?;
+        let updated_at: String = row.get(5)?;
+        let rank: f64 = row.get(6)?;
         let base_score = 10.0 / (1.0 + rank.abs());
         Ok(SearchResult {
             id: row.get(0)?,
             path: row.get(1)?,
             memory_type: memory_type.clone(),
             status: status.clone(),
-            score: ranked_score(base_score, &memory_type, &status, confidence),
-            snippet: row.get(6)?,
+            score: ranked_score(
+                base_score,
+                &memory_type,
+                &status,
+                confidence,
+                Some(&updated_at),
+            ),
+            snippet: row.get(7)?,
             related_from: None,
             relation: None,
         })
@@ -468,7 +476,7 @@ fn vector_search(
     let query_vector = provider.embed(&[format!("query: {query}")])?.remove(0);
     let mut sql = String::from(
         r#"
-        SELECT c.id, c.text, c.content_hash, d.id, d.path, m.type, m.status, m.confidence
+        SELECT c.id, c.text, c.content_hash, d.id, d.path, m.type, m.status, m.confidence, d.updated_at
         FROM chunks c
         JOIN documents d ON d.id = c.document_id
         JOIN memories m ON m.id = d.id
@@ -514,12 +522,14 @@ fn vector_search(
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
             row.get::<_, Option<f64>>(7)?,
+            row.get::<_, String>(8)?,
         ))
     })?;
 
     let mut results = Vec::new();
     for row in rows {
-        let (chunk_id, text, chunk_hash, id, path, memory_type, status, confidence) = row?;
+        let (chunk_id, text, chunk_hash, id, path, memory_type, status, confidence, updated_at) =
+            row?;
         let vector =
             embedding_for_chunk(connection, &mut *provider, &chunk_id, &text, &chunk_hash)?;
         let similarity = cosine_similarity(&query_vector, &vector);
@@ -531,7 +541,13 @@ fn vector_search(
             path,
             memory_type: memory_type.clone(),
             status: status.clone(),
-            score: ranked_score(10.0 * similarity, &memory_type, &status, confidence),
+            score: ranked_score(
+                10.0 * similarity,
+                &memory_type,
+                &status,
+                confidence,
+                Some(&updated_at),
+            ),
             snippet: vector_snippet(&text, query),
             related_from: None,
             relation: None,
@@ -561,8 +577,17 @@ fn expand_related(
             if seen.contains(&related_id) {
                 continue;
             }
-            if let Some((id, path, memory_type, status, project, scope, confidence, text)) =
-                related_document(connection, &related_id)?
+            if let Some((
+                id,
+                path,
+                memory_type,
+                status,
+                project,
+                scope,
+                confidence,
+                updated_at,
+                text,
+            )) = related_document(connection, &related_id)?
             {
                 if !matches_filters(
                     filters,
@@ -579,7 +604,7 @@ fn expand_related(
                     path,
                     memory_type: memory_type.clone(),
                     status: status.clone(),
-                    score: ranked_score(base, &memory_type, &status, confidence),
+                    score: ranked_score(base, &memory_type, &status, confidence, Some(&updated_at)),
                     snippet: text.chars().take(180).collect(),
                     related_from: Some(primary.id.clone()),
                     relation: Some(relation),
@@ -623,13 +648,14 @@ type RelatedDocument = (
     String,
     Option<f64>,
     String,
+    String,
 );
 
 fn related_document(connection: &Connection, id: &str) -> Result<Option<RelatedDocument>> {
     connection
         .query_row(
             r#"
-            SELECT d.id, d.path, m.type, m.status, m.project, m.scope, m.confidence, c.text
+            SELECT d.id, d.path, m.type, m.status, m.project, m.scope, m.confidence, d.updated_at, c.text
             FROM documents d
             JOIN memories m ON m.id = d.id
             LEFT JOIN chunks c ON c.document_id = d.id
@@ -647,7 +673,8 @@ fn related_document(connection: &Connection, id: &str) -> Result<Option<RelatedD
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
-                    row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                    row.get(7)?,
+                    row.get::<_, Option<String>>(8)?.unwrap_or_default(),
                 ))
             },
         )
@@ -687,7 +714,13 @@ fn matches_filters(
     true
 }
 
-fn ranked_score(base_score: f64, memory_type: &str, status: &str, confidence: Option<f64>) -> f64 {
+fn ranked_score(
+    base_score: f64,
+    memory_type: &str,
+    status: &str,
+    confidence: Option<f64>,
+    updated_at: Option<&str>,
+) -> f64 {
     let type_boost = match memory_type {
         "decision" => 1.20,
         "preference" => 1.15,
@@ -707,7 +740,28 @@ fn ranked_score(base_score: f64, memory_type: &str, status: &str, confidence: Op
     let confidence_boost = confidence
         .map(|value| 0.75 + value.clamp(0.0, 1.0) * 0.5)
         .unwrap_or(1.0);
-    base_score * type_boost * status_boost * confidence_boost
+    base_score * type_boost * status_boost * confidence_boost * recency_boost(updated_at)
+}
+
+fn recency_boost(updated_at: Option<&str>) -> f64 {
+    let Some(updated_at) = updated_at else {
+        return 1.0;
+    };
+    let Ok(updated_at) = OffsetDateTime::parse(updated_at, &Rfc3339) else {
+        return 1.0;
+    };
+    let age_days = (OffsetDateTime::now_utc() - updated_at).whole_days();
+    if age_days <= 7 {
+        1.10
+    } else if age_days <= 30 {
+        1.06
+    } else if age_days <= 180 {
+        1.02
+    } else if age_days <= 365 {
+        1.0
+    } else {
+        0.94
+    }
 }
 
 fn related_weight(relation: &str, confidence: Option<f64>) -> f64 {

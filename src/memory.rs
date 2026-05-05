@@ -272,7 +272,28 @@ pub fn set_review_status(
 
 pub fn validate_all(config: &RuntimeConfig) -> Result<Vec<String>> {
     let mut issues = Vec::new();
-    let memories = list_memories(config)?;
+    let root = config.vault_path.join("Memories");
+    if !root.exists() {
+        return Ok(issues);
+    }
+    let mut memories = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            match read_memory_at(config, path.to_path_buf()) {
+                Ok(memory) => memories.push(memory),
+                Err(error) => issues.push(format!(
+                    "{}: {error}",
+                    path.strip_prefix(&config.vault_path)
+                        .unwrap_or(path)
+                        .to_string_lossy()
+                )),
+            }
+        }
+    }
     let ids: std::collections::HashSet<_> = memories
         .iter()
         .map(|memory| memory.frontmatter.id.as_str())

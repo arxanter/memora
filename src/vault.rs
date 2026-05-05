@@ -2,7 +2,8 @@ use std::{env, fs, path::PathBuf};
 
 use crate::{
     config::{load_runtime_config, save_config, RuntimeConfig},
-    error::Result,
+    error::{MemoraError, Result},
+    util::file_hash,
 };
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ pub struct SetupOptions {
 #[derive(Debug, Clone)]
 pub struct BinaryInstallOptions {
     pub source: Option<PathBuf>,
+    pub expected_sha256: Option<String>,
     pub overwrite: bool,
     pub dry_run: bool,
 }
@@ -41,6 +43,7 @@ pub fn managed_directories(config: &RuntimeConfig) -> Vec<PathBuf> {
     vec![
         config.vault_path.clone(),
         config.vault_path.join("raw").join("inbox"),
+        config.vault_path.join("raw").join("analysis"),
         config.vault_path.join("raw").join("processed"),
         config.vault_path.join("raw").join("quarantine"),
         config.vault_path.join("Sources"),
@@ -69,31 +72,62 @@ pub fn bin_path(config: &RuntimeConfig) -> PathBuf {
 pub fn install_binary(config: &RuntimeConfig, options: BinaryInstallOptions) -> Result<PathBuf> {
     let source = options.source.unwrap_or(env::current_exe()?);
     if !source.is_file() {
-        return Err(crate::error::MemoraError::NotFound(
-            source.display().to_string(),
-        ));
+        return Err(MemoraError::NotFound(source.display().to_string()));
+    }
+    if let Some(expected) = &options.expected_sha256 {
+        let actual = file_hash(&source)?;
+        let expected = normalize_sha256(expected);
+        if actual != expected {
+            return Err(MemoraError::InvalidArgument(format!(
+                "sha256 mismatch for {}: expected {}, got {}",
+                source.display(),
+                expected,
+                actual
+            )));
+        }
     }
     let target = bin_path(config);
     if target.exists() && !options.overwrite {
-        return Err(crate::error::MemoraError::InvalidArgument(format!(
+        return Err(MemoraError::InvalidArgument(format!(
             "{} already exists; pass --force to overwrite",
             target.display()
         )));
     }
     if !options.dry_run {
-        fs::create_dir_all(target.parent().ok_or_else(|| {
-            crate::error::MemoraError::Message("bin path has no parent".to_string())
-        })?)?;
-        fs::copy(&source, &target)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| MemoraError::Message("bin path has no parent".to_string()))?;
+        fs::create_dir_all(parent)?;
+        let temp_target = parent.join(format!(".memora.tmp-{}", std::process::id()));
+        if temp_target.exists() {
+            fs::remove_file(&temp_target)?;
+        }
+        fs::copy(&source, &temp_target)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut permissions = fs::metadata(&target)?.permissions();
+            let mut permissions = fs::metadata(&temp_target)?.permissions();
             permissions.set_mode(0o755);
-            fs::set_permissions(&target, permissions)?;
+            fs::set_permissions(&temp_target, permissions)?;
+        }
+        #[cfg(windows)]
+        if target.exists() {
+            fs::remove_file(&target)?;
+        }
+        if let Err(error) = fs::rename(&temp_target, &target) {
+            let _ = fs::remove_file(&temp_target);
+            return Err(error.into());
         }
     }
     Ok(target)
+}
+
+fn normalize_sha256(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("sha256:")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 pub fn status(config: &RuntimeConfig) -> Vec<(String, String)> {
@@ -128,7 +162,7 @@ pub fn uninstall(
     remove_vault: bool,
     dry_run: bool,
 ) -> Result<Vec<PathBuf>> {
-    let mut targets = vec![config.state_path()];
+    let mut targets = vec![config.state_path(), bin_path(config)];
     if remove_vault {
         targets.push(config.vault_path.clone());
         targets.push(config.config_path());
@@ -141,6 +175,10 @@ pub fn uninstall(
             } else if target.is_file() {
                 fs::remove_file(target)?;
             }
+        }
+        let bin_dir = config.home_path.join("bin");
+        if bin_dir.is_dir() && fs::read_dir(&bin_dir)?.next().is_none() {
+            fs::remove_dir(bin_dir)?;
         }
     }
 
