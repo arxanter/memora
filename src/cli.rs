@@ -2118,6 +2118,14 @@ fn normalize_sha256_for_cli(value: &str) -> String {
 fn print_shell_init(config: &RuntimeConfig, shell: Shell) {
     let home = shell_quote(&config.home_path.display().to_string());
     let bin = shell_quote(&config.home_path.join("bin").display().to_string());
+    let exe = shell_quote(
+        &config
+            .home_path
+            .join("bin")
+            .join("memora")
+            .display()
+            .to_string(),
+    );
     let fastembed_cache = shell_quote(
         &config
             .state_path()
@@ -2131,11 +2139,19 @@ fn print_shell_init(config: &RuntimeConfig, shell: Shell) {
             println!("set -gx MEMORA_HOME {home};");
             println!("set -gx FASTEMBED_CACHE_DIR {fastembed_cache};");
             println!("fish_add_path {bin};");
-            println!("alias memora {bin};");
+            println!("alias memora {exe};");
         }
         Shell::PowerShell => {
             let home = ps_quote(&config.home_path.display().to_string());
             let bin = ps_quote(&config.home_path.join("bin").display().to_string());
+            let exe = ps_quote(
+                &config
+                    .home_path
+                    .join("bin")
+                    .join("memora")
+                    .display()
+                    .to_string(),
+            );
             let fastembed_cache = ps_quote(
                 &config
                     .state_path()
@@ -2147,13 +2163,13 @@ fn print_shell_init(config: &RuntimeConfig, shell: Shell) {
             println!("$env:MEMORA_HOME = {home}");
             println!("$env:FASTEMBED_CACHE_DIR = {fastembed_cache}");
             println!("$env:PATH = {bin} + [IO.Path]::PathSeparator + $env:PATH");
-            println!("Set-Alias -Name memora -Value {bin}");
+            println!("Set-Alias -Name memora -Value {exe}");
         }
         _ => {
             println!("export MEMORA_HOME={home}");
             println!("export FASTEMBED_CACHE_DIR={fastembed_cache}");
             println!("export PATH={bin}:$PATH");
-            println!("alias memora={bin}");
+            println!("alias memora={exe}");
         }
     }
 }

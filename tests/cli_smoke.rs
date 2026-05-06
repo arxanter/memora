@@ -184,7 +184,9 @@ fn self_management_outputs_install_shell_init_and_completions() {
         .stdout(contains("MEMORA_HOME"))
         .stdout(contains("FASTEMBED_CACHE_DIR"))
         .stdout(contains("alias memora="))
-        .stdout(contains("bin"));
+        .stdout(contains(
+            home.join("bin").join("memora").display().to_string(),
+        ));
 
     Command::cargo_bin("memora")
         .expect("memora binary")
