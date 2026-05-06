@@ -318,7 +318,7 @@ pub fn mark_processed(
 fn validate_kind(kind: &str) -> Result<()> {
     if matches!(
         kind,
-        "pdf" | "zoom" | "slack" | "text" | "webclip" | "webclips"
+        "pdf" | "zoom" | "slack" | "text" | "webclip" | "article"
     ) {
         Ok(())
     } else {

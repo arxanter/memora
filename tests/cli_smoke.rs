@@ -31,6 +31,28 @@ fn setup_creates_managed_home() {
         .is_dir());
     assert!(home.join("vault").join("Wiki").join("syntheses").is_dir());
     assert!(home.join("state").join("cache").is_dir());
+    assert!(home.join("temp").is_dir());
+}
+
+#[test]
+fn default_home_is_hidden_memora_directory() {
+    let temp = tempdir().expect("tempdir");
+    let user_home = temp.path().join("user-home");
+    fs::create_dir_all(&user_home).expect("user home");
+    let default_home = user_home.join(".memora");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("HOME", &user_home)
+        .env_remove("MEMORA_HOME")
+        .arg("setup")
+        .assert()
+        .success()
+        .stdout(contains(default_home.display().to_string()));
+
+    assert!(default_home.join("config.yaml").is_file());
+    assert!(default_home.join("bin").is_dir());
+    assert!(default_home.join("temp").is_dir());
 }
 
 #[test]
@@ -971,6 +993,99 @@ fn agent_integrate_writes_managed_block() {
     assert!(content.contains("receiving approval"));
     assert!(content.contains("preserve it as close to the original as possible"));
     assert!(content.contains("edit-and-approve each note"));
+    assert!(content.contains("Command Specs:"));
+    assert!(content.contains("project_context"));
+    assert!(content.contains("Data Formats:"));
+}
+
+#[test]
+fn agent_reference_prints_allowed_values_and_data_formats() {
+    let output = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .args(["agent", "reference"])
+        .assert()
+        .success()
+        .stdout(contains("Memory types:"))
+        .stdout(contains("project_context"))
+        .stdout(contains("Raw kinds:"))
+        .stdout(contains("article"))
+        .stdout(contains("Data Formats:"))
+        .stdout(contains("memora session finalize --memories-file"))
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).expect("utf8");
+    assert!(!output.contains("webclips"), "{output}");
+}
+
+#[test]
+fn raw_kind_accepts_article_and_rejects_webclips() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let input = temp.path().join("article.md");
+    fs::write(&input, "# Article\n\nDurable source material.").expect("input");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("raw")
+        .arg("add")
+        .arg(&input)
+        .args(["--kind", "article", "--format", "markdown"])
+        .assert()
+        .success()
+        .stdout(contains("raw_id:"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("raw")
+        .arg("add")
+        .arg(&input)
+        .args(["--kind", "webclips", "--format", "markdown"])
+        .assert()
+        .failure()
+        .stderr(contains("unsupported raw kind: webclips"));
+}
+
+#[test]
+fn remember_reads_staged_text_file_and_leaves_it_for_agent_cleanup() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+    let project = temp.path().join("project");
+    let staging = project.join(".memora");
+    fs::create_dir_all(&staging).expect("staging dir");
+    let memory_file = staging.join("memory.md");
+    fs::write(
+        &memory_file,
+        "Store large memory bodies through staged files.",
+    )
+    .expect("memory");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .args(["remember", "--type", "fact", "--text-file"])
+        .arg(&memory_file)
+        .assert()
+        .success()
+        .stdout(contains("created:"));
+
+    assert!(memory_file.is_file());
 }
 
 #[test]

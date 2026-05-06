@@ -8,6 +8,53 @@ use crate::error::{MemoraError, Result};
 pub const MANAGED_BLOCK_START: &str = "<!-- BEGIN MEMORA MANAGED BLOCK -->";
 pub const MANAGED_BLOCK_END: &str = "<!-- END MEMORA MANAGED BLOCK -->";
 
+pub const AGENT_COMMAND_SPEC: &str = r#"Command Specs:
+- Home: commands use `MEMORA_HOME` when set, otherwise `~/.memora`. Do not pass a `--home` flag.
+- Repeatable values: pass repeated flags, for example `--variant "alt"` or `--tag "tag"`, instead of comma-separated strings.
+- Large write inputs: create temporary `.md`, `.yaml`, `.yml`, `.json`, or other payload files under the project `.memora/` directory or user `~/.memora/temp/`, then pass the file path to Memora. Memora copies/ingests the content and does not delete input files; after a successful command, the agent should remove temporary staged files itself. Small values can be passed directly as CLI arguments.
+- Retrieval modes: `auto`, `text`, `vector`, `hybrid`. `auto` tries semantic retrieval when available and falls back to text.
+- Retrieval intents: `auto`, `memory`, `wiki`, `evidence`, `mixed`. Use `evidence` when source excerpts are required.
+- Agent clients: `all`, `agents`, `cursor`, `claude`, `codex`. Agent scopes: `project`, `user`.
+- Memory types: `fact`, `decision`, `preference`, `task`, `project_context`, `conversation_summary`.
+- Memory scopes: `user`, `project`, `global`. `project` scope requires a non-empty `project` key.
+- Memory statuses: `pending`, `active`, `stale`, `superseded`, `rejected`.
+- Raw kinds: `pdf`, `zoom`, `slack`, `text`, `webclip`, `article`.
+- Raw formats: `pdf`, `markdown`, `json`, `txt`.
+- Sensitivity labels for raw and source records: `normal`, `private`, `secret`.
+- Raw statuses: `processed`.
+- Source markdown frontmatter `kind`: `source` or `extract`. `source_quality`: `user_provided`, `agent_extracted`, `generated`, `imported`, `unknown`.
+- Wiki page types: `source`, `entity`, `concept`, `synthesis`.
+
+Agent-safe Commands:
+- Discovery: `memora probe "<query>" --intent <INTENT> --variant "<alternate>" --mode <MODE> --include-related`.
+  Output includes `planned_queries`, optional `## Memories` and `## Wiki` sections, and `has_context: true|false`.
+- Packed context: `memora context "<query>" --intent <INTENT> --variant "<alternate>" --budget <CHARS> --mode <MODE> --include-related`.
+  Output has `## Packed Context`, `### Memories`, `### Wiki`, `### Sources`, citation lines, and `packed_budget_used/remaining`.
+- Memory search: `memora search "<query>" --variant "<alternate>" --project <PROJECT> --type <TYPE> --status <STATUS> --scope <SCOPE> --limit <N> --mode <MODE> --include-related`.
+  Result lines are `id score=<float> type=<TYPE> status=<STATUS> path=<relative-path>`.
+- Source evidence: `memora lookup-source <SOURCE_ID> --query "<query>" --budget <N>`.
+- Create memory: `memora remember --type <TYPE> --text "<atomic memory>" --text-file <PATH> --scope <SCOPE> --project <PROJECT> --status <STATUS> --tag <TAG>`.
+  Default status is `pending`; default scope is `project` when `--project` is present, otherwise `user`.
+- Update memory: `memora memory update <MEMORY_ID> --type <TYPE> --scope <SCOPE> --project <PROJECT> --clear-project --status <STATUS> --confidence <0..1> --clear-confidence --tag <TAG> --clear-tags --title <TITLE> --clear-title --text <TEXT> --text-file <PATH> --reason <TEXT> --dry-run`.
+- Review: `memora review list --group-by type|source`, `memora review approve <ID...> --reason <TEXT> --dry-run`, `memora review reject <ID...> --reason <TEXT> --dry-run`.
+- Raw capture: `memora raw add <PATH> --kind <KIND> --format <FORMAT> --title <TITLE> --sensitivity <LEVEL> --tag <TAG> --dry-run`.
+  For PDFs, this stores the original PDF under `raw/inbox/pdf/` with a `.meta.yaml` sidecar. Create a text or Markdown extract/summary before promoting it to sources, wiki, or memory.
+- Raw analysis: `memora raw analyze <RAW_PATH> --output <PATH> --overwrite --dry-run`.
+- Source capture: `memora source add <PATH> --extract <PATH> --kind <CHANNEL> --format <FORMAT> --title <TITLE> --url <URL> --sensitivity <LEVEL> --tag <TAG>`.
+  `--kind` is stored as source `channel`; common channels are `file`, `ai_session`, `slack`, and `webclip`.
+- Raw completion: `memora raw mark-processed <RAW_PATH> --source-id <SOURCE_ID> --dry-run`.
+- Wiki: `memora wiki read <TARGET> --full --max-chars <N>`, `memora wiki search "<query>" --limit <N>`, `memora wiki ingest <SOURCE_ID> --title <TITLE> --entity <NAME> --concept <NAME>`, `memora wiki synthesize "<question>" --title <TITLE> --save --limit <N>`, `memora wiki lint`.
+- Maintenance: `memora status`, `memora doctor`, `memora reindex --clean`, `memora agent status --client <CLIENT> --scope <SCOPE>`, `memora agent reference`.
+
+Data Formats:
+- Memory files are Markdown with YAML frontmatter: `schema_version: 1`, `id`, `type`, `scope`, optional `project`, `status`, optional `confidence` between 0 and 1, `created_at`, `updated_at`, optional `source`, optional `author`, optional `relations`, optional `tags`.
+- Agent-generated memories must include `source` and `confidence`; save them as `pending` unless the user explicitly approves active persistence.
+- Raw sidecars are `<file>.meta.yaml` with `raw_id`, `kind`, `format`, `title`, `tags`, `sensitivity`, `captured_at`, `original_path`, `file_name`, `size_bytes`, `content_hash`, optional `status`, `processed_at`, `previous_relative_path`, `source_id`.
+- Source files are Markdown with YAML frontmatter: `schema_version: 1`, `source_id`, `kind`, `title`, `captured_at`, `channel`, `source_quality`, `sensitivity`, optional `url`, `tags`, `risk_flags`, and `origin`.
+- Wiki pages are Markdown with optional YAML frontmatter: `title`, `type`, `source_id`, `sources`, `entities`, `concepts`, `last_updated`.
+- `memora session finalize --memories-file <PATH>` expects JSON array items as either strings or objects shaped as `{"type":"decision","text":"...","tags":["tag"]}`.
+- Local embedding commands read JSON on stdin shaped as `{"model":"<model>","texts":["..."]}` and return either `{"embeddings":[[0.1,0.2]]}` or a raw `[[0.1,0.2]]` array."#;
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum AgentClient {
     All,
@@ -53,6 +100,7 @@ pub fn render_rules(config: &RuntimeConfig, client: AgentClient, scope: AgentSco
     let aliases = config.file.agent_policy.aliases.join(", ");
     let auto_recall = config.file.agent_policy.auto_recall;
     let enabled = config.file.agent_policy.enabled;
+    let agent_command_spec = AGENT_COMMAND_SPEC.trim_end();
 
     let body = format!(
         r#"Memora is the local CLI-first memory vault for this agent.
@@ -77,6 +125,8 @@ Rules:
 - Before any command that saves extractions or values to memory, including `memora raw add`, `memora source add`, `memora raw mark-processed`, `memora wiki ingest`, and `memora wiki synthesize --save`, show what will be saved and get user approval, unless the user explicitly said review is not required.
 - Review pending agent-created memory with `memora review`; show active pending notes in a concise, readable format and let the user approve, reject, or edit-and-approve each note before applying the decision.
 - Do not read, edit, migrate, delete, or inspect Memora vault internals directly. If the CLI lacks an operation, report the CLI gap.
+
+{agent_command_spec}
 "#,
         config.home_path.display()
     );

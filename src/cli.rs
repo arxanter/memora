@@ -4,7 +4,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::{
-    agent::{render_rules, AgentClient, AgentInstallOptions, AgentScope},
+    agent::{render_rules, AgentClient, AgentInstallOptions, AgentScope, AGENT_COMMAND_SPEC},
     config::{load_runtime_config, set_aliases, RuntimeConfig},
     error::Result,
     memory::{MemoryUpdateOptions, RememberOptions},
@@ -22,7 +22,7 @@ const ROOT_AFTER_HELP: &str = r#"Command groups:
   Managed binary and shell integration:
     self install, self update, self shell-init, self completions, uninstall
   Agent rule integration:
-    agent rules, agent integrate, agent update, agent status, agent-aliases
+    agent rules, agent reference, agent integrate, agent update, agent status, agent-aliases
   Raw/source capture:
     raw add, raw analyze, raw list, raw inspect, raw mark-processed, source add, lookup-source
   Wiki:
@@ -35,7 +35,7 @@ const ROOT_AFTER_HELP: &str = r#"Command groups:
     session finalize
 
 Home resolution:
-  Memora uses MEMORA_HOME when set, otherwise ~/memora.
+  Memora uses MEMORA_HOME when set, otherwise ~/.memora.
   The public CLI intentionally has no --home flag; use MEMORA_HOME for tests or custom homes.
 
 Common values:
@@ -43,6 +43,11 @@ Common values:
   --intent: auto, memory, wiki, evidence, mixed
   --client: all, agents, cursor, claude, codex
   --scope: project, user
+  memory types: fact, decision, preference, task, project_context, conversation_summary
+  memory statuses: pending, active, stale, superseded, rejected
+  raw kinds: pdf, zoom, slack, text, webclip, article
+  raw formats: pdf, markdown, json, txt
+  sensitivity: normal, private, secret
 
 Run `memora help <command>` or `memora help <command> <subcommand>` for command-specific arguments.
 See docs/cli-agent-reference.md for the full command reference."#;
@@ -255,6 +260,8 @@ struct UninstallCommand {
 enum AgentCommands {
     #[command(about = "Print generated agent rules without writing files.")]
     Rules(AgentRulesCommand),
+    #[command(about = "Print the detailed command and data-format reference for agents.")]
+    Reference,
     #[command(about = "Install generated rules into client-specific instruction files.")]
     Integrate(AgentInstallCommand),
     #[command(about = "Refresh already installed managed rule blocks.")]
@@ -354,13 +361,13 @@ struct RawAddCommand {
     #[arg(
         long,
         value_name = "KIND",
-        help = "Source kind, for example text, meeting, article, transcript."
+        help = "Raw kind. Allowed values: pdf, zoom, slack, text, webclip, article."
     )]
     kind: String,
     #[arg(
         long,
         value_name = "FORMAT",
-        help = "Input format, for example markdown, text, json."
+        help = "Raw input format. Allowed values: pdf, markdown, json, txt."
     )]
     format: String,
     #[arg(
@@ -372,7 +379,7 @@ struct RawAddCommand {
     #[arg(
         long,
         value_name = "LEVEL",
-        help = "Sensitivity label; defaults to public."
+        help = "Sensitivity label. Allowed values: normal, private, secret. Default: normal."
     )]
     sensitivity: Option<String>,
     #[arg(
@@ -440,13 +447,13 @@ struct SourceAddCommand {
     #[arg(
         long,
         value_name = "KIND",
-        help = "Source kind; inferred when omitted."
+        help = "Source channel stored as frontmatter channel; common values: file, ai_session, slack, webclip."
     )]
     kind: Option<String>,
     #[arg(
         long,
         value_name = "FORMAT",
-        help = "Source format; inferred when omitted."
+        help = "Source origin format; common values: markdown, json, txt, pdf. Default: markdown."
     )]
     format: Option<String>,
     #[arg(long, value_name = "TITLE", help = "Human-readable source title.")]
@@ -460,7 +467,7 @@ struct SourceAddCommand {
     #[arg(
         long,
         value_name = "LEVEL",
-        help = "Sensitivity label; inferred from raw metadata when available."
+        help = "Sensitivity label. Allowed values: normal, private, secret. Default: normal."
     )]
     sensitivity: Option<String>,
     #[arg(
@@ -570,15 +577,21 @@ struct RememberCommand {
     #[arg(
         long = "type",
         value_name = "TYPE",
-        help = "Memory type: fact, preference, decision, context, task, or conversation."
+        help = "Memory type. Allowed values: fact, decision, preference, task, project_context, conversation_summary."
     )]
     memory_type: String,
     #[arg(long, value_name = "TEXT", help = "Atomic memory body.")]
-    text: String,
+    text: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read the atomic memory body from a staged text/Markdown/YAML file."
+    )]
+    text_file: Option<PathBuf>,
     #[arg(
         long,
         value_name = "SCOPE",
-        help = "Memory scope, for example project or user."
+        help = "Memory scope. Allowed values: user, project, global. Project scope requires --project."
     )]
     scope: Option<String>,
     #[arg(
@@ -590,7 +603,7 @@ struct RememberCommand {
     #[arg(
         long,
         value_name = "STATUS",
-        help = "Review status, for example pending or active."
+        help = "Review status. Allowed values: pending, active, stale, superseded, rejected. Default: pending."
     )]
     status: Option<String>,
     #[arg(
@@ -611,17 +624,33 @@ enum MemoryCommands {
 struct MemoryUpdateCommand {
     #[arg(value_name = "MEMORY_ID", help = "Memory id to update.")]
     memory_id: String,
-    #[arg(long = "type", value_name = "TYPE", help = "Replace memory type.")]
+    #[arg(
+        long = "type",
+        value_name = "TYPE",
+        help = "Replace memory type. Allowed values: fact, decision, preference, task, project_context, conversation_summary."
+    )]
     memory_type: Option<String>,
-    #[arg(long, value_name = "SCOPE", help = "Replace memory scope.")]
+    #[arg(
+        long,
+        value_name = "SCOPE",
+        help = "Replace memory scope. Allowed values: user, project, global."
+    )]
     scope: Option<String>,
     #[arg(long, value_name = "PROJECT", help = "Replace project key.")]
     project: Option<String>,
     #[arg(long, help = "Remove the project key.")]
     clear_project: bool,
-    #[arg(long, value_name = "STATUS", help = "Replace review status.")]
+    #[arg(
+        long,
+        value_name = "STATUS",
+        help = "Replace review status. Allowed values: pending, active, stale, superseded, rejected."
+    )]
     status: Option<String>,
-    #[arg(long, value_name = "FLOAT", help = "Replace confidence score.")]
+    #[arg(
+        long,
+        value_name = "FLOAT",
+        help = "Replace confidence score, 0.0 through 1.0."
+    )]
     confidence: Option<f32>,
     #[arg(long, help = "Remove confidence score.")]
     clear_confidence: bool,
@@ -641,6 +670,12 @@ struct MemoryUpdateCommand {
     text: Option<String>,
     #[arg(
         long,
+        value_name = "PATH",
+        help = "Replace memory body with text read from a staged text/Markdown/YAML file."
+    )]
+    text_file: Option<PathBuf>,
+    #[arg(
+        long,
         value_name = "TEXT",
         help = "Reason to append to update history."
     )]
@@ -656,7 +691,7 @@ enum ReviewCommands {
         #[arg(
             long,
             value_name = "FIELD",
-            help = "Optional grouping field, for example type or source."
+            help = "Optional grouping field. Supported values: type, source."
         )]
         group_by: Option<String>,
     },
@@ -699,11 +734,23 @@ struct SearchCommand {
         help = "Restrict results to a project key."
     )]
     project: Option<String>,
-    #[arg(long = "type", value_name = "TYPE", help = "Restrict memory type.")]
+    #[arg(
+        long = "type",
+        value_name = "TYPE",
+        help = "Restrict memory type. Allowed values: fact, decision, preference, task, project_context, conversation_summary."
+    )]
     memory_type: Option<String>,
-    #[arg(long, value_name = "STATUS", help = "Restrict review status.")]
+    #[arg(
+        long,
+        value_name = "STATUS",
+        help = "Restrict review status. Allowed values: pending, active, stale, superseded, rejected."
+    )]
     status: Option<String>,
-    #[arg(long, value_name = "SCOPE", help = "Restrict memory scope.")]
+    #[arg(
+        long,
+        value_name = "SCOPE",
+        help = "Restrict memory scope. Allowed values: user, project, global."
+    )]
     scope: Option<String>,
     #[arg(long, value_name = "N", help = "Maximum number of results.")]
     limit: Option<usize>,
@@ -711,7 +758,7 @@ struct SearchCommand {
         long,
         default_value = "auto",
         value_name = "MODE",
-        help = "Retrieval mode: auto, text, vector, or hybrid."
+        help = "Retrieval mode. Allowed values: auto, text, vector, hybrid."
     )]
     mode: String,
     #[arg(long, help = "Expand direct matches through indexed memory relations.")]
@@ -738,7 +785,7 @@ struct ProbeCommand {
         long,
         default_value = "auto",
         value_name = "INTENT",
-        help = "Routing intent: auto, memory, wiki, evidence, or mixed."
+        help = "Routing intent. Allowed values: auto, memory, wiki, evidence, mixed."
     )]
     intent: String,
     #[arg(
@@ -750,7 +797,7 @@ struct ProbeCommand {
         long,
         default_value = "auto",
         value_name = "MODE",
-        help = "Memory retrieval mode: auto, text, vector, or hybrid."
+        help = "Memory retrieval mode. Allowed values: auto, text, vector, hybrid."
     )]
     mode: String,
     #[arg(long, help = "Expand memory matches through indexed relations.")]
@@ -777,7 +824,7 @@ struct ContextCommand {
         long,
         default_value = "auto",
         value_name = "INTENT",
-        help = "Routing intent: auto, memory, wiki, evidence, or mixed."
+        help = "Routing intent. Allowed values: auto, memory, wiki, evidence, mixed."
     )]
     intent: String,
     #[arg(
@@ -796,7 +843,7 @@ struct ContextCommand {
         long,
         default_value = "auto",
         value_name = "MODE",
-        help = "Memory retrieval mode: auto, text, vector, or hybrid."
+        help = "Memory retrieval mode. Allowed values: auto, text, vector, hybrid."
     )]
     mode: String,
     #[arg(long, help = "Expand memory matches through indexed relations.")]
@@ -838,7 +885,7 @@ struct SessionFinalizeCommand {
     #[arg(
         long,
         value_name = "PATH",
-        help = "Optional JSON file containing proposed memories."
+        help = "Optional JSON array of proposed memories: strings or objects like {\"type\":\"decision\",\"text\":\"...\",\"tags\":[\"tag\"]}."
     )]
     memories_file: Option<PathBuf>,
     #[arg(
@@ -943,11 +990,12 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::Wiki { command } => dispatch_wiki(command),
         Commands::Remember(command) => {
             let config = load_runtime_config()?;
+            let text = required_text_or_file(command.text, command.text_file, "memory text")?;
             let memory = crate::memory::remember(
                 &config,
                 RememberOptions {
                     memory_type: command.memory_type,
-                    text: command.text,
+                    text,
                     scope: command.scope,
                     project: command.project,
                     status: command.status,
@@ -1129,6 +1177,10 @@ fn dispatch_agent(command: AgentCommands) -> Result<()> {
         AgentCommands::Rules(command) => {
             let config = load_runtime_config()?;
             print!("{}", render_rules(&config, command.client, command.scope));
+            Ok(())
+        }
+        AgentCommands::Reference => {
+            println!("{}", AGENT_COMMAND_SPEC.trim_end());
             Ok(())
         }
         AgentCommands::Integrate(command) => {
@@ -1521,6 +1573,7 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
     let config = load_runtime_config()?;
     match command {
         MemoryCommands::Update(command) => {
+            let text = optional_text_or_file(command.text, command.text_file, "memory text")?;
             let memory = crate::memory::update_memory(
                 &config,
                 MemoryUpdateOptions {
@@ -1534,7 +1587,7 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
                     clear_confidence: command.clear_confidence,
                     tags: command.tags,
                     clear_tags: command.clear_tags,
-                    text: command.text,
+                    text,
                 },
             )?;
             println!("updated: {}", memory.frontmatter.id);
@@ -1591,6 +1644,38 @@ fn dispatch_review(command: ReviewCommands) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+fn required_text_or_file(
+    text: Option<String>,
+    text_file: Option<PathBuf>,
+    label: &str,
+) -> Result<String> {
+    match (text, text_file) {
+        (Some(_), Some(_)) => Err(crate::error::MemoraError::InvalidArgument(format!(
+            "pass either --text or --text-file for {label}, not both"
+        ))),
+        (Some(text), None) => Ok(text),
+        (None, Some(path)) => Ok(fs::read_to_string(path)?),
+        (None, None) => Err(crate::error::MemoraError::InvalidArgument(format!(
+            "{label} requires --text or --text-file"
+        ))),
+    }
+}
+
+fn optional_text_or_file(
+    text: Option<String>,
+    text_file: Option<PathBuf>,
+    label: &str,
+) -> Result<Option<String>> {
+    match (text, text_file) {
+        (Some(_), Some(_)) => Err(crate::error::MemoraError::InvalidArgument(format!(
+            "pass either --text or --text-file for {label}, not both"
+        ))),
+        (Some(text), None) => Ok(Some(text)),
+        (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
+        (None, None) => Ok(None),
     }
 }
 

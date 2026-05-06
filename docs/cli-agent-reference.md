@@ -1,7 +1,7 @@
 # Memora CLI Reference
 
 Memora is a CLI-first local memory vault for coding agents. Commands operate on
-the Memora home resolved from `MEMORA_HOME`, or `~/memora` when the environment
+the Memora home resolved from `MEMORA_HOME`, or `~/.memora` when the environment
 variable is not set.
 
 The public CLI intentionally has no `--home` flag. Use `MEMORA_HOME=/path/to/home`
@@ -13,8 +13,46 @@ for custom installs, tests, or temporary vaults.
 - `--intent`: `auto`, `memory`, `wiki`, `evidence`, `mixed`
 - `--client`: `all`, `agents`, `cursor`, `claude`, `codex`
 - `--scope`: `project`, `user`
-- Common memory types: `fact`, `preference`, `decision`, `context`, `task`, `conversation`
-- Common review statuses: `pending`, `active`, `rejected`
+- Memory types: `fact`, `decision`, `preference`, `task`, `project_context`,
+  `conversation_summary`
+- Memory scopes: `user`, `project`, `global`
+- Memory statuses: `pending`, `active`, `stale`, `superseded`, `rejected`
+- Raw kinds: `pdf`, `zoom`, `slack`, `text`, `webclip`, `article`
+- Raw formats: `pdf`, `markdown`, `json`, `txt`
+- Sensitivity labels: `normal`, `private`, `secret`
+- Wiki page types: `source`, `entity`, `concept`, `synthesis`
+
+## Data Contracts
+
+Agents should use file staging for large write inputs. Create temporary
+`.md`, `.yaml`, `.yml`, `.json`, or other payload files under the project
+`.memora/` directory or user `~/.memora/temp/`, then pass the file path to Memora.
+Memora copies or ingests the content and does not delete input files. After a
+successful command, the agent should remove temporary staged files itself. Small
+values can still be passed directly as CLI arguments.
+
+Memory files are Markdown with YAML frontmatter containing
+`schema_version: 1`, `id`, `type`, `scope`, optional `project`, `status`,
+optional `confidence` between `0` and `1`, `created_at`, `updated_at`,
+optional `source`, optional `author`, optional `relations`, and optional
+`tags`. Agent-generated memories must include `source` and `confidence`, and
+should normally be saved as `pending` until reviewed.
+
+Raw sidecars are `<file>.meta.yaml` files with `raw_id`, `kind`, `format`,
+`title`, `tags`, `sensitivity`, `captured_at`, `original_path`, `file_name`,
+`size_bytes`, `content_hash`, and optional processing fields.
+
+For PDFs, `raw add` preserves the original PDF in `raw/inbox/pdf/` with a
+`.meta.yaml` sidecar. Create a text or Markdown extract/summary before
+promoting the material to sources, wiki, or memory.
+
+Source files are Markdown with YAML frontmatter containing `schema_version: 1`,
+`source_id`, `kind` (`source` or `extract`), `title`, `captured_at`, `channel`,
+`source_quality`, `sensitivity`, optional `url`, `tags`, `risk_flags`, and
+`origin`.
+
+Wiki pages are Markdown with optional YAML frontmatter: `title`, `type`,
+`source_id`, `sources`, `entities`, `concepts`, and `last_updated`.
 
 ## Setup And Health
 
@@ -144,6 +182,12 @@ Arguments:
 - `--client <CLIENT>`: client to render for. Default: `all`.
 - `--scope <SCOPE>`: scope to describe. Default: `project`.
 
+### `memora agent reference`
+
+Prints the detailed command and data-format reference embedded into generated
+agent instructions. Use this when an agent needs exact allowed values, output
+shapes, or JSON/YAML contracts without reading the managed rule file.
+
 ### `memora agent integrate`
 
 Installs generated rules into client-specific instruction files.
@@ -194,11 +238,13 @@ Copies a raw file into the managed raw inbox with metadata.
 Arguments:
 
 - `<PATH>`: local file to stage.
-- `--kind <KIND>`: source kind, for example `text`, `meeting`, `article`,
-  `transcript`.
-- `--format <FORMAT>`: input format, for example `markdown`, `text`, `json`.
+- `--kind <KIND>`: raw kind. Allowed values: `pdf`, `zoom`, `slack`, `text`,
+  `webclip`, `article`.
+- `--format <FORMAT>`: raw input format. Allowed values: `pdf`, `markdown`,
+  `json`, `txt`.
 - `--title <TITLE>`: human-readable title.
-- `--sensitivity <LEVEL>`: sensitivity label. Default behavior uses `public`.
+- `--sensitivity <LEVEL>`: sensitivity label. Allowed values: `normal`,
+  `private`, `secret`. Default: `normal`.
 - `--tag <TAG>`: tag to attach; repeat for multiple tags.
 - `--dry-run`: print planned destination and metadata without writing files.
 
@@ -239,11 +285,14 @@ Arguments:
 
 - `<PATH>`: source file or raw file to preserve.
 - `--extract <PATH>`: concise extract file.
-- `--kind <KIND>`: source kind.
-- `--format <FORMAT>`: source format.
+- `--kind <KIND>`: source channel stored as frontmatter `channel`. Common
+  values: `file`, `ai_session`, `slack`, `webclip`.
+- `--format <FORMAT>`: source origin format. Common values: `markdown`,
+  `json`, `txt`, `pdf`. Default: `markdown`.
 - `--title <TITLE>`: human-readable title.
 - `--url <URL>`: original source URL.
-- `--sensitivity <LEVEL>`: sensitivity label.
+- `--sensitivity <LEVEL>`: sensitivity label. Allowed values: `normal`,
+  `private`, `secret`.
 - `--tag <TAG>`: tag to attach; repeat for multiple tags.
 
 ### `memora lookup-source <SOURCE_ID>`
@@ -315,11 +364,16 @@ Creates one atomic memory.
 
 Arguments:
 
-- `--type <TYPE>`: memory type.
+- `--type <TYPE>`: memory type. Allowed values: `fact`, `decision`,
+  `preference`, `task`, `project_context`, `conversation_summary`.
 - `--text <TEXT>`: memory body.
-- `--scope <SCOPE>`: scope such as `project` or `user`.
+- `--text-file <PATH>`: read memory body from a staged text/Markdown/YAML file.
+  Use either `--text` or `--text-file`.
+- `--scope <SCOPE>`: memory scope. Allowed values: `user`, `project`,
+  `global`. `project` scope requires `--project`.
 - `--project <PROJECT>`: project key.
-- `--status <STATUS>`: review status.
+- `--status <STATUS>`: review status. Allowed values: `pending`, `active`,
+  `stale`, `superseded`, `rejected`. Default: `pending`.
 - `--tag <TAG>`: tag to attach; repeat for multiple tags.
 
 ### `memora memory update <MEMORY_ID>`
@@ -329,18 +383,23 @@ Updates memory metadata or body text.
 Arguments:
 
 - `<MEMORY_ID>`: memory id to update.
-- `--type <TYPE>`: replace memory type.
-- `--scope <SCOPE>`: replace memory scope.
+- `--type <TYPE>`: replace memory type. Allowed values: `fact`, `decision`,
+  `preference`, `task`, `project_context`, `conversation_summary`.
+- `--scope <SCOPE>`: replace memory scope. Allowed values: `user`, `project`,
+  `global`.
 - `--project <PROJECT>`: replace project key.
 - `--clear-project`: remove project key.
-- `--status <STATUS>`: replace review status.
-- `--confidence <FLOAT>`: replace confidence score.
+- `--status <STATUS>`: replace review status. Allowed values: `pending`,
+  `active`, `stale`, `superseded`, `rejected`.
+- `--confidence <FLOAT>`: replace confidence score, `0.0` through `1.0`.
 - `--clear-confidence`: remove confidence score.
 - `--tag <TAG>`: replace tags with repeated values.
 - `--clear-tags`: remove all tags.
 - `--title <TITLE>`: replace title.
 - `--clear-title`: remove title.
 - `--text <TEXT>`: replace memory body.
+- `--text-file <PATH>`: replace memory body with text read from a staged
+  text/Markdown/YAML file. Use either `--text` or `--text-file`.
 - `--reason <TEXT>`: reason to append to update history.
 - `--dry-run`: print the updated memory without writing it.
 
@@ -350,7 +409,8 @@ Lists pending review items.
 
 Arguments:
 
-- `--group-by <FIELD>`: optional grouping field, for example `type` or `source`.
+- `--group-by <FIELD>`: optional grouping field. Supported values: `type`,
+  `source`.
 
 ### `memora review approve <ID...>`
 
@@ -378,9 +438,12 @@ Arguments:
 - `--variant <QUERY>`: additional query variant; repeat for synonyms or
   translations.
 - `--project <PROJECT>`: restrict results to a project key.
-- `--type <TYPE>`: restrict memory type.
-- `--status <STATUS>`: restrict review status.
-- `--scope <SCOPE>`: restrict memory scope.
+- `--type <TYPE>`: restrict memory type. Allowed values: `fact`, `decision`,
+  `preference`, `task`, `project_context`, `conversation_summary`.
+- `--status <STATUS>`: restrict review status. Allowed values: `pending`,
+  `active`, `stale`, `superseded`, `rejected`.
+- `--scope <SCOPE>`: restrict memory scope. Allowed values: `user`, `project`,
+  `global`.
 - `--limit <N>`: maximum number of results.
 - `--mode <MODE>`: `auto`, `text`, `vector`, or `hybrid`. Default: `auto`.
 - `--include-related`: expand direct matches through indexed relations.
@@ -440,14 +503,16 @@ Arguments:
 
 - `[TRANSCRIPT]`: optional transcript file to preserve as a source.
 - `--summary-file <PATH>`: required session summary file.
-- `--memories-file <PATH>`: optional JSON file containing proposed memories.
+- `--memories-file <PATH>`: optional JSON array of proposed memories. Each item
+  can be a string or an object shaped as
+  `{"type":"decision","text":"...","tags":["tag"]}`.
 - `--project <PROJECT>`: project key.
 - `--tag <TAG>`: tag to attach; repeat for multiple tags.
 - `--dry-run`: validate inputs and print planned actions without writing files.
 
 ## Environment
 
-- `MEMORA_HOME`: overrides the default `~/memora` home.
+- `MEMORA_HOME`: overrides the default `~/.memora` home.
 - `MEMORA_SHELL_INTEGRATION=0`: disables shell startup integration during
   `self install` and `self update`.
 - `MEMORA_SEMANTIC_PROVIDER`: overrides semantic provider. Use `none`,

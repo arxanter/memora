@@ -57,6 +57,7 @@ pub fn managed_directories(config: &RuntimeConfig) -> Vec<PathBuf> {
         config.vault_path.join("Wiki").join("concepts"),
         config.vault_path.join("Wiki").join("syntheses"),
         config.home_path.join("bin"),
+        config.home_path.join("temp"),
         config.state_path(),
         config.state_path().join("cache"),
         config.state_path().join("embeddings"),

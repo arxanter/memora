@@ -33,7 +33,7 @@ Specific release
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
-The installer verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, initializes the Memora home, and adds shell integration. Open a new shell or run the activation command printed by the installer.
+The installer verifies `SHA256SUMS`, installs to `~/.memora/bin/memora`, initializes the Memora home, and adds shell integration. Open a new shell or run the activation command printed by the installer.
 
 ### 2. Configure Agents
 
@@ -41,6 +41,7 @@ The installer verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, initiali
 # Current project
 memora agent integrate --client all --scope project
 memora agent status --client all --scope project
+memora agent reference
 
 # User-level/global instructions
 memora agent integrate --client all --scope user
@@ -140,6 +141,23 @@ memora context "<query>" --intent evidence|mixed --variant "<alternate>"
 ```
 
 `search`, `probe`, and `context` accept repeated `--variant` values; Memora merges and deduplicates results. `--mode auto` uses hybrid search when available and falls back to text search if semantic initialization fails.
+
+Generated agent instructions include a command specification with exact allowed values and data contracts. The same reference is available from:
+
+```bash
+memora agent reference
+```
+
+Common values agents should use:
+
+- Memory types: `fact`, `decision`, `preference`, `task`, `project_context`, `conversation_summary`
+- Memory statuses: `pending`, `active`, `stale`, `superseded`, `rejected`
+- Raw kinds/formats: `pdf`, `zoom`, `slack`, `text`, `webclip`, `article`; `pdf`, `markdown`, `json`, `txt`
+- Sensitivity labels: `normal`, `private`, `secret`
+
+For PDFs, `raw add` preserves the original PDF in `raw/inbox/pdf/` with a `.meta.yaml` sidecar. Create a text or Markdown extract/summary before promoting it to sources, wiki, or memory.
+
+For large write inputs, agents can create temporary `.md`, `.yaml`, `.yml`, `.json`, or other payload files under the project `.memora/` directory or user `~/.memora/temp/`, then pass file paths such as `--text-file .memora/memory.md` or `memora source add .memora/source.md --extract .memora/extract.md`. Memora copies or ingests the content and does not delete input files; after a successful command, the agent should remove temporary staged files itself. Small values can still be passed directly as CLI arguments.
 
 ## Development
 

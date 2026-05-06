@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{MemoraError, Result};
 
 pub const CONFIG_FILE_NAME: &str = "config.yaml";
-pub const DEFAULT_HOME_DIR_NAME: &str = "memora";
+pub const DEFAULT_HOME_DIR_NAME: &str = ".memora";
 pub const DEFAULT_VAULT_DIR_NAME: &str = "vault";
 pub const DEFAULT_SCHEMA_VERSION: u16 = 1;
 const ENV_SEMANTIC_PROVIDER: &str = "MEMORA_SEMANTIC_PROVIDER";

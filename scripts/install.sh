@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="${MEMORA_REPO:-arxanter/memora}"
 TAG="${MEMORA_VERSION:-latest}"
-MEMORA_HOME="${MEMORA_HOME:-$HOME/memora}"
+MEMORA_HOME="${MEMORA_HOME:-$HOME/.memora}"
 FORCE="${MEMORA_FORCE:-0}"
 
 usage() {
@@ -15,7 +15,7 @@ Install Memora from GitHub release binaries without requiring Cargo.
 Options:
   --repo OWNER/REPO     GitHub repository. Default: arxanter/memora
   --version TAG         Release tag. Default: latest
-  --force               Overwrite existing ~/memora/bin/memora
+  --force               Overwrite existing ~/.memora/bin/memora
   --no-shell-integration
                         Do not update the current shell startup file
   -h, --help            Show this help
