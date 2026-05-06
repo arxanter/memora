@@ -107,11 +107,7 @@ impl Default for AgentPolicyConfig {
     }
 }
 
-pub fn resolve_home(home: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(path) = home {
-        return Ok(expand_home(path));
-    }
-
+pub fn resolve_home() -> Result<PathBuf> {
     if let Some(path) = env::var_os("MEMORA_HOME") {
         return Ok(expand_home(PathBuf::from(path)));
     }
@@ -120,8 +116,8 @@ pub fn resolve_home(home: Option<PathBuf>) -> Result<PathBuf> {
     Ok(PathBuf::from(user_home).join(DEFAULT_HOME_DIR_NAME))
 }
 
-pub fn load_runtime_config(home: Option<PathBuf>) -> Result<RuntimeConfig> {
-    let home_path = resolve_home(home)?;
+pub fn load_runtime_config() -> Result<RuntimeConfig> {
+    let home_path = resolve_home()?;
     let config_path = home_path.join(CONFIG_FILE_NAME);
     let mut file = if config_path.is_file() {
         let raw = fs::read_to_string(&config_path)?;

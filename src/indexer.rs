@@ -138,7 +138,10 @@ pub fn search(
         let results = text_search(&connection, query, &filters)?;
         return finalize_results(&connection, results, &filters);
     }
-    let provider = match provider_from_config(&config.file.semantic) {
+    let provider = match provider_from_config(
+        &config.file.semantic,
+        config.state_path().join("cache").join("fastembed"),
+    ) {
         Ok(provider) => provider,
         Err(error) if effective_mode == SearchMode::Auto => {
             eprintln!("semantic disabled; falling back to text search: {error}");

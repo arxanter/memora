@@ -63,7 +63,7 @@ Memory enabled: {enabled}
 Auto recall enabled: {auto_recall}
 Aliases: {aliases}
 Memora home: {}
-Command prefix: `memora --home "{}"`
+Command prefix: `memora`
 
 Rules:
 - Treat any configured alias as an explicit memory trigger.
@@ -77,7 +77,6 @@ Rules:
 - Review pending agent-created memory with `memora review`; approve or reject only when policy or user confirmation allows it.
 - Do not read, edit, migrate, delete, or inspect Memora vault internals directly. If the CLI lacks an operation, report the CLI gap.
 "#,
-        config.home_path.display(),
         config.home_path.display()
     );
 

@@ -8,7 +8,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SetupOptions {
-    pub home: Option<PathBuf>,
     pub dry_run: bool,
 }
 
@@ -21,7 +20,7 @@ pub struct BinaryInstallOptions {
 }
 
 pub fn setup_home(options: SetupOptions) -> Result<RuntimeConfig> {
-    let config = load_runtime_config(options.home)?;
+    let config = load_runtime_config()?;
     let directories = managed_directories(&config);
 
     if options.dry_run {

@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 use serde_json::json;
 
@@ -14,7 +14,10 @@ pub trait EmbeddingProvider {
     fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
 }
 
-pub fn provider_from_config(config: &SemanticConfig) -> Result<Box<dyn EmbeddingProvider>> {
+pub fn provider_from_config(
+    config: &SemanticConfig,
+    cache_dir: PathBuf,
+) -> Result<Box<dyn EmbeddingProvider>> {
     let provider = config
         .provider
         .as_deref()
@@ -31,7 +34,10 @@ pub fn provider_from_config(config: &SemanticConfig) -> Result<Box<dyn Embedding
                 )
             })?,
         })),
-        "fastembed" => Ok(Box::new(FastEmbedEmbeddingProvider::new(&config.model)?)),
+        "fastembed" => Ok(Box::new(FastEmbedEmbeddingProvider::new(
+            &config.model,
+            cache_dir,
+        )?)),
         other => Err(MemoraError::InvalidArgument(format!(
             "unsupported semantic provider: {other}"
         ))),
@@ -147,10 +153,13 @@ struct FastEmbedEmbeddingProvider {
 }
 
 impl FastEmbedEmbeddingProvider {
-    fn new(model: &str) -> Result<Self> {
+    fn new(model: &str, cache_dir: PathBuf) -> Result<Self> {
         let selected_model = fastembed_model(model)?;
+        std::fs::create_dir_all(&cache_dir)?;
         let inner = fastembed::TextEmbedding::try_new(
-            fastembed::InitOptions::new(selected_model).with_show_download_progress(false),
+            fastembed::InitOptions::new(selected_model)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(false),
         )
         .map_err(|error| {
             MemoraError::Message(format!("fastembed initialization failed: {error}"))

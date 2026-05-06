@@ -1,4 +1,4 @@
-use std::{collections::HashSet, io, path::PathBuf};
+use std::{collections::HashSet, env, fs, io, path::PathBuf};
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -13,69 +13,122 @@ use crate::{
     vault::{self, BinaryInstallOptions, SetupOptions},
 };
 
+const ROOT_ABOUT: &str = "CLI-first local Markdown memory engine for coding agents.";
+
+const ROOT_AFTER_HELP: &str = r#"Command groups:
+  Setup and health:
+    setup, status, doctor, reindex
+  Managed binary and shell integration:
+    self install, self update, self shell-init, self completions, uninstall
+  Agent rule integration:
+    agent rules, agent integrate, agent update, agent status, agent-aliases
+  Raw/source capture:
+    raw add, raw analyze, raw list, raw inspect, raw mark-processed, source add, lookup-source
+  Wiki:
+    wiki status, wiki read, wiki search, wiki ingest, wiki synthesize, wiki lint
+  Memories and review:
+    remember, memory update, review list, review approve, review reject
+  Retrieval:
+    search, probe, context, inspect, open
+  Session capture:
+    session finalize
+
+Home resolution:
+  Memora uses MEMORA_HOME when set, otherwise ~/memora.
+  The public CLI intentionally has no --home flag; use MEMORA_HOME for tests or custom homes.
+
+Common values:
+  --mode: auto, text, vector, hybrid
+  --intent: auto, memory, wiki, evidence, mixed
+  --client: all, agents, cursor, claude, codex
+  --scope: project, user
+
+Run `memora help <command>` or `memora help <command> <subcommand>` for command-specific arguments.
+See docs/cli-agent-reference.md for the full command reference."#;
+
 #[derive(Debug, Parser)]
 #[command(name = "memora")]
 #[command(
     version,
-    about = "CLI-first local Markdown memory engine for coding agents."
+    about = ROOT_ABOUT,
+    long_about = ROOT_ABOUT,
+    after_help = ROOT_AFTER_HELP
 )]
 pub struct Cli {
-    #[arg(long, env = "MEMORA_HOME", global = true)]
-    home: Option<PathBuf>,
-
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Create or repair the managed Memora home directory.")]
     Setup(SetupCommand),
+    #[command(about = "Print resolved Memora paths and current configuration status.")]
     Status,
+    #[command(about = "Validate memories, raw files, sources, and wiki pages.")]
     Doctor,
+    #[command(about = "Rebuild the local SQLite search index.")]
     Reindex(ReindexCommand),
     #[command(name = "self")]
+    #[command(about = "Install, update, or initialize the managed Memora binary.")]
     SelfCommand {
         #[command(subcommand)]
         command: SelfCommands,
     },
+    #[command(about = "Remove generated state and the managed binary; keep the vault by default.")]
     Uninstall(UninstallCommand),
+    #[command(about = "Generate, install, update, and inspect agent instruction files.")]
     Agent {
         #[command(subcommand)]
         command: AgentCommands,
     },
     #[command(name = "agent-aliases")]
+    #[command(about = "List or update Remi trigger aliases used in generated agent rules.")]
     AgentAliases {
         #[command(subcommand)]
         command: AgentAliasCommands,
     },
+    #[command(about = "Stage and inspect raw material before source capture.")]
     Raw {
         #[command(subcommand)]
         command: RawCommands,
     },
+    #[command(about = "Create curated source records from raw material or extracted notes.")]
     Source {
         #[command(subcommand)]
         command: SourceCommands,
     },
     #[command(name = "lookup-source")]
+    #[command(about = "Read a curated source by source id.")]
     LookupSource(LookupSourceCommand),
+    #[command(about = "Read, search, maintain, and synthesize wiki pages.")]
     Wiki {
         #[command(subcommand)]
         command: WikiCommands,
     },
+    #[command(about = "Create one atomic memory.")]
     Remember(RememberCommand),
+    #[command(about = "Update existing memory metadata or body text.")]
     Memory {
         #[command(subcommand)]
         command: MemoryCommands,
     },
+    #[command(about = "Review pending memories and approve or reject them.")]
     Review {
         #[command(subcommand)]
         command: ReviewCommands,
     },
+    #[command(about = "Search memories with text, vector, or hybrid retrieval.")]
     Search(SearchCommand),
+    #[command(about = "Agent discovery across memories and wiki with compact routing output.")]
     Probe(ProbeCommand),
+    #[command(about = "Build a compact task context across memories, wiki, and sources.")]
     Context(ContextCommand),
+    #[command(about = "Show one memory by id.")]
     Inspect(InspectCommand),
+    #[command(about = "Print or launch the file path for one memory id.")]
     Open(OpenCommand),
+    #[command(about = "Finalize session summaries and proposed memories.")]
     Session {
         #[command(subcommand)]
         command: SessionCommands,
@@ -84,399 +137,709 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct SetupCommand {
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Print planned paths without creating directories or config."
+    )]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct ReindexCommand {
-    #[arg(long)]
+    #[arg(long, help = "Delete the existing index before rebuilding it.")]
     clean: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum SelfCommands {
+    #[command(about = "Copy a binary into MEMORA_HOME/bin and install shell integration.")]
     Install(SelfInstallCommand),
+    #[command(about = "Overwrite the managed binary and repair shell integration.")]
     Update(SelfUpdateCommand),
+    #[command(about = "Print shell completions for a supported shell.")]
     Completions(SelfCompletionsCommand),
     #[command(name = "shell-init")]
+    #[command(
+        about = "Print shell commands that export Memora env vars, PATH, cache dir, and alias."
+    )]
     ShellInit(SelfShellInitCommand),
 }
 
 #[derive(Debug, Args)]
 struct SelfInstallCommand {
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Binary to install; defaults to the current executable."
+    )]
     from: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "SHA256",
+        help = "Expected SHA-256 for --from; accepts raw hex or sha256:<hex>."
+    )]
     sha256: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Overwrite MEMORA_HOME/bin/memora if it already exists.")]
     force: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print planned actions without writing files.")]
     dry_run: bool,
+    #[arg(long, help = "Do not create or repair shell startup integration.")]
+    no_shell_integration: bool,
 }
 
 #[derive(Debug, Args)]
 struct SelfUpdateCommand {
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Binary to install; defaults to the current executable."
+    )]
     from: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "SHA256",
+        help = "Expected SHA-256 for --from; accepts raw hex or sha256:<hex>."
+    )]
     sha256: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Print planned actions without writing files.")]
     dry_run: bool,
+    #[arg(long, help = "Do not create or repair shell startup integration.")]
+    no_shell_integration: bool,
 }
 
 #[derive(Debug, Args)]
 struct SelfCompletionsCommand {
-    #[arg(value_enum)]
+    #[arg(
+        value_enum,
+        value_name = "SHELL",
+        help = "Shell to generate completions for."
+    )]
     shell: Shell,
 }
 
 #[derive(Debug, Args)]
 struct SelfShellInitCommand {
-    #[arg(value_enum)]
+    #[arg(value_enum, value_name = "SHELL", help = "Shell syntax to print.")]
     shell: Shell,
 }
 
 #[derive(Debug, Args)]
 struct UninstallCommand {
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Also remove the vault; without this flag, vault/ and config.yaml are preserved."
+    )]
     remove_vault: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print removal targets without deleting them.")]
     dry_run: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum AgentCommands {
+    #[command(about = "Print generated agent rules without writing files.")]
     Rules(AgentRulesCommand),
+    #[command(about = "Install generated rules into client-specific instruction files.")]
     Integrate(AgentInstallCommand),
+    #[command(about = "Refresh already installed managed rule blocks.")]
     Update(AgentInstallCommand),
+    #[command(about = "Report whether generated rule blocks are installed and current.")]
     Status(AgentStatusCommand),
 }
 
 #[derive(Debug, Args)]
 struct AgentRulesCommand {
-    #[arg(long, value_enum, default_value_t = AgentClient::All)]
+    #[arg(long, value_enum, default_value_t = AgentClient::All, help = "Agent client to render rules for.")]
     client: AgentClient,
-    #[arg(long, value_enum, default_value_t = AgentScope::Project)]
+    #[arg(long, value_enum, default_value_t = AgentScope::Project, help = "Rule scope to describe in generated instructions.")]
     scope: AgentScope,
 }
 
 #[derive(Debug, Args)]
 struct AgentInstallCommand {
-    #[arg(long, value_enum, default_value_t = AgentClient::All)]
+    #[arg(long, value_enum, default_value_t = AgentClient::All, help = "Client to install rules for.")]
     client: AgentClient,
-    #[arg(long, value_enum, default_value_t = AgentScope::Project)]
+    #[arg(long, value_enum, default_value_t = AgentScope::Project, help = "Install into project-level or user-level rule locations.")]
     scope: AgentScope,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project directory used for project-scoped targets."
+    )]
     project: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Explicit output file; overrides default client target resolution."
+    )]
     target: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, help = "Print planned writes without changing files.")]
     dry_run: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Append a fresh block if an existing managed block is partial or malformed."
+    )]
     force: bool,
 }
 
 #[derive(Debug, Args)]
 struct AgentStatusCommand {
-    #[arg(long, value_enum, default_value_t = AgentClient::All)]
+    #[arg(long, value_enum, default_value_t = AgentClient::All, help = "Client to inspect.")]
     client: AgentClient,
-    #[arg(long, value_enum, default_value_t = AgentScope::Project)]
+    #[arg(long, value_enum, default_value_t = AgentScope::Project, help = "Rule scope to inspect.")]
     scope: AgentScope,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Project directory used for project-scoped target resolution."
+    )]
     project: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
 enum AgentAliasCommands {
+    #[command(about = "Print configured aliases, one per line.")]
     List,
-    Set { names: Vec<String> },
+    #[command(about = "Replace the configured alias list.")]
+    Set {
+        #[arg(
+            value_name = "NAME",
+            help = "Alias to use as an explicit memory trigger."
+        )]
+        names: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 enum RawCommands {
+    #[command(about = "Copy raw material into the managed raw inbox.")]
     Add(RawAddCommand),
+    #[command(about = "Prepare an extract draft and risk scan for raw material.")]
     Analyze(RawAnalyzeCommand),
+    #[command(about = "List raw files under the raw area or a supplied path.")]
     List {
+        #[arg(value_name = "PATH", help = "Optional raw directory or file to list.")]
         path: Option<PathBuf>,
     },
+    #[command(about = "Print one raw file and its sidecar metadata.")]
     Inspect {
+        #[arg(value_name = "PATH", help = "Raw path to inspect.")]
         path: PathBuf,
     },
     #[command(name = "mark-processed")]
+    #[command(about = "Move a raw file to raw/processed and optionally link it to a source.")]
     MarkProcessed(RawMarkProcessedCommand),
 }
 
 #[derive(Debug, Args)]
 struct RawAddCommand {
+    #[arg(value_name = "PATH", help = "Local file to stage as raw material.")]
     path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "KIND",
+        help = "Source kind, for example text, meeting, article, transcript."
+    )]
     kind: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        help = "Input format, for example markdown, text, json."
+    )]
     format: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "TITLE",
+        help = "Human-readable title; defaults to the file name."
+    )]
     title: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "LEVEL",
+        help = "Sensitivity label; defaults to public."
+    )]
     sensitivity: Option<String>,
-    #[arg(long = "tag")]
+    #[arg(
+        long = "tag",
+        value_name = "TAG",
+        help = "Tag to attach; repeat for multiple tags."
+    )]
     tags: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Print planned destination and metadata without writing files."
+    )]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct RawAnalyzeCommand {
+    #[arg(value_name = "PATH", help = "Raw file to analyze.")]
     path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Write the extract draft to this path instead of the default analysis path."
+    )]
     output: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, help = "Overwrite an existing extract draft.")]
     overwrite: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print planned analysis output without writing files.")]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct RawMarkProcessedCommand {
+    #[arg(value_name = "PATH", help = "Raw file to move into raw/processed.")]
     path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "SOURCE_ID",
+        help = "Curated source id created from this raw material."
+    )]
     source_id: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Print planned move without changing files.")]
     dry_run: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum SourceCommands {
+    #[command(about = "Add a curated source record and optional extract.")]
     Add(SourceAddCommand),
 }
 
 #[derive(Debug, Args)]
 struct SourceAddCommand {
+    #[arg(
+        value_name = "PATH",
+        help = "Source file or raw file to preserve as curated evidence."
+    )]
     path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Concise extract file to store alongside the source."
+    )]
     extract: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "KIND",
+        help = "Source kind; inferred when omitted."
+    )]
     kind: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "FORMAT",
+        help = "Source format; inferred when omitted."
+    )]
     format: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "TITLE", help = "Human-readable source title.")]
     title: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "Original source URL, when available."
+    )]
     url: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "LEVEL",
+        help = "Sensitivity label; inferred from raw metadata when available."
+    )]
     sensitivity: Option<String>,
-    #[arg(long = "tag")]
+    #[arg(
+        long = "tag",
+        value_name = "TAG",
+        help = "Tag to attach; repeat for multiple tags."
+    )]
     tags: Vec<String>,
 }
 
 #[derive(Debug, Args)]
 struct LookupSourceCommand {
+    #[arg(value_name = "SOURCE_ID", help = "Source id to read.")]
     source_id: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "TEXT",
+        help = "Optional query printed with the result for agent context."
+    )]
     query: Option<String>,
-    #[arg(long, default_value_t = 800)]
+    #[arg(
+        long,
+        default_value_t = 800,
+        help = "Approximate character budget for returned source content."
+    )]
     budget: usize,
 }
 
 #[derive(Debug, Subcommand)]
 enum WikiCommands {
+    #[command(about = "Print wiki page counts and storage paths.")]
     Status,
+    #[command(about = "Read a wiki page by page key or path.")]
     Read(WikiReadCommand),
-    Search(SearchCommand),
+    #[command(about = "Search wiki pages.")]
+    Search(WikiSearchCommand),
+    #[command(about = "Ingest a curated source into wiki entity/concept pages.")]
     Ingest(WikiIngestCommand),
+    #[command(about = "Synthesize a saved or ephemeral wiki answer from existing knowledge.")]
     Synthesize(WikiSynthesizeCommand),
+    #[command(about = "Validate wiki page frontmatter and links.")]
     Lint,
 }
 
 #[derive(Debug, Args)]
 struct WikiReadCommand {
+    #[arg(
+        value_name = "TARGET",
+        help = "Wiki page key, title, or relative path."
+    )]
     target: String,
-    #[arg(long)]
+    #[arg(long, help = "Return the full page instead of a compact excerpt.")]
     full: bool,
-    #[arg(long)]
+    #[arg(long, value_name = "N", help = "Maximum characters to print.")]
     max_chars: Option<usize>,
 }
 
 #[derive(Debug, Args)]
+struct WikiSearchCommand {
+    #[arg(value_name = "QUERY", help = "Wiki search query.")]
+    query: String,
+    #[arg(long, value_name = "N", help = "Maximum number of wiki results.")]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Args)]
 struct WikiIngestCommand {
+    #[arg(value_name = "SOURCE_ID", help = "Curated source id to ingest.")]
     source_id: String,
-    #[arg(long)]
+    #[arg(long, value_name = "TITLE", help = "Title for a source wiki page.")]
     title: Option<String>,
-    #[arg(long = "entity")]
+    #[arg(
+        long = "entity",
+        value_name = "NAME",
+        help = "Entity page to update; repeat for multiple entities."
+    )]
     entities: Vec<String>,
-    #[arg(long = "concept")]
+    #[arg(
+        long = "concept",
+        value_name = "NAME",
+        help = "Concept page to update; repeat for multiple concepts."
+    )]
     concepts: Vec<String>,
 }
 
 #[derive(Debug, Args)]
 struct WikiSynthesizeCommand {
+    #[arg(
+        value_name = "QUESTION",
+        help = "Question to answer from saved knowledge."
+    )]
     question: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "TITLE",
+        help = "Title to use when --save is passed."
+    )]
     title: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Save the synthesis as a wiki page.")]
     save: bool,
-    #[arg(long)]
+    #[arg(long, value_name = "N", help = "Maximum number of candidates to use.")]
     limit: Option<usize>,
 }
 
 #[derive(Debug, Args)]
 struct RememberCommand {
-    #[arg(long = "type")]
+    #[arg(
+        long = "type",
+        value_name = "TYPE",
+        help = "Memory type: fact, preference, decision, context, task, or conversation."
+    )]
     memory_type: String,
-    #[arg(long)]
+    #[arg(long, value_name = "TEXT", help = "Atomic memory body.")]
     text: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "SCOPE",
+        help = "Memory scope, for example project or user."
+    )]
     scope: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PROJECT",
+        help = "Project key to attach, for example memory-project."
+    )]
     project: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "STATUS",
+        help = "Review status, for example pending or active."
+    )]
     status: Option<String>,
-    #[arg(long = "tag")]
+    #[arg(
+        long = "tag",
+        value_name = "TAG",
+        help = "Tag to attach; repeat for multiple tags."
+    )]
     tags: Vec<String>,
 }
 
 #[derive(Debug, Subcommand)]
 enum MemoryCommands {
+    #[command(about = "Update one memory's metadata or body text.")]
     Update(MemoryUpdateCommand),
 }
 
 #[derive(Debug, Args)]
 struct MemoryUpdateCommand {
+    #[arg(value_name = "MEMORY_ID", help = "Memory id to update.")]
     memory_id: String,
-    #[arg(long = "type")]
+    #[arg(long = "type", value_name = "TYPE", help = "Replace memory type.")]
     memory_type: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "SCOPE", help = "Replace memory scope.")]
     scope: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "PROJECT", help = "Replace project key.")]
     project: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Remove the project key.")]
     clear_project: bool,
-    #[arg(long)]
+    #[arg(long, value_name = "STATUS", help = "Replace review status.")]
     status: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "FLOAT", help = "Replace confidence score.")]
     confidence: Option<f32>,
-    #[arg(long)]
+    #[arg(long, help = "Remove confidence score.")]
     clear_confidence: bool,
-    #[arg(long = "tag")]
+    #[arg(
+        long = "tag",
+        value_name = "TAG",
+        help = "Replace tags with the repeated --tag values."
+    )]
     tags: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "Remove all tags.")]
     clear_tags: bool,
-    #[arg(long)]
+    #[arg(long, value_name = "TITLE", help = "Replace title.")]
     title: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Remove title.")]
     clear_title: bool,
-    #[arg(long)]
+    #[arg(long, value_name = "TEXT", help = "Replace memory body text.")]
     text: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "TEXT",
+        help = "Reason to append to update history."
+    )]
     reason: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Print the updated memory without writing it.")]
     dry_run: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum ReviewCommands {
+    #[command(about = "List pending review items.")]
     List {
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "FIELD",
+            help = "Optional grouping field, for example type or source."
+        )]
         group_by: Option<String>,
     },
+    #[command(about = "Approve pending memories.")]
     Approve(ReviewDecisionCommand),
+    #[command(about = "Reject pending memories.")]
     Reject(ReviewDecisionCommand),
 }
 
 #[derive(Debug, Args)]
 struct ReviewDecisionCommand {
+    #[arg(
+        value_name = "ID",
+        help = "Memory id to approve or reject; repeat for multiple ids."
+    )]
     ids: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "TEXT",
+        help = "Reason to record in review history."
+    )]
     reason: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Print decisions without writing changes.")]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct SearchCommand {
+    #[arg(value_name = "QUERY", help = "Search query.")]
     query: String,
-    #[arg(long = "variant")]
+    #[arg(
+        long = "variant",
+        value_name = "QUERY",
+        help = "Additional query variant; repeat for synonyms/translations."
+    )]
     variants: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PROJECT",
+        help = "Restrict results to a project key."
+    )]
     project: Option<String>,
-    #[arg(long = "type")]
+    #[arg(long = "type", value_name = "TYPE", help = "Restrict memory type.")]
     memory_type: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "STATUS", help = "Restrict review status.")]
     status: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "SCOPE", help = "Restrict memory scope.")]
     scope: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_name = "N", help = "Maximum number of results.")]
     limit: Option<usize>,
-    #[arg(long, default_value = "auto")]
+    #[arg(
+        long,
+        default_value = "auto",
+        value_name = "MODE",
+        help = "Retrieval mode: auto, text, vector, or hybrid."
+    )]
     mode: String,
-    #[arg(long)]
+    #[arg(long, help = "Expand direct matches through indexed memory relations.")]
     include_related: bool,
 }
 
 #[derive(Debug, Args)]
 struct ProbeCommand {
+    #[arg(value_name = "QUERY", help = "Agent discovery query.")]
     query: String,
-    #[arg(long = "variant")]
+    #[arg(
+        long = "variant",
+        value_name = "QUERY",
+        help = "Additional query variant; repeat for synonyms/translations."
+    )]
     variants: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PROJECT",
+        help = "Restrict memory results to a project key."
+    )]
     project: Option<String>,
-    #[arg(long, default_value = "auto")]
+    #[arg(
+        long,
+        default_value = "auto",
+        value_name = "INTENT",
+        help = "Routing intent: auto, memory, wiki, evidence, or mixed."
+    )]
     intent: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Reserved for future loaded output; current output stays compact."
+    )]
     load: bool,
-    #[arg(long, default_value = "auto")]
+    #[arg(
+        long,
+        default_value = "auto",
+        value_name = "MODE",
+        help = "Memory retrieval mode: auto, text, vector, or hybrid."
+    )]
     mode: String,
-    #[arg(long)]
+    #[arg(long, help = "Expand memory matches through indexed relations.")]
     include_related: bool,
 }
 
 #[derive(Debug, Args)]
 struct ContextCommand {
+    #[arg(value_name = "QUERY", help = "Task or question to build context for.")]
     query: String,
-    #[arg(long = "variant")]
+    #[arg(
+        long = "variant",
+        value_name = "QUERY",
+        help = "Additional query variant; repeat for synonyms/translations."
+    )]
     variants: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PROJECT",
+        help = "Restrict memory results to a project key."
+    )]
     project: Option<String>,
-    #[arg(long, default_value = "auto")]
+    #[arg(
+        long,
+        default_value = "auto",
+        value_name = "INTENT",
+        help = "Routing intent: auto, memory, wiki, evidence, or mixed."
+    )]
     intent: String,
-    #[arg(long, default_value_t = 1200)]
+    #[arg(
+        long,
+        default_value_t = 1200,
+        value_name = "CHARS",
+        help = "Approximate character budget for packed context."
+    )]
     budget: usize,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Reserved for future loaded output; current output stays packed."
+    )]
     load: bool,
-    #[arg(long, default_value = "auto")]
+    #[arg(
+        long,
+        default_value = "auto",
+        value_name = "MODE",
+        help = "Memory retrieval mode: auto, text, vector, or hybrid."
+    )]
     mode: String,
-    #[arg(long)]
+    #[arg(long, help = "Expand memory matches through indexed relations.")]
     include_related: bool,
 }
 
 #[derive(Debug, Args)]
 struct InspectCommand {
+    #[arg(value_name = "MEMORY_ID", help = "Memory id to inspect.")]
     id: String,
 }
 
 #[derive(Debug, Args)]
 struct OpenCommand {
+    #[arg(
+        value_name = "MEMORY_ID",
+        help = "Memory id whose path should be printed."
+    )]
     id: String,
-    #[arg(long)]
+    #[arg(long, help = "Open the memory file with the platform file opener.")]
     launch: bool,
 }
 
 #[derive(Debug, Subcommand)]
 enum SessionCommands {
+    #[command(about = "Capture a completed session source and proposed pending memories.")]
     Finalize(SessionFinalizeCommand),
 }
 
 #[derive(Debug, Args)]
 struct SessionFinalizeCommand {
+    #[arg(
+        value_name = "TRANSCRIPT",
+        help = "Optional transcript file to preserve as a source."
+    )]
     transcript: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, value_name = "PATH", help = "Required session summary file.")]
     summary_file: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Optional JSON file containing proposed memories."
+    )]
     memories_file: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PROJECT",
+        help = "Project key for proposed memories and source metadata."
+    )]
     project: Option<String>,
-    #[arg(long = "tag")]
+    #[arg(
+        long = "tag",
+        value_name = "TAG",
+        help = "Tag to attach; repeat for multiple tags."
+    )]
     tags: Vec<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Validate inputs and print planned actions without writing files."
+    )]
     dry_run: bool,
 }
 
@@ -489,7 +852,6 @@ fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Setup(command) => {
             let config = vault::setup_home(SetupOptions {
-                home: cli.home,
                 dry_run: command.dry_run,
             })?;
             println!("home: {}", config.home_path.display());
@@ -502,16 +864,16 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Status => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             for (key, value) in vault::status(&config) {
                 println!("{key}: {value}");
             }
             Ok(())
         }
-        Commands::Agent { command } => dispatch_agent(cli.home, command),
-        Commands::AgentAliases { command } => dispatch_agent_aliases(cli.home, command),
+        Commands::Agent { command } => dispatch_agent(command),
+        Commands::AgentAliases { command } => dispatch_agent_aliases(command),
         Commands::Doctor => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let mut issues = crate::memory::validate_all(&config)?;
             issues.extend(crate::raw::validate_all(&config)?);
             issues.extend(crate::sources::validate_all(&config)?);
@@ -527,7 +889,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Reindex(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let stats = crate::indexer::reindex(&config, command.clean)?;
             println!("indexed: {}", config.index_path().display());
             println!("documents_seen: {}", stats.documents_seen);
@@ -537,9 +899,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("chunks_indexed: {}", stats.chunks_indexed);
             Ok(())
         }
-        Commands::SelfCommand { command } => dispatch_self(cli.home, command),
+        Commands::SelfCommand { command } => dispatch_self(command),
         Commands::Uninstall(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let targets = vault::uninstall(&config, command.remove_vault, command.dry_run)?;
             println!("vault_preserved: {}", !command.remove_vault);
             if command.dry_run {
@@ -550,10 +912,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Commands::Raw { command } => dispatch_raw(cli.home, command),
-        Commands::Source { command } => dispatch_source(cli.home, command),
+        Commands::Raw { command } => dispatch_raw(command),
+        Commands::Source { command } => dispatch_source(command),
         Commands::LookupSource(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let text = crate::sources::lookup_source(&config, &command.source_id, command.budget)?;
             if let Some(query) = command.query {
                 println!("query: {query}");
@@ -561,9 +923,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("{text}");
             Ok(())
         }
-        Commands::Wiki { command } => dispatch_wiki(cli.home, command),
+        Commands::Wiki { command } => dispatch_wiki(command),
         Commands::Remember(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let memory = crate::memory::remember(
                 &config,
                 RememberOptions {
@@ -582,10 +944,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             println!("path: {}", memory.relative_path);
             Ok(())
         }
-        Commands::Memory { command } => dispatch_memory(cli.home, command),
-        Commands::Review { command } => dispatch_review(cli.home, command),
+        Commands::Memory { command } => dispatch_memory(command),
+        Commands::Review { command } => dispatch_review(command),
         Commands::Search(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let freshness = crate::freshness::refresh_if_needed(&config)?;
             print_freshness(&freshness);
             let queries = planned_queries(&config, command.query, command.variants, "memory");
@@ -609,7 +971,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Probe(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let freshness = crate::freshness::refresh_if_needed(&config)?;
             print_freshness(&freshness);
             let queries =
@@ -652,7 +1014,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Context(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let freshness = crate::freshness::refresh_if_needed(&config)?;
             print_freshness(&freshness);
             println!("intent: {}", command.intent);
@@ -693,7 +1055,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Inspect(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let memory = crate::memory::inspect(&config, &command.id)?;
             println!("id: {}", memory.frontmatter.id);
             println!("type: {}", memory.frontmatter.memory_type);
@@ -704,7 +1066,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Open(command) => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             let memory = crate::memory::inspect(&config, &command.id)?;
             println!("{}", memory.path.display());
             if command.launch {
@@ -713,7 +1075,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             Ok(())
         }
         Commands::Session { command } => {
-            let config = load_runtime_config(cli.home)?;
+            let config = load_runtime_config()?;
             match command {
                 SessionCommands::Finalize(command) => {
                     let result = crate::session::finalize(
@@ -745,15 +1107,15 @@ fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
-fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
+fn dispatch_agent(command: AgentCommands) -> Result<()> {
     match command {
         AgentCommands::Rules(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             print!("{}", render_rules(&config, command.client, command.scope));
             Ok(())
         }
         AgentCommands::Integrate(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             let results = crate::agent::integrate_or_update(
                 &config,
                 AgentInstallOptions {
@@ -781,7 +1143,7 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
             Ok(())
         }
         AgentCommands::Update(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             let results = crate::agent::integrate_or_update(
                 &config,
                 AgentInstallOptions {
@@ -809,7 +1171,7 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
             Ok(())
         }
         AgentCommands::Status(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             println!("client: {:?}", command.client);
             println!("scope: {:?}", command.scope);
             if let Some(project) = &command.project {
@@ -838,16 +1200,13 @@ fn dispatch_agent(home: Option<PathBuf>, command: AgentCommands) -> Result<()> {
     }
 }
 
-fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
+fn dispatch_self(command: SelfCommands) -> Result<()> {
     match command {
         SelfCommands::Install(command) => {
             let config = if command.dry_run {
-                load_runtime_config(home)?
+                load_runtime_config()?
             } else {
-                vault::setup_home(SetupOptions {
-                    home,
-                    dry_run: false,
-                })?
+                vault::setup_home(SetupOptions { dry_run: false })?
             };
             let target = vault::install_binary(
                 &config,
@@ -863,14 +1222,20 @@ fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
             if command.dry_run {
                 println!("dry_run: true");
             }
+            print_shell_integration_status(maybe_install_shell_integration(
+                &config,
+                command.no_shell_integration,
+                command.dry_run,
+            )?);
             println!(
-                "next: eval \"$(memora --home {} self shell-init zsh)\"",
-                config.home_path.display()
+                "next: eval \"$(MEMORA_HOME={} {} self shell-init zsh)\"",
+                shell_quote(&config.home_path.display().to_string()),
+                shell_quote(&target.display().to_string())
             );
             Ok(())
         }
         SelfCommands::Update(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             let target = vault::install_binary(
                 &config,
                 BinaryInstallOptions {
@@ -885,6 +1250,11 @@ fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
             if command.dry_run {
                 println!("dry_run: true");
             }
+            print_shell_integration_status(maybe_install_shell_integration(
+                &config,
+                command.no_shell_integration,
+                command.dry_run,
+            )?);
             Ok(())
         }
         SelfCommands::Completions(command) => {
@@ -893,24 +1263,24 @@ fn dispatch_self(home: Option<PathBuf>, command: SelfCommands) -> Result<()> {
             Ok(())
         }
         SelfCommands::ShellInit(command) => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             print_shell_init(&config, command.shell);
             Ok(())
         }
     }
 }
 
-fn dispatch_agent_aliases(home: Option<PathBuf>, command: AgentAliasCommands) -> Result<()> {
+fn dispatch_agent_aliases(command: AgentAliasCommands) -> Result<()> {
     match command {
         AgentAliasCommands::List => {
-            let config = load_runtime_config(home)?;
+            let config = load_runtime_config()?;
             for alias in config.file.agent_policy.aliases {
                 println!("{alias}");
             }
             Ok(())
         }
         AgentAliasCommands::Set { names } => {
-            let mut config = load_runtime_config(home)?;
+            let mut config = load_runtime_config()?;
             set_aliases(&mut config, names)?;
             println!("aliases: {}", config.file.agent_policy.aliases.join(", "));
             println!("next: run `memora agent update` to refresh installed agent rules");
@@ -919,8 +1289,8 @@ fn dispatch_agent_aliases(home: Option<PathBuf>, command: AgentAliasCommands) ->
     }
 }
 
-fn dispatch_raw(home: Option<PathBuf>, command: RawCommands) -> Result<()> {
-    let config = load_runtime_config(home)?;
+fn dispatch_raw(command: RawCommands) -> Result<()> {
+    let config = load_runtime_config()?;
     match command {
         RawCommands::Add(command) => {
             let entry = crate::raw::add_raw(
@@ -997,8 +1367,8 @@ fn dispatch_raw(home: Option<PathBuf>, command: RawCommands) -> Result<()> {
     }
 }
 
-fn dispatch_source(home: Option<PathBuf>, command: SourceCommands) -> Result<()> {
-    let config = load_runtime_config(home)?;
+fn dispatch_source(command: SourceCommands) -> Result<()> {
+    let config = load_runtime_config()?;
     match command {
         SourceCommands::Add(command) => {
             let source = crate::sources::add_source(
@@ -1025,8 +1395,8 @@ fn dispatch_source(home: Option<PathBuf>, command: SourceCommands) -> Result<()>
     }
 }
 
-fn dispatch_wiki(home: Option<PathBuf>, command: WikiCommands) -> Result<()> {
-    let config = load_runtime_config(home)?;
+fn dispatch_wiki(command: WikiCommands) -> Result<()> {
+    let config = load_runtime_config()?;
     match command {
         WikiCommands::Status => {
             let (page_count, issues) = crate::wiki::status(&config)?;
@@ -1099,8 +1469,8 @@ fn dispatch_wiki(home: Option<PathBuf>, command: WikiCommands) -> Result<()> {
     }
 }
 
-fn dispatch_memory(home: Option<PathBuf>, command: MemoryCommands) -> Result<()> {
-    let config = load_runtime_config(home)?;
+fn dispatch_memory(command: MemoryCommands) -> Result<()> {
+    let config = load_runtime_config()?;
     match command {
         MemoryCommands::Update(command) => {
             let memory = crate::memory::update_memory(
@@ -1132,8 +1502,8 @@ fn dispatch_memory(home: Option<PathBuf>, command: MemoryCommands) -> Result<()>
     }
 }
 
-fn dispatch_review(home: Option<PathBuf>, command: ReviewCommands) -> Result<()> {
-    let config = load_runtime_config(home)?;
+fn dispatch_review(command: ReviewCommands) -> Result<()> {
+    let config = load_runtime_config()?;
     match command {
         ReviewCommands::List { group_by } => {
             if let Some(group_by) = group_by {
@@ -1559,26 +1929,208 @@ fn print_search_results(results: Vec<crate::indexer::SearchResult>) {
 fn print_shell_init(config: &RuntimeConfig, shell: Shell) {
     let home = shell_quote(&config.home_path.display().to_string());
     let bin = shell_quote(&config.home_path.join("bin").display().to_string());
+    let fastembed_cache = shell_quote(
+        &config
+            .state_path()
+            .join("cache")
+            .join("fastembed")
+            .display()
+            .to_string(),
+    );
     match shell {
         Shell::Fish => {
             println!("set -gx MEMORA_HOME {home};");
+            println!("set -gx FASTEMBED_CACHE_DIR {fastembed_cache};");
             println!("fish_add_path {bin};");
+            println!("alias memora {bin};");
         }
         Shell::PowerShell => {
             let home = ps_quote(&config.home_path.display().to_string());
             let bin = ps_quote(&config.home_path.join("bin").display().to_string());
+            let fastembed_cache = ps_quote(
+                &config
+                    .state_path()
+                    .join("cache")
+                    .join("fastembed")
+                    .display()
+                    .to_string(),
+            );
             println!("$env:MEMORA_HOME = {home}");
+            println!("$env:FASTEMBED_CACHE_DIR = {fastembed_cache}");
             println!("$env:PATH = {bin} + [IO.Path]::PathSeparator + $env:PATH");
+            println!("Set-Alias -Name memora -Value {bin}");
         }
         _ => {
             println!("export MEMORA_HOME={home}");
+            println!("export FASTEMBED_CACHE_DIR={fastembed_cache}");
             println!("export PATH={bin}:$PATH");
+            println!("alias memora={bin}");
         }
     }
 }
 
+struct ShellIntegrationStatus {
+    shell: Shell,
+    path: Option<PathBuf>,
+    changed: bool,
+    dry_run: bool,
+    skipped: bool,
+}
+
+const SHELL_INTEGRATION_START: &str = "# >>> memora shell integration >>>";
+const SHELL_INTEGRATION_END: &str = "# <<< memora shell integration <<<";
+
+fn maybe_install_shell_integration(
+    config: &RuntimeConfig,
+    no_shell_integration: bool,
+    dry_run: bool,
+) -> Result<ShellIntegrationStatus> {
+    let shell = detect_current_shell();
+    if no_shell_integration || shell_integration_disabled_by_env() {
+        return Ok(ShellIntegrationStatus {
+            shell,
+            path: None,
+            changed: false,
+            dry_run,
+            skipped: true,
+        });
+    }
+
+    let Some(path) = shell_startup_file(shell)? else {
+        return Ok(ShellIntegrationStatus {
+            shell,
+            path: None,
+            changed: false,
+            dry_run,
+            skipped: false,
+        });
+    };
+
+    let block = render_shell_integration_block(config, shell);
+    let current = fs::read_to_string(&path).unwrap_or_default();
+    let next = upsert_shell_integration_block(&current, &block);
+    let changed = current != next;
+    if changed && !dry_run {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, next)?;
+    }
+
+    Ok(ShellIntegrationStatus {
+        shell,
+        path: Some(path),
+        changed,
+        dry_run,
+        skipped: false,
+    })
+}
+
+fn print_shell_integration_status(status: ShellIntegrationStatus) {
+    if status.skipped {
+        println!("shell_integration: skipped");
+        return;
+    }
+    let Some(path) = status.path else {
+        println!("shell_integration: unsupported shell={:?}", status.shell);
+        return;
+    };
+    let state = match (status.changed, status.dry_run) {
+        (true, true) => "would_install",
+        (true, false) => "installed",
+        (false, _) => "current",
+    };
+    println!("shell_integration: {state} path={}", path.display());
+}
+
+fn detect_current_shell() -> Shell {
+    let shell_name = env::var_os("SHELL")
+        .and_then(|value| PathBuf::from(value).file_name().map(|name| name.to_owned()))
+        .and_then(|name| name.to_str().map(str::to_string))
+        .unwrap_or_else(|| "zsh".to_string());
+    match shell_name.as_str() {
+        "bash" => Shell::Bash,
+        "fish" => Shell::Fish,
+        "pwsh" | "powershell" => Shell::PowerShell,
+        "elvish" => Shell::Elvish,
+        _ => Shell::Zsh,
+    }
+}
+
+fn shell_startup_file(shell: Shell) -> Result<Option<PathBuf>> {
+    let home = PathBuf::from(env::var_os("HOME").ok_or(crate::error::MemoraError::HomeNotFound)?);
+    Ok(match shell {
+        Shell::Bash => Some(home.join(".bashrc")),
+        Shell::Fish => Some(home.join(".config").join("fish").join("config.fish")),
+        Shell::Zsh => Some(home.join(".zshrc")),
+        _ => None,
+    })
+}
+
+fn render_shell_integration_block(config: &RuntimeConfig, shell: Shell) -> String {
+    let home = sh_single_quote(&config.home_path.display().to_string());
+    let bin = sh_single_quote(
+        &config
+            .home_path
+            .join("bin")
+            .join("memora")
+            .display()
+            .to_string(),
+    );
+    let command = match shell {
+        Shell::Fish => format!("env MEMORA_HOME={home} {bin} self shell-init fish | source"),
+        Shell::Bash => format!("eval \"$(MEMORA_HOME={home} {bin} self shell-init bash)\""),
+        _ => format!("eval \"$(MEMORA_HOME={home} {bin} self shell-init zsh)\""),
+    };
+    format!(
+        "{SHELL_INTEGRATION_START}\n# Managed by Memora. Re-run `memora self install` or `memora self update` to update.\n{command}\n{SHELL_INTEGRATION_END}\n"
+    )
+}
+
+fn upsert_shell_integration_block(current: &str, block: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        current.find(SHELL_INTEGRATION_START),
+        current.find(SHELL_INTEGRATION_END),
+    ) {
+        if end >= start {
+            let end_index = end + SHELL_INTEGRATION_END.len();
+            let mut next = String::new();
+            next.push_str(current[..start].trim_end());
+            if !next.is_empty() {
+                next.push_str("\n\n");
+            }
+            next.push_str(block.trim_end());
+            let suffix = current[end_index..].trim_start();
+            if !suffix.is_empty() {
+                next.push_str("\n\n");
+                next.push_str(suffix);
+            }
+            next.push('\n');
+            return next;
+        }
+    }
+
+    let mut next = current.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str(block.trim_end());
+    next.push('\n');
+    next
+}
+
+fn shell_integration_disabled_by_env() -> bool {
+    env::var("MEMORA_SHELL_INTEGRATION")
+        .map(|value| matches!(value.trim(), "0" | "false" | "False" | "no" | "No"))
+        .unwrap_or(false)
+}
+
 fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn sh_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn ps_quote(value: &str) -> String {

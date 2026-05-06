@@ -20,6 +20,12 @@ cargo test
 
 If Rust is not installed on the machine, install the stable toolchain first.
 
+## CLI Reference
+
+See `docs/cli-agent-reference.md` for a detailed command reference. The same
+command groups are summarized in `memora help`, and every command exposes
+argument-level help through `memora help <command>`.
+
 ## Local Install
 
 Install latest GitHub release without Cargo:
@@ -34,7 +40,7 @@ Install a specific version:
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
-The installer downloads the platform-specific release binary, verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, and initializes the Memora home.
+The installer downloads the platform-specific release binary, verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, initializes the Memora home, and installs a managed shell startup block for `memora`.
 
 Build from source:
 
@@ -45,7 +51,7 @@ eval "$(memora self shell-init zsh)"
 memora self completions zsh
 ```
 
-`self install` copies the current binary into `$MEMORA_HOME/bin/memora`. `self update` overwrites that managed binary while preserving the vault.
+`self install` copies the current binary into `$MEMORA_HOME/bin/memora` and installs an idempotent shell startup block when the current shell is supported. `self shell-init` exports `MEMORA_HOME`, adds Memora to `PATH`, installs a `memora` shell alias, and points `fastembed` at Memora's managed cache under `state/cache/fastembed`. `self update` overwrites the managed binary, preserves the vault, and repairs the shell startup block if it is missing or stale.
 
 ## Agent Integration
 

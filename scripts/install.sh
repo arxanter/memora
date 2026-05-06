@@ -15,8 +15,9 @@ Install Memora from GitHub release binaries without requiring Cargo.
 Options:
   --repo OWNER/REPO     GitHub repository. Default: arxanter/memora
   --version TAG         Release tag. Default: latest
-  --home PATH           Memora home. Default: ~/memora
   --force               Overwrite existing ~/memora/bin/memora
+  --no-shell-integration
+                        Do not update the current shell startup file
   -h, --help            Show this help
 
 Environment:
@@ -24,8 +25,11 @@ Environment:
   MEMORA_VERSION
   MEMORA_HOME
   MEMORA_FORCE=1
+  MEMORA_SHELL_INTEGRATION=0
 USAGE
 }
+
+SHELL_INTEGRATION="${MEMORA_SHELL_INTEGRATION:-1}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -37,12 +41,12 @@ while [ "$#" -gt 0 ]; do
       TAG="${2:?missing value for --version}"
       shift 2
       ;;
-    --home)
-      MEMORA_HOME="${2:?missing value for --home}"
-      shift 2
-      ;;
     --force)
       FORCE=1
+      shift
+      ;;
+    --no-shell-integration)
+      SHELL_INTEGRATION=0
       shift
       ;;
     -h|--help)
@@ -85,6 +89,10 @@ sha256_file() {
   else
     shasum -a 256 "$1" | awk '{print $1}'
   fi
+}
+
+shell_single_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
 download() {
@@ -130,16 +138,19 @@ fi
 
 chmod 0755 "$TMP/memora"
 
-INSTALL_ARGS=(--home "$MEMORA_HOME" self install --from "$TMP/memora" --sha256 "$EXPECTED")
+INSTALL_ARGS=(self install --from "$TMP/memora" --sha256 "$EXPECTED")
 if [ "$FORCE" = "1" ]; then
   INSTALL_ARGS+=(--force)
 fi
+if [ "$SHELL_INTEGRATION" = "0" ]; then
+  INSTALL_ARGS+=(--no-shell-integration)
+fi
 
-"$TMP/memora" "${INSTALL_ARGS[@]}"
+MEMORA_HOME="$MEMORA_HOME" "$TMP/memora" "${INSTALL_ARGS[@]}"
 
 SHELL_NAME="$(basename "${SHELL:-zsh}")"
 case "$SHELL_NAME" in
-  bash|zsh|fish|powershell|elvish)
+  bash|zsh|fish)
     ;;
   *)
     SHELL_NAME="zsh"
@@ -148,5 +159,12 @@ esac
 
 echo
 echo "Memora installed at: $MEMORA_HOME/bin/memora"
-echo "Activate it in this shell:"
-echo "  eval \"\$($MEMORA_HOME/bin/memora self shell-init $SHELL_NAME)\""
+echo "Open a new shell or activate it now:"
+case "$SHELL_NAME" in
+  fish)
+    echo "  env MEMORA_HOME=$(shell_single_quote "$MEMORA_HOME") $(shell_single_quote "$MEMORA_HOME/bin/memora") self shell-init fish | source"
+    ;;
+  *)
+    echo "  eval \"\$(MEMORA_HOME=$(shell_single_quote "$MEMORA_HOME") $(shell_single_quote "$MEMORA_HOME/bin/memora") self shell-init $SHELL_NAME)\""
+    ;;
+esac

@@ -17,8 +17,7 @@ fn setup_creates_managed_home() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success()
@@ -41,16 +40,14 @@ fn aliases_can_be_reassigned() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent-aliases", "set", "Memo", "Память"])
         .assert()
         .success()
@@ -58,8 +55,7 @@ fn aliases_can_be_reassigned() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent-aliases", "list"])
         .assert()
         .success()
@@ -71,6 +67,9 @@ fn aliases_can_be_reassigned() {
 fn self_management_outputs_install_shell_init_and_completions() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
+    let user_home = temp.path().join("user-home");
+    fs::create_dir_all(&user_home).expect("user home");
+    let zshrc = user_home.join(".zshrc");
     let fake_binary = temp.path().join("memora-bin");
     let fake_binary_bytes = b"#!/bin/sh\n";
     fs::write(&fake_binary, fake_binary_bytes).expect("fake binary");
@@ -82,19 +81,23 @@ fn self_management_outputs_install_shell_init_and_completions() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
+        .env("SHELL", "/bin/zsh")
         .args(["self", "install", "--dry-run"])
         .assert()
         .success()
         .stdout(contains("installed:"))
         .stdout(contains("bin/memora"))
+        .stdout(contains("shell_integration: would_install"))
         .stdout(contains("dry_run: true"));
+    assert!(!zshrc.exists());
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
+        .env("SHELL", "/bin/zsh")
         .arg("self")
         .arg("install")
         .arg("--from")
@@ -107,8 +110,9 @@ fn self_management_outputs_install_shell_init_and_completions() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
+        .env("SHELL", "/bin/zsh")
         .arg("self")
         .arg("install")
         .arg("--from")
@@ -117,16 +121,21 @@ fn self_management_outputs_install_shell_init_and_completions() {
         .arg(&checksum)
         .assert()
         .success()
-        .stdout(contains("installed:"));
+        .stdout(contains("installed:"))
+        .stdout(contains("shell_integration: installed"));
     assert_eq!(
         fs::read(home.join("bin").join("memora")).expect("installed binary"),
         fake_binary_bytes
     );
+    let shell_integration = fs::read_to_string(&zshrc).expect("zshrc");
+    assert!(shell_integration.contains("memora shell integration"));
+    assert!(shell_integration.contains("self shell-init zsh"));
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
+        .env("SHELL", "/bin/zsh")
         .arg("self")
         .arg("update")
         .arg("--from")
@@ -135,7 +144,8 @@ fn self_management_outputs_install_shell_init_and_completions() {
         .arg(&updated_checksum)
         .assert()
         .success()
-        .stdout(contains("updated:"));
+        .stdout(contains("updated:"))
+        .stdout(contains("shell_integration: current"));
     assert_eq!(
         fs::read(home.join("bin").join("memora")).expect("updated binary"),
         updated_binary_bytes
@@ -143,12 +153,13 @@ fn self_management_outputs_install_shell_init_and_completions() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["self", "shell-init", "zsh"])
         .assert()
         .success()
         .stdout(contains("MEMORA_HOME"))
+        .stdout(contains("FASTEMBED_CACHE_DIR"))
+        .stdout(contains("alias memora="))
         .stdout(contains("bin"));
 
     Command::cargo_bin("memora")
@@ -166,8 +177,7 @@ fn doctor_reports_raw_source_and_wiki_schema_issues() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
@@ -234,8 +244,7 @@ wiki body
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("doctor")
         .assert()
         .success()
@@ -251,8 +260,7 @@ fn doctor_reports_corrupt_memory_without_aborting() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
@@ -299,8 +307,7 @@ good memory
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("doctor")
         .assert()
         .success()
@@ -315,16 +322,14 @@ fn remember_reindex_and_search_memory() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "remember",
             "--type",
@@ -340,8 +345,7 @@ fn remember_reindex_and_search_memory() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("reindex")
         .assert()
         .success()
@@ -349,8 +353,7 @@ fn remember_reindex_and_search_memory() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "SQLite", "--mode", "text"])
         .assert()
         .success()
@@ -365,16 +368,14 @@ fn search_and_context_use_agent_query_variants() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "remember",
             "--type",
@@ -389,16 +390,14 @@ fn search_and_context_use_agent_query_variants() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("reindex")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "search",
             "storage backend",
@@ -415,8 +414,7 @@ fn search_and_context_use_agent_query_variants() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "context",
             "Remi, что решили по хранилищу?",
@@ -442,8 +440,7 @@ fn probe_routes_to_wiki_for_wiki_intent() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
@@ -467,8 +464,7 @@ Query variants improve discovery across memories and wiki pages.
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "probe",
             "Remi, что wiki знает про discovery?",
@@ -494,8 +490,7 @@ fn search_can_include_related_memories() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
@@ -546,8 +541,7 @@ Related graph evidence should be returned even without direct keyword overlap.
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("reindex")
         .assert()
         .success()
@@ -555,8 +549,7 @@ Related graph evidence should be returned even without direct keyword overlap.
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "search",
             "hummingbird",
@@ -578,8 +571,7 @@ fn search_ranking_prefers_recent_memories_when_other_boosts_match() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
@@ -625,8 +617,7 @@ phoenix ranking stable signal
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("reindex")
         .assert()
         .success()
@@ -634,8 +625,7 @@ phoenix ranking stable signal
 
     let output = Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "phoenix", "--mode", "text"])
         .assert()
         .success()
@@ -655,16 +645,14 @@ fn search_auto_refreshes_missing_index() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "remember",
             "--type",
@@ -677,8 +665,7 @@ fn search_auto_refreshes_missing_index() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "Freshness", "--mode", "text"])
         .assert()
         .success()
@@ -693,16 +680,14 @@ fn vector_and_hybrid_search_modes_return_memory_candidates() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "remember",
             "--type",
@@ -717,8 +702,7 @@ fn vector_and_hybrid_search_modes_return_memory_candidates() {
         .expect("memora binary")
         .env("MEMORA_SEMANTIC_PROVIDER", "deterministic")
         .env("MEMORA_SEMANTIC_MODEL", "deterministic-test-v1")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "hashed embeddings", "--mode", "vector"])
         .assert()
         .success()
@@ -729,8 +713,7 @@ fn vector_and_hybrid_search_modes_return_memory_candidates() {
         .expect("memora binary")
         .env("MEMORA_SEMANTIC_PROVIDER", "deterministic")
         .env("MEMORA_SEMANTIC_MODEL", "deterministic-test-v1")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "Hybrid retrieval", "--mode", "hybrid"])
         .assert()
         .success()
@@ -753,16 +736,14 @@ printf '{"embeddings":[[1.0,0.0,0.0,0.0]]}'
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args([
             "remember",
             "--type",
@@ -781,8 +762,7 @@ printf '{"embeddings":[[1.0,0.0,0.0,0.0]]}'
             "MEMORA_SEMANTIC_COMMAND",
             format!("sh {}", script.display()),
         )
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["search", "anything", "--mode", "vector"])
         .assert()
         .success()
@@ -801,16 +781,14 @@ fn raw_source_and_wiki_capture_flow() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("raw")
         .arg("add")
         .arg(&input)
@@ -821,8 +799,7 @@ fn raw_source_and_wiki_capture_flow() {
 
     let source_output = Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("source")
         .arg("add")
         .arg(&input)
@@ -842,8 +819,7 @@ fn raw_source_and_wiki_capture_flow() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["wiki", "ingest", source_id, "--concept", "Rust rewrite"])
         .assert()
         .success()
@@ -851,8 +827,7 @@ fn raw_source_and_wiki_capture_flow() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["wiki", "search", "Rust"])
         .assert()
         .success()
@@ -860,8 +835,7 @@ fn raw_source_and_wiki_capture_flow() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["context", "Rust", "--intent", "evidence", "--mode", "text"])
         .assert()
         .success()
@@ -882,16 +856,14 @@ fn raw_analyze_creates_extract_template_and_risk_flags() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     let raw_output = Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("raw")
         .arg("add")
         .arg(&input)
@@ -917,8 +889,7 @@ fn raw_analyze_creates_extract_template_and_risk_flags() {
 
     let analyze_output = Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["raw", "analyze", raw_path])
         .assert()
         .success()
@@ -939,8 +910,7 @@ fn raw_analyze_creates_extract_template_and_risk_flags() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["raw", "inspect", raw_path])
         .assert()
         .success()
@@ -955,16 +925,14 @@ fn agent_integrate_writes_managed_block() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent", "integrate", "--client", "agents", "--target"])
         .arg(&target)
         .assert()
@@ -986,16 +954,14 @@ fn agent_integrate_all_is_client_specific_and_idempotent() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent", "integrate", "--client", "all", "--project"])
         .arg(&project)
         .assert()
@@ -1016,8 +982,7 @@ fn agent_integrate_all_is_client_specific_and_idempotent() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent", "update", "--client", "all", "--project"])
         .arg(&project)
         .assert()
@@ -1028,8 +993,7 @@ fn agent_integrate_all_is_client_specific_and_idempotent() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .args(["agent", "status", "--client", "all", "--project"])
         .arg(&project)
         .assert()
@@ -1056,16 +1020,14 @@ fn session_finalize_saves_source_and_pending_memory() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("session")
         .arg("finalize")
         .arg(&transcript)
@@ -1081,8 +1043,7 @@ fn session_finalize_saves_source_and_pending_memory() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("review")
         .arg("list")
         .assert()
@@ -1094,25 +1055,27 @@ fn session_finalize_saves_source_and_pending_memory() {
 fn uninstall_preserves_vault_by_default() {
     let temp = tempdir().expect("tempdir");
     let home = temp.path().join("memora-home");
+    let user_home = temp.path().join("user-home");
+    fs::create_dir_all(&user_home).expect("user home");
     let fake_binary = temp.path().join("memora-bin");
     fs::write(&fake_binary, "#!/bin/sh\n").expect("fake binary");
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("setup")
         .assert()
         .success();
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
         .arg("self")
         .arg("install")
         .arg("--from")
         .arg(&fake_binary)
+        .arg("--no-shell-integration")
         .assert()
         .success()
         .stdout(contains("installed:"));
@@ -1120,8 +1083,7 @@ fn uninstall_preserves_vault_by_default() {
 
     Command::cargo_bin("memora")
         .expect("memora binary")
-        .arg("--home")
-        .arg(&home)
+        .env("MEMORA_HOME", &home)
         .arg("uninstall")
         .assert()
         .success()
