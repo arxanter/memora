@@ -68,12 +68,19 @@ Environment:
 ### `memora self update`
 
 Updates `$MEMORA_HOME/bin/memora` while preserving the vault, and repairs shell
-startup integration if it is missing or stale.
+startup integration if it is missing or stale. Without `--from`, it downloads
+the platform-specific binary and `SHA256SUMS` from GitHub Releases, verifies the
+checksum, and installs the downloaded binary.
 
 Arguments:
 
-- `--from <PATH>`: update from this binary instead of the current executable.
-- `--sha256 <SHA256>`: verify the binary hash before installing.
+- `--from <PATH>`: update from this local binary instead of GitHub Releases.
+- `--sha256 <SHA256>`: verify the local or downloaded binary with this hash;
+  when omitted for GitHub downloads, the release `SHA256SUMS` entry is used.
+- `--repo <OWNER/REPO>`: GitHub repository to download from when `--from` is
+  omitted. Default: `arxanter/memora`. Env: `MEMORA_REPO`.
+- `--version <TAG>`: GitHub release tag to download when `--from` is omitted.
+  Default: `latest`. Env: `MEMORA_VERSION`.
 - `--dry-run`: print planned writes without changing files.
 - `--no-shell-integration`: skip shell startup integration.
 

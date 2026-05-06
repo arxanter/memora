@@ -1,4 +1,4 @@
-use std::{collections::HashSet, env, fs, io, path::PathBuf};
+use std::{collections::HashSet, env, fs, io, path::PathBuf, process::Command};
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -10,6 +10,7 @@ use crate::{
     memory::{MemoryUpdateOptions, RememberOptions},
     raw::{RawAddOptions, RawAnalyzeOptions},
     sources::SourceAddOptions,
+    util::file_hash,
     vault::{self, BinaryInstallOptions, SetupOptions},
 };
 
@@ -192,7 +193,7 @@ struct SelfUpdateCommand {
     #[arg(
         long,
         value_name = "PATH",
-        help = "Binary to install; defaults to the current executable."
+        help = "Local binary to install; when omitted, download from GitHub Releases."
     )]
     from: Option<PathBuf>,
     #[arg(
@@ -201,6 +202,22 @@ struct SelfUpdateCommand {
         help = "Expected SHA-256 for --from; accepts raw hex or sha256:<hex>."
     )]
     sha256: Option<String>,
+    #[arg(
+        long,
+        env = "MEMORA_REPO",
+        default_value = "arxanter/memora",
+        value_name = "OWNER/REPO",
+        help = "GitHub repository to download from when --from is omitted."
+    )]
+    repo: String,
+    #[arg(
+        long,
+        env = "MEMORA_VERSION",
+        default_value = "latest",
+        value_name = "TAG",
+        help = "GitHub release tag to download when --from is omitted; use latest for the latest release."
+    )]
+    version: String,
     #[arg(long, help = "Print planned actions without writing files.")]
     dry_run: bool,
     #[arg(long, help = "Do not create or repair shell startup integration.")]
@@ -1236,15 +1253,46 @@ fn dispatch_self(command: SelfCommands) -> Result<()> {
         }
         SelfCommands::Update(command) => {
             let config = load_runtime_config()?;
+            let release_plan = github_release_plan(&command.repo, &command.version)?;
+            if command.from.is_none() && command.dry_run {
+                println!("download: {}", release_plan.asset_url);
+                println!("checksums: {}", release_plan.checksums_url);
+                let target = vault::bin_path(&config);
+                println!("updated: {}", target.display());
+                println!("vault_preserved: true");
+                println!("dry_run: true");
+                print_shell_integration_status(maybe_install_shell_integration(
+                    &config,
+                    command.no_shell_integration,
+                    true,
+                )?);
+                return Ok(());
+            }
+            let mut downloaded_update = None;
+            let (source, expected_sha256) = if let Some(source) = command.from {
+                (Some(source), command.sha256)
+            } else {
+                let download = download_github_update(&config, release_plan, command.sha256)?;
+                println!("downloaded: {}", download.asset_url);
+                println!("checksum: {}", download.expected_sha256);
+                let source = download.binary_path.clone();
+                let expected = Some(download.expected_sha256.clone());
+                downloaded_update = Some(download);
+                (Some(source), expected)
+            };
             let target = vault::install_binary(
                 &config,
                 BinaryInstallOptions {
-                    source: command.from,
-                    expected_sha256: command.sha256,
+                    source,
+                    expected_sha256,
                     overwrite: true,
                     dry_run: command.dry_run,
                 },
             )?;
+            if let Some(download) = &downloaded_update {
+                let _ = fs::remove_file(&download.binary_path);
+                let _ = fs::remove_file(&download.checksums_path);
+            }
             println!("updated: {}", target.display());
             println!("vault_preserved: true");
             if command.dry_run {
@@ -1924,6 +1972,147 @@ fn print_search_results(results: Vec<crate::indexer::SearchResult>) {
             println!("  {}", result.snippet.replace('\n', " "));
         }
     }
+}
+
+struct GithubReleasePlan {
+    asset: String,
+    asset_url: String,
+    checksums_url: String,
+}
+
+struct DownloadedUpdate {
+    asset_url: String,
+    binary_path: PathBuf,
+    checksums_path: PathBuf,
+    expected_sha256: String,
+}
+
+fn github_release_plan(repo: &str, version: &str) -> Result<GithubReleasePlan> {
+    let repo = repo.trim();
+    if repo.is_empty() || !repo.contains('/') {
+        return Err(crate::error::MemoraError::InvalidArgument(
+            "--repo must be OWNER/REPO".to_string(),
+        ));
+    }
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(crate::error::MemoraError::InvalidArgument(
+            "--version must not be empty".to_string(),
+        ));
+    }
+
+    let asset = format!("memora-{}", release_target()?);
+    let base = if version == "latest" {
+        format!("https://github.com/{repo}/releases/latest/download")
+    } else {
+        format!("https://github.com/{repo}/releases/download/{version}")
+    };
+    Ok(GithubReleasePlan {
+        asset: asset.clone(),
+        asset_url: format!("{base}/{asset}"),
+        checksums_url: format!("{base}/SHA256SUMS"),
+    })
+}
+
+fn release_target() -> Result<&'static str> {
+    match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        (os, arch) => Err(crate::error::MemoraError::InvalidArgument(format!(
+            "unsupported update platform: {os} {arch}"
+        ))),
+    }
+}
+
+fn download_github_update(
+    config: &RuntimeConfig,
+    plan: GithubReleasePlan,
+    expected_override: Option<String>,
+) -> Result<DownloadedUpdate> {
+    let download_dir = config.state_path().join("cache").join("updates");
+    fs::create_dir_all(&download_dir)?;
+    let suffix = std::process::id();
+    let binary_path = download_dir.join(format!("{}.{}", plan.asset, suffix));
+    let checksums_path = download_dir.join(format!("SHA256SUMS.{suffix}"));
+
+    curl_download(&plan.asset_url, &binary_path)?;
+    curl_download(&plan.checksums_url, &checksums_path)?;
+
+    let expected_sha256 = if let Some(expected) = expected_override {
+        normalize_sha256_for_cli(&expected)
+    } else {
+        checksum_for_asset(&checksums_path, &plan.asset)?
+    };
+    let actual_sha256 = file_hash(&binary_path)?;
+    if actual_sha256 != expected_sha256 {
+        let _ = fs::remove_file(&binary_path);
+        let _ = fs::remove_file(&checksums_path);
+        return Err(crate::error::MemoraError::InvalidArgument(format!(
+            "sha256 mismatch for {}: expected {}, got {}",
+            plan.asset, expected_sha256, actual_sha256
+        )));
+    }
+
+    Ok(DownloadedUpdate {
+        asset_url: plan.asset_url,
+        binary_path,
+        checksums_path,
+        expected_sha256,
+    })
+}
+
+fn curl_download(url: &str, output: &std::path::Path) -> Result<()> {
+    let result = Command::new("curl")
+        .args(["-fsSL", url, "-o"])
+        .arg(output)
+        .output();
+    let output_result = match result {
+        Ok(output_result) => output_result,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(crate::error::MemoraError::NotFound(
+                "curl is required for `memora self update` downloads".to_string(),
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr)
+            .trim()
+            .to_string();
+        return Err(crate::error::MemoraError::Message(format!(
+            "download failed for {url}: {stderr}"
+        )));
+    }
+    Ok(())
+}
+
+fn checksum_for_asset(path: &std::path::Path, asset: &str) -> Result<String> {
+    let raw = fs::read_to_string(path)?;
+    for line in raw.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(checksum) = parts.next() else {
+            continue;
+        };
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        if name == asset || name == format!("*{asset}") {
+            return Ok(normalize_sha256_for_cli(checksum));
+        }
+    }
+    Err(crate::error::MemoraError::NotFound(format!(
+        "checksum for {asset} in {}",
+        path.display()
+    )))
+}
+
+fn normalize_sha256_for_cli(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches("sha256:")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn print_shell_init(config: &RuntimeConfig, shell: Shell) {

@@ -136,6 +136,30 @@ fn self_management_outputs_install_shell_init_and_completions() {
         .env("HOME", &user_home)
         .env("MEMORA_HOME", &home)
         .env("SHELL", "/bin/zsh")
+        .args([
+            "self",
+            "update",
+            "--dry-run",
+            "--repo",
+            "example/memora",
+            "--version",
+            "v9.9.9",
+            "--no-shell-integration",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            "https://github.com/example/memora/releases/download/v9.9.9/memora-",
+        ))
+        .stdout(contains("SHA256SUMS"))
+        .stdout(contains("shell_integration: skipped"))
+        .stdout(contains("dry_run: true"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("HOME", &user_home)
+        .env("MEMORA_HOME", &home)
+        .env("SHELL", "/bin/zsh")
         .arg("self")
         .arg("update")
         .arg("--from")

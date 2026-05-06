@@ -51,7 +51,7 @@ eval "$(memora self shell-init zsh)"
 memora self completions zsh
 ```
 
-`self install` copies the current binary into `$MEMORA_HOME/bin/memora` and installs an idempotent shell startup block when the current shell is supported. `self shell-init` exports `MEMORA_HOME`, adds Memora to `PATH`, installs a `memora` shell alias, and points `fastembed` at Memora's managed cache under `state/cache/fastembed`. `self update` overwrites the managed binary, preserves the vault, and repairs the shell startup block if it is missing or stale.
+`self install` copies the current binary into `$MEMORA_HOME/bin/memora` and installs an idempotent shell startup block when the current shell is supported. `self shell-init` exports `MEMORA_HOME`, adds Memora to `PATH`, installs a `memora` shell alias, and points `fastembed` at Memora's managed cache under `state/cache/fastembed`. `self update` downloads the latest GitHub release binary by default, overwrites the managed binary after checksum verification, preserves the vault, and repairs the shell startup block if it is missing or stale.
 
 ## Agent Integration
 

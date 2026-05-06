@@ -78,6 +78,11 @@ jobs:
       - name: Publish release assets
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" dist/* \
-            --title "$RELEASE_TAG" \
-            --notes "Memora $RELEASE_TAG release binaries and checksums."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; uploading assets."
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --notes "Memora $RELEASE_TAG release binaries and checksums."
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
