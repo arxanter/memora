@@ -1,13 +1,14 @@
 use std::{collections::HashSet, env, fs, io, path::PathBuf, process::Command};
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
+use serde::Serialize;
 
 use crate::{
     agent::{render_rules, AgentClient, AgentInstallOptions, AgentScope, AGENT_COMMAND_SPEC},
     config::{load_runtime_config, set_aliases, RuntimeConfig},
     error::Result,
-    memory::{MemoryUpdateOptions, RememberOptions},
+    memory::{MemoryDocument, MemoryUpdateOptions, RememberOptions},
     raw::{RawAddOptions, RawAnalyzeOptions},
     sources::SourceAddOptions,
     util::file_hash,
@@ -119,7 +120,7 @@ enum Commands {
         #[command(subcommand)]
         command: MemoryCommands,
     },
-    #[command(about = "Review pending memories and approve or reject them.")]
+    #[command(about = "Review memories and approve or reject pending items.")]
     Review {
         #[command(subcommand)]
         command: ReviewCommands,
@@ -686,19 +687,51 @@ struct MemoryUpdateCommand {
 
 #[derive(Debug, Subcommand)]
 enum ReviewCommands {
-    #[command(about = "List pending review items.")]
-    List {
-        #[arg(
-            long,
-            value_name = "FIELD",
-            help = "Optional grouping field. Supported values: type, source."
-        )]
-        group_by: Option<String>,
-    },
+    #[command(about = "List memory review items with metadata and body text.")]
+    List(ReviewListCommand),
     #[command(about = "Approve pending memories.")]
     Approve(ReviewDecisionCommand),
     #[command(about = "Reject pending memories.")]
     Reject(ReviewDecisionCommand),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ReviewListFormat {
+    Table,
+    Lines,
+    Jsonl,
+}
+
+#[derive(Debug, Args)]
+struct ReviewListCommand {
+    #[arg(
+        long,
+        value_name = "STATUS",
+        help = "Review status to include; repeat for multiple statuses. Use all or --all for every status. Default: pending."
+    )]
+    status: Vec<String>,
+    #[arg(long, help = "Include every review status.")]
+    all: bool,
+    #[arg(
+        long,
+        value_name = "FIELD",
+        help = "Optional grouping field. Supported values: type, source."
+    )]
+    group_by: Option<String>,
+    #[arg(
+        long,
+        value_enum,
+        default_value = "table",
+        help = "Output format: table, lines, or jsonl."
+    )]
+    format: ReviewListFormat,
+    #[arg(
+        long,
+        default_value_t = 500,
+        value_name = "N",
+        help = "Maximum body characters in table output; use 0 for full body."
+    )]
+    max_body_chars: usize,
 }
 
 #[derive(Debug, Args)]
@@ -1587,13 +1620,16 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
                     clear_confidence: command.clear_confidence,
                     tags: command.tags,
                     clear_tags: command.clear_tags,
+                    title: command.title,
+                    clear_title: command.clear_title,
                     text,
+                    dry_run: command.dry_run,
                 },
             )?;
             println!("updated: {}", memory.frontmatter.id);
             println!("path: {}", memory.relative_path);
             if command.dry_run {
-                println!("dry_run: ignored for current implementation");
+                println!("dry_run: true");
             }
             if let Some(reason) = command.reason {
                 println!("reason: {reason}");
@@ -1606,44 +1642,276 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
 fn dispatch_review(command: ReviewCommands) -> Result<()> {
     let config = load_runtime_config()?;
     match command {
-        ReviewCommands::List { group_by } => {
-            if let Some(group_by) = group_by {
-                println!("group_by: {group_by}");
-            }
-            for memory in crate::memory::pending_memories(&config)? {
-                println!(
-                    "{} type={} path={}",
-                    memory.frontmatter.id, memory.frontmatter.memory_type, memory.relative_path
-                );
-            }
+        ReviewCommands::List(command) => {
+            let memories = crate::memory::review_memories(&config, &command.status, command.all)?;
+            print_review_list(
+                &memories,
+                command.group_by.as_deref(),
+                command.format,
+                command.max_body_chars,
+            )?;
             Ok(())
         }
         ReviewCommands::Approve(command) => {
-            let updated = crate::memory::set_review_status(&config, &command.ids, "active")?;
+            let updated =
+                crate::memory::set_review_status(&config, &command.ids, "active", command.dry_run)?;
             for memory in updated {
-                println!("approved: {}", memory.frontmatter.id);
+                println!(
+                    "{}: {}",
+                    if command.dry_run {
+                        "would_approve"
+                    } else {
+                        "approved"
+                    },
+                    memory.frontmatter.id
+                );
             }
             if let Some(reason) = command.reason {
                 println!("reason: {reason}");
             }
             if command.dry_run {
-                println!("dry_run: ignored for current implementation");
+                println!("dry_run: true");
             }
             Ok(())
         }
         ReviewCommands::Reject(command) => {
-            let updated = crate::memory::set_review_status(&config, &command.ids, "rejected")?;
+            let updated = crate::memory::set_review_status(
+                &config,
+                &command.ids,
+                "rejected",
+                command.dry_run,
+            )?;
             for memory in updated {
-                println!("rejected: {}", memory.frontmatter.id);
+                println!(
+                    "{}: {}",
+                    if command.dry_run {
+                        "would_reject"
+                    } else {
+                        "rejected"
+                    },
+                    memory.frontmatter.id
+                );
             }
             if let Some(reason) = command.reason {
                 println!("reason: {reason}");
             }
             if command.dry_run {
-                println!("dry_run: ignored for current implementation");
+                println!("dry_run: true");
             }
             Ok(())
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewRow {
+    index: usize,
+    schema_version: String,
+    id: String,
+    #[serde(rename = "type")]
+    memory_type: String,
+    status: String,
+    scope: String,
+    project: String,
+    confidence: String,
+    tags: String,
+    source: String,
+    author: String,
+    relations: String,
+    created_at: String,
+    updated_at: String,
+    path: String,
+    body: String,
+    extra: String,
+}
+
+fn print_review_list(
+    memories: &[MemoryDocument],
+    group_by: Option<&str>,
+    format: ReviewListFormat,
+    max_body_chars: usize,
+) -> Result<()> {
+    validate_review_group(group_by)?;
+    let row_body_limit = match format {
+        ReviewListFormat::Jsonl => 0,
+        ReviewListFormat::Table | ReviewListFormat::Lines => max_body_chars,
+    };
+    let rows = memories
+        .iter()
+        .enumerate()
+        .map(|(index, memory)| review_row(index + 1, memory, row_body_limit))
+        .collect::<Vec<_>>();
+
+    match format {
+        ReviewListFormat::Jsonl => {
+            for row in rows {
+                println!("{}", serde_json::to_string(&row)?);
+            }
+        }
+        ReviewListFormat::Lines => {
+            if let Some(group_by) = group_by {
+                println!("group_by: {group_by}");
+            }
+            for row in rows {
+                println!(
+                    "{}. {} type={} status={} scope={} project={} confidence={} tags={} source={} path={} body=\"{}\"",
+                    row.index,
+                    row.id,
+                    row.memory_type,
+                    row.status,
+                    row.scope,
+                    empty_as_dash(&row.project),
+                    empty_as_dash(&row.confidence),
+                    empty_as_dash(&row.tags),
+                    empty_as_dash(&row.source),
+                    row.path,
+                    row.body.replace('"', "\\\"")
+                );
+            }
+        }
+        ReviewListFormat::Table => {
+            println!("review_items: {}", rows.len());
+            if rows.is_empty() {
+                return Ok(());
+            }
+            if let Some(group_by) = group_by {
+                println!("group_by: {group_by}");
+                for (group, group_rows) in group_review_rows(&rows, group_by) {
+                    println!();
+                    println!("### {}", empty_as_dash(&group));
+                    print_review_markdown_table(&group_rows);
+                }
+            } else {
+                print_review_markdown_table(&rows.iter().collect::<Vec<_>>());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_review_group(group_by: Option<&str>) -> Result<()> {
+    match group_by {
+        None | Some("type") | Some("source") | Some("status") | Some("scope") => Ok(()),
+        Some(value) => Err(crate::error::MemoraError::InvalidArgument(format!(
+            "unsupported review group field: {value}"
+        ))),
+    }
+}
+
+fn review_row(index: usize, memory: &MemoryDocument, max_body_chars: usize) -> ReviewRow {
+    let body = memory.body.trim();
+    ReviewRow {
+        index,
+        schema_version: memory.frontmatter.schema_version.to_string(),
+        id: memory.frontmatter.id.clone(),
+        memory_type: memory.frontmatter.memory_type.clone(),
+        status: memory.frontmatter.status.clone(),
+        scope: memory.frontmatter.scope.clone(),
+        project: memory.frontmatter.project.clone().unwrap_or_default(),
+        confidence: memory
+            .frontmatter
+            .confidence
+            .map(|confidence| confidence.to_string())
+            .unwrap_or_default(),
+        tags: memory.frontmatter.tags.join(", "),
+        source: memory
+            .frontmatter
+            .source
+            .as_ref()
+            .map(compact_json)
+            .unwrap_or_default(),
+        author: memory
+            .frontmatter
+            .author
+            .as_ref()
+            .map(compact_json)
+            .unwrap_or_default(),
+        relations: if memory.frontmatter.relations.is_empty() {
+            String::new()
+        } else {
+            compact_json(&memory.frontmatter.relations)
+        },
+        created_at: memory.frontmatter.created_at.clone(),
+        updated_at: memory.frontmatter.updated_at.clone(),
+        path: memory.relative_path.clone(),
+        body: if max_body_chars == 0 {
+            body.to_string()
+        } else {
+            truncate_chars(body, max_body_chars)
+        },
+        extra: if memory.frontmatter.extra.is_empty() {
+            String::new()
+        } else {
+            compact_json(&memory.frontmatter.extra)
+        },
+    }
+}
+
+fn compact_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<unprintable>".to_string())
+}
+
+fn group_review_rows<'a>(
+    rows: &'a [ReviewRow],
+    group_by: &str,
+) -> Vec<(String, Vec<&'a ReviewRow>)> {
+    let mut groups: Vec<(String, Vec<&ReviewRow>)> = Vec::new();
+    for row in rows {
+        let key = match group_by {
+            "type" => &row.memory_type,
+            "source" => &row.source,
+            "status" => &row.status,
+            "scope" => &row.scope,
+            _ => "",
+        };
+        if let Some((_, existing_rows)) = groups.iter_mut().find(|(existing, _)| existing == key) {
+            existing_rows.push(row);
+        } else {
+            groups.push((key.to_string(), vec![row]));
+        }
+    }
+    groups
+}
+
+fn print_review_markdown_table(rows: &[&ReviewRow]) {
+    println!("| # | info | tags | body | extra |");
+    println!("|---|---|---|---|---|");
+    for row in rows {
+        println!(
+            "| {} | {} | {} | {} | {} |",
+            row.index,
+            markdown_cell(&review_info_cell(row)),
+            markdown_cell(&row.tags),
+            markdown_cell(&row.body),
+            markdown_cell(&row.extra),
+        );
+    }
+}
+
+fn review_info_cell(row: &ReviewRow) -> String {
+    format!(
+        "created_at: {}\nstatus: {}\nscope: {}\nproject: {}\nconfidence: {}",
+        row.created_at,
+        row.status,
+        row.scope,
+        empty_as_dash(&row.project),
+        empty_as_dash(&row.confidence)
+    )
+}
+
+fn markdown_cell(value: &str) -> String {
+    let normalized = value
+        .replace('\n', "<br>")
+        .replace('\r', "")
+        .replace('|', "\\|");
+    empty_as_dash(&normalized).to_string()
+}
+
+fn empty_as_dash(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "-"
+    } else {
+        value
     }
 }
 

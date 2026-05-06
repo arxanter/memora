@@ -100,7 +100,7 @@ Remi, what do we know about pending memory review UX?
 Remi, find source evidence for the install flow decisions.
 ```
 
-Agents must show the exact memory, extraction, source value, or synthesis before saving it unless you explicitly say review is not required. During review, agents should show pending notes clearly and let you approve, reject, or edit-and-approve each note.
+Agents must show the exact memory, extraction, source value, or synthesis before saving it unless you explicitly say review is not required. During review, agents should use `memora review list --format table` to show notes with metadata and body text, then let you approve, reject, or edit-and-approve each note. Use `--all` to include every review status and `--format jsonl` when a workflow needs exact machine-readable rows.
 
 Agents may also auto-recall context without an alias when a task depends on project history, preferences, decisions, roadmap/status/TODOs, wiki knowledge, or saved source evidence. They should not query memory on every turn.
 

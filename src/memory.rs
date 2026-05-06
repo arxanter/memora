@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
 use walkdir::WalkDir;
 
 use crate::{
@@ -96,7 +97,10 @@ pub struct MemoryUpdateOptions {
     pub clear_confidence: bool,
     pub tags: Vec<String>,
     pub clear_tags: bool,
+    pub title: Option<String>,
+    pub clear_title: bool,
     pub text: Option<String>,
+    pub dry_run: bool,
 }
 
 pub fn remember(config: &RuntimeConfig, options: RememberOptions) -> Result<MemoryDocument> {
@@ -192,6 +196,18 @@ pub fn update_memory(
     if !options.tags.is_empty() {
         document.frontmatter.tags = options.tags;
     }
+    if options.clear_title {
+        document
+            .frontmatter
+            .extra
+            .remove(&Value::String("title".to_string()));
+    }
+    if let Some(title) = options.title {
+        document
+            .frontmatter
+            .extra
+            .insert(Value::String("title".to_string()), Value::String(title));
+    }
     if let Some(text) = options.text {
         document.body = text;
     }
@@ -202,7 +218,6 @@ pub fn update_memory(
         .vault_path
         .join("Memories")
         .join(memory_type_directory(&document.frontmatter.memory_type));
-    fs::create_dir_all(&expected_dir)?;
     let next_path = expected_dir.join(
         document
             .path
@@ -210,6 +225,16 @@ pub fn update_memory(
             .ok_or_else(|| MemoraError::Message("memory path has no file name".to_string()))?,
     );
     let rendered = render_markdown(&document.frontmatter, &document.body)?;
+    if options.dry_run {
+        document.path = next_path.clone();
+        document.relative_path = next_path
+            .strip_prefix(&config.vault_path)
+            .unwrap_or(&next_path)
+            .to_string_lossy()
+            .to_string();
+        return Ok(document);
+    }
+    fs::create_dir_all(&expected_dir)?;
     if next_path != document.path {
         fs::remove_file(&document.path)?;
     }
@@ -236,10 +261,30 @@ pub fn list_memories(config: &RuntimeConfig) -> Result<Vec<MemoryDocument>> {
     Ok(memories)
 }
 
-pub fn pending_memories(config: &RuntimeConfig) -> Result<Vec<MemoryDocument>> {
+pub fn review_memories(
+    config: &RuntimeConfig,
+    statuses: &[String],
+    include_all: bool,
+) -> Result<Vec<MemoryDocument>> {
+    let statuses = if include_all || statuses.iter().any(|status| status == "all") {
+        None
+    } else if statuses.is_empty() {
+        Some(vec!["pending".to_string()])
+    } else {
+        for status in statuses {
+            validate_status(status)?;
+        }
+        Some(statuses.to_vec())
+    };
+
     Ok(list_memories(config)?
         .into_iter()
-        .filter(|memory| memory.frontmatter.status == "pending")
+        .filter(|memory| {
+            statuses
+                .as_ref()
+                .map(|statuses| statuses.contains(&memory.frontmatter.status))
+                .unwrap_or(true)
+        })
         .collect())
 }
 
@@ -247,7 +292,13 @@ pub fn set_review_status(
     config: &RuntimeConfig,
     ids: &[String],
     status: &str,
+    dry_run: bool,
 ) -> Result<Vec<MemoryDocument>> {
+    if ids.is_empty() {
+        return Err(MemoraError::InvalidArgument(
+            "at least one memory id is required".to_string(),
+        ));
+    }
     let mut updated = Vec::new();
     for id in ids {
         updated.push(update_memory(
@@ -263,7 +314,10 @@ pub fn set_review_status(
                 clear_confidence: false,
                 tags: Vec::new(),
                 clear_tags: false,
+                title: None,
+                clear_title: false,
                 text: None,
+                dry_run,
             },
         )?);
     }

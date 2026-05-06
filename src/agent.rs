@@ -36,15 +36,21 @@ Agent-safe Commands:
 - Create memory: `memora remember --type <TYPE> --text "<atomic memory>" --text-file <PATH> --scope <SCOPE> --project <PROJECT> --status <STATUS> --tag <TAG>`.
   Default status is `pending`; default scope is `project` when `--project` is present, otherwise `user`.
 - Update memory: `memora memory update <MEMORY_ID> --type <TYPE> --scope <SCOPE> --project <PROJECT> --clear-project --status <STATUS> --confidence <0..1> --clear-confidence --tag <TAG> --clear-tags --title <TITLE> --clear-title --text <TEXT> --text-file <PATH> --reason <TEXT> --dry-run`.
-- Review: `memora review list --group-by type|source`, `memora review approve <ID...> --reason <TEXT> --dry-run`, `memora review reject <ID...> --reason <TEXT> --dry-run`.
+- Review list: `memora review list --status <STATUS> --all --group-by type|source|status|scope --format table|lines|jsonl --max-body-chars <N>`.
+  Default status filter is `pending`. Use `--format table --all` when showing the user review items to validate; table output includes a 1-based row index, an info cell with created_at/status/scope/project/confidence, tags, a body preview, and extra. Use `--format jsonl` for exact machine-readable rows.
+- Review decisions: `memora review approve <ID...> --reason <TEXT> --dry-run`, `memora review reject <ID...> --reason <TEXT> --dry-run`.
+  Use `--dry-run` before applying bulk approve/reject when the user has not explicitly confirmed the exact IDs.
+- Inspect/open memory: `memora inspect <MEMORY_ID>`, `memora open <MEMORY_ID> --launch`.
 - Raw capture: `memora raw add <PATH> --kind <KIND> --format <FORMAT> --title <TITLE> --sensitivity <LEVEL> --tag <TAG> --dry-run`.
   For PDFs, this stores the original PDF under `raw/inbox/pdf/` with a `.meta.yaml` sidecar. Create a text or Markdown extract/summary before promoting it to sources, wiki, or memory.
+- Raw inventory: `memora raw list <PATH>`, `memora raw inspect <PATH>`.
 - Raw analysis: `memora raw analyze <RAW_PATH> --output <PATH> --overwrite --dry-run`.
 - Source capture: `memora source add <PATH> --extract <PATH> --kind <CHANNEL> --format <FORMAT> --title <TITLE> --url <URL> --sensitivity <LEVEL> --tag <TAG>`.
   `--kind` is stored as source `channel`; common channels are `file`, `ai_session`, `slack`, and `webclip`.
 - Raw completion: `memora raw mark-processed <RAW_PATH> --source-id <SOURCE_ID> --dry-run`.
-- Wiki: `memora wiki read <TARGET> --full --max-chars <N>`, `memora wiki search "<query>" --limit <N>`, `memora wiki ingest <SOURCE_ID> --title <TITLE> --entity <NAME> --concept <NAME>`, `memora wiki synthesize "<question>" --title <TITLE> --save --limit <N>`, `memora wiki lint`.
-- Maintenance: `memora status`, `memora doctor`, `memora reindex --clean`, `memora agent status --client <CLIENT> --scope <SCOPE>`, `memora agent reference`.
+- Wiki: `memora wiki status`, `memora wiki read <TARGET> --full --max-chars <N>`, `memora wiki search "<query>" --limit <N>`, `memora wiki ingest <SOURCE_ID> --title <TITLE> --entity <NAME> --concept <NAME>`, `memora wiki synthesize "<question>" --title <TITLE> --save --limit <N>`, `memora wiki lint`.
+- Session capture: `memora session finalize <TRANSCRIPT> --summary-file <PATH> --memories-file <PATH> --project <PROJECT> --tag <TAG> --dry-run`.
+- Maintenance: `memora setup --dry-run`, `memora status`, `memora doctor`, `memora reindex --clean`, `memora agent rules --client <CLIENT> --scope <SCOPE>`, `memora agent status --client <CLIENT> --scope <SCOPE>`, `memora agent reference`.
 
 Data Formats:
 - Memory files are Markdown with YAML frontmatter: `schema_version: 1`, `id`, `type`, `scope`, optional `project`, `status`, optional `confidence` between 0 and 1, `created_at`, `updated_at`, optional `source`, optional `author`, optional `relations`, optional `tags`.

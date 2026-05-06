@@ -1192,7 +1192,70 @@ fn session_finalize_saves_source_and_pending_memory() {
         .arg("list")
         .assert()
         .success()
-        .stdout(contains("decision"));
+        .stdout(contains("| # | info | tags | body | extra |"))
+        .stdout(contains("Keep the Rust rewrite CLI-first."));
+}
+
+#[test]
+fn review_list_outputs_full_table_and_dry_run_does_not_change_status() {
+    let temp = tempdir().expect("tempdir");
+    let home = temp.path().join("memora-home");
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("setup")
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .args([
+            "remember",
+            "--type",
+            "fact",
+            "--text",
+            "Review table should include the memory body.",
+            "--scope",
+            "user",
+            "--status",
+            "pending",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).expect("remember output");
+    let memory_id = output
+        .lines()
+        .find_map(|line| line.strip_prefix("created: "))
+        .expect("memory id")
+        .to_string();
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .arg("review")
+        .arg("approve")
+        .arg(&memory_id)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("would_approve:"))
+        .stdout(contains("dry_run: true"));
+
+    Command::cargo_bin("memora")
+        .expect("memora binary")
+        .env("MEMORA_HOME", &home)
+        .args(["review", "list", "--format", "table", "--all"])
+        .assert()
+        .success()
+        .stdout(contains("| # | info | tags | body | extra |"))
+        .stdout(contains("| 1 | created_at:"))
+        .stdout(contains("pending"))
+        .stdout(contains("Review table should include the memory body."));
 }
 
 #[test]

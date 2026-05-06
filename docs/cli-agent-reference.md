@@ -401,16 +401,30 @@ Arguments:
 - `--text-file <PATH>`: replace memory body with text read from a staged
   text/Markdown/YAML file. Use either `--text` or `--text-file`.
 - `--reason <TEXT>`: reason to append to update history.
-- `--dry-run`: print the updated memory without writing it.
+- `--dry-run`: preview the updated memory metadata without writing it.
 
 ### `memora review list`
 
-Lists pending review items.
+Lists memory review items. By default this shows only `pending` items. Agents
+should use `--format table` when presenting notes to a user for validation, and
+`--format jsonl` when exact machine-readable rows are needed.
 
 Arguments:
 
+- `--status <STATUS>`: status to include; repeat for multiple statuses. Allowed
+  values: `pending`, `active`, `stale`, `superseded`, `rejected`, or `all`.
+  Default: `pending`.
+- `--all`: include all review statuses.
 - `--group-by <FIELD>`: optional grouping field. Supported values: `type`,
-  `source`.
+  `source`, `status`, `scope`.
+- `--format <FORMAT>`: output format. Allowed values: `table`, `lines`, `jsonl`.
+  Default: `table`.
+- `--max-body-chars <N>`: maximum body characters in table output. Use `0` for
+  full body text. Default: `500`.
+
+Table output includes `#`, `info`, `tags`, `body`, and `extra`. The `info`
+cell contains `created_at`, `status`, `scope`, `project`, and `confidence`.
+Use `--format jsonl` when the full memory frontmatter fields are needed.
 
 ### `memora review approve <ID...>`
 
