@@ -968,6 +968,9 @@ fn agent_integrate_writes_managed_block() {
     let content = fs::read_to_string(target).expect("target");
     assert!(content.contains("BEGIN MEMORA MANAGED BLOCK"));
     assert!(content.contains("Auto recall enabled: true"));
+    assert!(content.contains("receiving approval"));
+    assert!(content.contains("preserve it as close to the original as possible"));
+    assert!(content.contains("edit-and-approve each note"));
 }
 
 #[test]

@@ -72,9 +72,10 @@ Rules:
 - Start discovery with `memora probe "<query>" --intent memory|wiki|mixed --variant "<alternate>"`.
 - Pass 2-5 high-signal `--variant` values to `probe`, `context`, or `search` when alternate wording, translations, abbreviations, or inflections may improve retrieval.
 - Use `memora context "<query>" --intent evidence|mixed --variant "<alternate>"` or `memora lookup-source <source_id>` when source evidence is required.
-- Use `memora remember` only for small atomic durable memories.
-- Use `memora raw add`, `memora source add`, `memora raw mark-processed`, `memora wiki ingest`, and `memora wiki synthesize --save` for source capture workflows.
-- Review pending agent-created memory with `memora review`; approve or reject only when policy or user confirmation allows it.
+- Use `memora remember` only for small atomic durable memories, and only after showing the exact proposed memory/extraction/value to the user and receiving approval, unless the user explicitly said review is not required.
+- When capturing raw material, preserve it as close to the original as possible. Prefer no text changes; only move the material into a convenient file/format for capture.
+- Before any command that saves extractions or values to memory, including `memora raw add`, `memora source add`, `memora raw mark-processed`, `memora wiki ingest`, and `memora wiki synthesize --save`, show what will be saved and get user approval, unless the user explicitly said review is not required.
+- Review pending agent-created memory with `memora review`; show active pending notes in a concise, readable format and let the user approve, reject, or edit-and-approve each note before applying the decision.
 - Do not read, edit, migrate, delete, or inspect Memora vault internals directly. If the CLI lacks an operation, report the CLI gap.
 "#,
         config.home_path.display()

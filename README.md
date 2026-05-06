@@ -1,70 +1,109 @@
 # Memora
 
-Memora is being rebuilt as a Rust CLI-first memory vault for coding agents.
+Memora is a local CLI-first memory vault for coding agents.
 
-The current product contract lives in `.cursor/rust-rewrite-spec.md`. The new implementation starts from a small command surface focused on:
+It is built around a few simple principles:
 
-- local YAML/Markdown vault storage;
-- Remi aliases plus implicit agent auto-recall policy;
-- project/user agent rule installation;
-- raw -> source -> memory/wiki capture;
-- indexed search over rebuildable local state.
-- local semantic search through `fastembed`, with `local-command` and `deterministic` providers available for custom integrations and tests.
+- **Local-first storage**: project knowledge lives in a local YAML/Markdown vault, not in an external service.
+- **Traceable knowledge**: raw sources can be captured close to the original material, then turned into reviewed memories, source evidence, or wiki notes.
+- **Agent-native recall**: agents can look up project history, decisions, preferences, TODOs, and saved evidence when a task needs context.
+- **Semantic search**: Memora keeps a rebuildable local index and supports hybrid text/vector retrieval through `fastembed`.
+- **Managed agent instructions**: Cursor, Claude, Codex, and generic agents can receive generated rules for when and how to use memory.
+- **Review before persistence**: agents are instructed to show proposed memories, extractions, and synthesized values before saving unless review is explicitly waived.
 
-## Development
+## Quick Start
 
-```bash
-cargo build
-cargo test
-```
-
-If Rust is not installed on the machine, install the stable toolchain first.
-
-## CLI Reference
-
-See `docs/cli-agent-reference.md` for a detailed command reference. The same
-command groups are summarized in `memora help`, and every command exposes
-argument-level help through `memora help <command>`.
-
-## Local Install
-
-Install latest GitHub release without Cargo:
+### 1. Install
 
 ```bash
+# Latest release
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash
-```
 
-Install a specific version:
+# Overwrite an existing managed binary
+curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --force
 
-```bash
+# Specific release
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
-The installer downloads the platform-specific release binary, verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, initializes the Memora home, and installs a managed shell startup block for `memora`.
+The installer verifies `SHA256SUMS`, installs to `~/memora/bin/memora`, initializes the Memora home, and adds shell integration. Open a new shell or run the activation command printed by the installer.
 
-Build from source:
-
-```bash
-memora setup
-memora self install
-eval "$(memora self shell-init zsh)"
-memora self completions zsh
-```
-
-`self install` copies the current binary into `$MEMORA_HOME/bin/memora` and installs an idempotent shell startup block when the current shell is supported. `self shell-init` exports `MEMORA_HOME`, adds Memora to `PATH`, installs a `memora` shell alias, and points `fastembed` at Memora's managed cache under `state/cache/fastembed`. `self update` downloads the latest GitHub release binary by default, overwrites the managed binary after checksum verification, preserves the vault, and repairs the shell startup block if it is missing or stale.
-
-## Agent Integration
+### 2. Configure Agents
 
 ```bash
+# Current project
 memora agent integrate --client all --scope project
 memora agent status --client all --scope project
-memora agent-aliases set Remi Рэми Реми
-memora agent update --client all --scope project
+
+# User-level/global instructions
+memora agent integrate --client all --scope user
+memora agent status --client all --scope user
 ```
 
-Agent rules are written only inside a Memora managed block. Cursor gets `.cursor/rules/memora.mdc`; Claude gets `CLAUDE.md`; Codex and generic agents get `AGENTS.md`.
+Supported `--client` values:
 
-## Source Capture
+- `all`: Cursor, Claude, and Codex.
+- `cursor`: Cursor rules in `.cursor/rules/memora.mdc`.
+- `claude`: Claude instructions in `CLAUDE.md`.
+- `codex`: Codex instructions in `AGENTS.md`.
+- `agents`: generic agent instructions in `AGENTS.md`.
+
+Agent instructions are written only inside Memora managed blocks. User-scope targets use matching global files under the user's home directory.
+
+### 3. Update
+
+```bash
+# Latest release
+memora self update
+
+# Specific release
+memora self update --version v0.1.0
+
+# Refresh generated agent instructions after an update
+memora agent update --client all --scope project
+memora agent update --client all --scope user
+```
+
+Updates preserve the vault, verify release checksums, and repair shell integration when needed.
+
+## Daily Usage
+
+Use an alias such as `Remi`, `Рэми`, or `Реми` when you explicitly want memory behavior:
+
+```text
+Remi, remember that this project prefers small focused PRs with nearby tests.
+Remi, save this as a project decision: we use project-scoped Cursor rules.
+Remi, review pending memories.
+```
+
+Ask Memora to capture and analyze useful source material:
+
+```text
+Remi, analyze this article and extract what matters for our agent memory roadmap.
+Remi, save this incident write-up as source evidence and propose candidate memories.
+Remi, read this design doc, summarize it, and ask me before saving anything.
+```
+
+Ask Memora to recall prior knowledge:
+
+```text
+Remi, find what we decided about semantic search providers.
+Remi, what do we know about pending memory review UX?
+Remi, find source evidence for the install flow decisions.
+```
+
+Agents must show the exact memory, extraction, source value, or synthesis before saving it unless you explicitly say review is not required. During review, agents should show pending notes clearly and let you approve, reject, or edit-and-approve each note.
+
+Agents may also auto-recall context without an alias when a task depends on project history, preferences, decisions, roadmap/status/TODOs, wiki knowledge, or saved source evidence. They should not query memory on every turn.
+
+## How Agents Use Memora
+
+<details open>
+<summary>Source Capture and Semantic Search</summary>
+
+### Source Capture
+
+Agents use source capture for material that should remain traceable: articles, notes, meeting summaries, design docs, incident write-ups, and research snippets.
 
 ```bash
 memora raw add notes.md --kind text --format markdown
@@ -73,11 +112,13 @@ memora source add /path/to/raw --extract /path/to/extract.md
 memora raw mark-processed raw/inbox/text/notes.md --source-id <source_id>
 ```
 
-`raw analyze` prepares an extract draft under `raw/analysis/`, scans for basic risk flags, and prints the next CLI steps for the agent-led source capture workflow.
+Raw material should stay as close to the original as possible, preferably with no text changes. Agents should only move it into a convenient file/format for capture. `raw analyze` drafts an extraction under `raw/analysis/`, flags basic risks, and prints next steps.
 
-## Semantic Search
+Agents use `memora wiki ingest` for curated source material and `memora wiki synthesize --save` for durable wiki knowledge. Saving still requires approval by default.
 
-New homes default to the local `fastembed` provider:
+### Semantic Search
+
+New homes default to local `fastembed` semantic search:
 
 ```yaml
 semantic:
@@ -85,16 +126,24 @@ semantic:
   model: AllMiniLML6V2
 ```
 
-`memora search|probe|context --mode auto` uses hybrid search when the provider is available and falls back to text search for automatic recall if semantic initialization fails. Explicit `--mode vector` and `--mode hybrid` require a working provider.
-
-Use `--include-related` with `search`, `probe`, or `context` to expand direct matches through indexed memory relations. Ranking combines text/vector score with boosts for memory type, review status, confidence, and relation strength.
-
-Agents can pass repeated `--variant` values to `search`, `probe`, and `context`; Memora merges and deduplicates results across the planned query set.
-
-Environment overrides:
+Agents start discovery with `memora probe` and use `memora context` or `memora lookup-source` when richer context or source evidence is needed:
 
 ```bash
-MEMORA_SEMANTIC_PROVIDER=local-command
-MEMORA_SEMANTIC_MODEL=my-model
-MEMORA_SEMANTIC_COMMAND='my-embed-command --json'
+memora probe "<query>" --intent memory|wiki|mixed --variant "<alternate>"
+memora context "<query>" --intent evidence|mixed --variant "<alternate>"
 ```
+
+`search`, `probe`, and `context` accept repeated `--variant` values; Memora merges and deduplicates results. `--mode auto` uses hybrid search when available and falls back to text search if semantic initialization fails.
+
+</details>
+
+## Development
+
+```bash
+cargo build
+cargo test
+```
+
+## CLI Reference
+
+See `docs/cli-agent-reference.md`, `memora help`, or `memora help <command>`.

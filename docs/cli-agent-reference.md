@@ -114,6 +114,14 @@ Arguments:
 
 ## Agent Integration
 
+Supported `--client` values:
+
+- `all`: install Cursor, Claude, and Codex instructions.
+- `cursor`: write Cursor rules.
+- `claude`: write Claude instructions.
+- `codex`: write Codex instructions.
+- `agents`: write generic agent instructions.
+
 Agent rules are written only inside Memora managed blocks. Project-scope targets:
 
 - Cursor: `.cursor/rules/memora.mdc`
