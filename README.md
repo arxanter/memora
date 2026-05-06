@@ -15,14 +15,21 @@ It is built around a few simple principles:
 
 ### 1. Install
 
+Latest release
+
 ```bash
-# Latest release
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash
+```
 
-# Overwrite an existing managed binary
+Overwrite an existing managed binary
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --force
+```
 
-# Specific release
+Specific release
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/arxanter/memora/main/scripts/install.sh | bash -s -- --version v0.1.0
 ```
 
@@ -50,7 +57,7 @@ Supported `--client` values:
 
 Agent instructions are written only inside Memora managed blocks. User-scope targets use matching global files under the user's home directory.
 
-### 3. Update
+## Update
 
 ```bash
 # Latest release
@@ -98,8 +105,7 @@ Agents may also auto-recall context without an alias when a task depends on proj
 
 ## How Agents Use Memora
 
-<details open>
-<summary>Source Capture and Semantic Search</summary>
+Source Capture and Semantic Search
 
 ### Source Capture
 
@@ -134,8 +140,6 @@ memora context "<query>" --intent evidence|mixed --variant "<alternate>"
 ```
 
 `search`, `probe`, and `context` accept repeated `--variant` values; Memora merges and deduplicates results. `--mode auto` uses hybrid search when available and falls back to text search if semantic initialization fails.
-
-</details>
 
 ## Development
 
